@@ -35,7 +35,7 @@ garbage into one does not produce one, and there is no constructor that skips th
      [crew cuts ::roster] (every? (into crew roster) (keys cuts)))}
 
    :io-deps
-   {::roster (fn [h] (fetch-roster h))}
+   {::roster ([crew] (fetch-roster crew))}
 
    :certificates
    {::shape  #{::name ::crew ::take ::cuts}
@@ -102,25 +102,47 @@ must return booleans.
 ### IO dependencies
 
 `:io-deps` names functions that fetch something from outside the value — a database row, an
-upstream response. A check depends on one by naming it in its arglist:
+upstream response. They are written exactly as checks are, arglist and all:
+
+```clojure
+::roster ("The crew roster on file." [crew] (fetch-roster crew))
+```
+
+A check depends on one by naming it in its arglist:
 
 ```clojure
 ::only-crew-get-cuts ("Only crew get a cut."
                       [crew cuts ::roster] ...)
 ```
 
-The arglist remains the complete dependency declaration; it now spans both fields and IO. A
-check is IO-bound exactly when its arglist contains a keyword, which is visible where the check
-is written without consulting anything else.
+So the arglist is the complete dependency declaration everywhere, for fetches as much as for
+checks, and it now spans both fields and IO. A check is IO-bound exactly when its arglist
+contains a keyword, which is visible where the check is written without consulting anything
+else.
 
 A fetch does not decide validity. It produces a value and the check judges it — an io-dep that
 finds nothing returns `nil`, and the check fails on `nil`, rather than the fetch reporting
 failure itself.
 
-**No io-dep ever runs until every pure check has passed.** Shape gates IO rather than sitting
-beside it. Nothing reaches a database until the value is established as well-formed, which is
-the point: the payload that triggers the query is the one you least want to trust. Sealing is
-therefore two-phase — every pure check, then, only if they all pass, the IO ones.
+**Shape gates IO.** Nothing reaches a database until the values it will carry there are
+established as well-formed, because the payload that triggers the query is the one least worth
+trusting. Precisely:
+
+- Pure checks run first, ungated.
+- An io-dep fetches only once every pure check depending on a field in *its* arglist has passed.
+- An IO-bound check runs only once every io-dep it names has fetched.
+
+Because an io-dep declares its own fields, the gate is narrow: a fetch over `crew` waits on the
+checks covering `crew`, not on the whole type. A malformed field nothing IO touches does not
+hold up IO that does not touch it.
+
+**A fetch is shared for the length of one validation call, and no longer.** Within a single
+`check`, `certify`, or `seal`, an io-dep is fetched at most once however many checks name it —
+that is what naming them is for. When the call returns, the fetched value is gone. A later call
+fetches again.
+
+So a draft never carries IO state. What it carries is which checks passed, which is a fact about
+the checking, not about the world.
 
 ### Certificates
 
@@ -290,11 +312,11 @@ keyword lookup.
 
 ## Open
 
-- **Whether io-deps should declare their own field dependencies by arglist**, as checks do,
-  rather than receiving the whole record. Doing so would make io-dep invalidation on a draft
-  computable and keep a single rule for dependencies throughout.
-- **Whether an io-dep is fetched once per pass** and shared across every check naming it, and
-  whether a fetched value is retained on a draft or re-fetched each time.
+- **Whether an io-dep may name another io-dep** in its arglist, which would make fetch ordering
+  a topological sort rather than a single phase.
+- **Whether a fetch can batch across values.** The signature is per-value, so validating a
+  collection of 100 means 100 fetches. Batched hydration is the shape Metabase already uses for
+  this, and the io-dep signature is the hard thing to change later.
 - **The failure-accumulation shape.** What `check` and `certify` return on failure, and whether
   failures live on the draft so a caller can collect all problems in one pass rather than one
   per round trip.
