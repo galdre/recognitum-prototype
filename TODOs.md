@@ -232,7 +232,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       omits one more thing, and because whoever gives the compile-time family a home --
       E4's deferral wants the same for `::io-limited` -- should take this with it.
 
-- [ ] **G1 — the plan is computed in masks, and `cost-test` is why.** `plan-for` folds a
+- [x] **G1 — the plan is computed in masks, and `cost-test` is why.** `plan-for` folds a
       check's prerequisites in with `bit-or` against the masks the macro computed, takes
       the closure to a fixed point, and answers `pending` unchanged where nothing was
       added -- which is the ordinary case, since a group asked for usually carries its own
@@ -242,8 +242,11 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       the same thing F2 deferred: `checks-for` still builds a `sorted-set` per write out
       of the field -> checks index, where the macro already computes a per-field mask, and
       `mask-indices` is now sitting there to expand the result.
+      Done with F2 below: `checks-for` unions `:field-checks` with one `bit-or` per entry
+      and expands the result through `mask-indices`, and the benchmark's `merge` row went
+      from 1543ns to 962ns against a hand-rolled 860ns, same machine, same sitting.
 
-- [ ] **F2 — `merge` on a sealed value is the one row the library loses.** 1251ns against
+- [x] **F2 — `merge` on a sealed value is the one row the library loses.** 1251ns against
       814ns hand-rolled, and the only row over 1.2x that is not a `drafting`. Nothing here
       regressed -- it read 1.6x in the table F1 inherited -- so F2 left it, having spent its
       fix on the drafting rows the deferral named. Where it goes: `checks-for` builds a
@@ -252,6 +255,10 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       union could be one `bit-or` per key and an expansion over the set bits; and `cons`
       builds an intermediate map of the entries before constructing through `get` per field.
       The first is the cheaper win and touches only `checks-for` and its two callers.
+      Both are fixed, and "nothing here regressed" was wrong: 933ns hand-rolled against 604ns
+      before the rewrite, 844 against 1543 after, 860 against 962 now -- a tenth where it was
+      most of a doubling -- with a 1.4x bound in `cost-test` so the next one fails rather than
+      waits to be noticed. `checks-for` had one caller left by now, not two: the sealed `cons`.
 
 - [ ] **F2 — `recognitum.cost-test`'s bounds are loose, and one of them is very loose.**
       The rename row is held to 12x where the benchmark reads 3.5x, because the suite is a

@@ -604,41 +604,48 @@ it.
 
 Against a plain `defrecord` carrying the same checks written by hand, so the validation work is
 identical on both sides (`bench/recognitum/bench.clj`). Criterium `quick-benchmark` on an AMD
-Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-16, re-measured once the generated types
-became records:
+Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-16, re-measured once `merge` stopped
+building a set per write (`clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"`):
 
 | | hand-rolled | this library |
 |---|---|---|
-| read a field | 2.2 ns | 2.6 ns |
-| write one field, no cross-field check on it | 16.6 ns | 10.4 ns |
-| write one field, two cross-field checks on it | 198 ns | 172 ns |
-| `merge` two fields | 835 ns | 1518 ns |
-| construct | 1362 ns | 1895 ns |
-| one rename in a `drafting` | 260 ns | 890 ns |
-| 15 renames in a `drafting` | 704 ns | 1356 ns |
-| one add-member (3 writes) in a `drafting` | 1436 ns | 1892 ns |
-| 15 add-members in a `drafting` | 4463 ns | 5499 ns |
+| read a field | 2.1 ns | 2.3 ns |
+| write one field, no cross-field check on it | 13.2 ns | 14.8 ns |
+| write one field, two cross-field checks on it | 217 ns | 175 ns |
+| `merge` two fields | 860 ns | 962 ns |
+| construct | 1418 ns | 1927 ns |
+| one rename in a `drafting` | 257 ns | 888 ns |
+| 15 renames in a `drafting` | 766 ns | 1496 ns |
+| one add-member (3 writes) in a `drafting` | 1450 ns | 1927 ns |
+| 15 add-members in a `drafting` | 4983 ns | 5721 ns |
 
-Four rows read a fifth to a quarter higher than the table they replace, which is more than the
-spread below admits — so the previous template was re-measured on the same machine in the same
-sitting, alternating with this one, and read the same higher numbers. What moved was the
-machine, not the code: nothing in the record template is on any of these paths, and the rows it
-could plausibly have touched — a field read through the keyword thunk, a write through `assoc` —
-did not move at all.
+One row moved because the library changed: `merge`, which read 1518 ns against 835 ns in the
+table this replaces and now reads 962 against 860. The other row that looks different is the
+write with no cross-field check on it, where nothing on that path was touched — both sides are
+a dozen nanoseconds there and the spread swamps the gap. Measured on its own, in a JVM that has
+run nothing else, that row reads 9.3 ns against 12.3 ns hand-rolled, and read 9.7 against 12.4
+before this change; measured after twenty other rows in one JVM, as the table measures it, it
+reads half again that. Do not read a row that small as a comparison.
 
-A write to a sealed value costs less than the hand-rolled twin, which is the arglists paying
-for themselves: the checks depending on the field are known when the type is compiled, and each
-one is called with the fields it named handed to it directly rather than looked up out of the
-value.
+A write to a sealed value costs less than the hand-rolled twin where there is anything to
+compare — the row with two cross-field checks on the field reads four fifths of it, run after
+run — which is the arglists paying for themselves: the checks depending on the field are known
+when the type is compiled, and each one is called with the fields it named handed to it
+directly rather than looked up out of the value.
 
 A `drafting` costs a fixed few hundred nanoseconds beyond the checks it runs — a draft opened, a
 seal performed, a verdict mask consulted — which is the whole of the gap at one write and is
 most of the way amortized by fifteen. Where a draft is opened and written to with nothing that
 invalidates anything, the seal runs nothing and costs nothing beyond that fixed part.
 
-`merge` is the row the library loses, and loses honestly: it refuses an undeclared key, builds
-one intermediate map for the whole write so that the checks run once at the end rather than per
-entry, and constructs the new value through it.
+`merge` was the row the library lost, at most of a doubling, and it lost it to bookkeeping
+rather than to work: both sides run each applicable check once at the end, but the library
+built a sorted set per write to work out which checks those were, and an intermediate map of
+the entries to construct the new value through. The macro already knows, per field, which
+checks read it — it is the same index a write to a draft clears its verdicts by — so the union
+is now one `bit-or` per entry, and the entries are walked straight into the fields. What is
+left of the gap is a tenth, and it is the refusal of an undeclared key and the pass that would
+report a failure, which the hand-rolled twin does not have to be general enough to do.
 
 Two caveats. Run-to-run spread is real — a few percent between consecutive runs on an idle
 machine, more on a busy one — so do not trust either column to three figures. And a table is

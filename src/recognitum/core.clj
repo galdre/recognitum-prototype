@@ -136,11 +136,6 @@
                   {:error ::unknown-field :record (:name model) :key k
                    :declared (:field-order model)})))
 
-(defn- declared-field!
-  "Throw unless `k` is a field this type declares."
-  [model k]
-  (when-not (contains? (:field-set model) k) (unknown-key! model k)))
-
 (defn- dep-values
   "What a check was given, keyed by the dependency it was given for, in arglist order.
   Built only where a failure is about to be reported -- the passing path never has to say.
@@ -211,11 +206,6 @@
                      :bulk true
                      :indexes (vec (keys fs))
                      :failures fs}))))
-
-(defn- checks-for
-  "The indices of the checks naming any of `ks`, in declaration order."
-  [model ks]
-  (into (sorted-set) (mapcat (:index model)) ks))
 
 (defn- phases
   "`[shape pure io]`: `idxs` split into the three phases anything here runs them in, each
@@ -655,6 +645,19 @@
     (if (zero? m)
       (persistent! acc)
       (recur (bit-and m (dec m)) (conj! acc (Long/numberOfTrailingZeros m))))))
+
+(defn- checks-for
+  "The indices of the checks naming any of the fields `entries` writes, in declaration order.
+
+  What a merge onto a sealed value has to run, asked once over the entries it was handed.
+  The answer is a mask: the macro computed, per field, the bits of the checks that read it
+  -- the same index by which a write to that field clears a draft's verdicts -- so the union
+  is one `bit-or` per entry and [[mask-indices]] expands it in one iteration per check
+  actually named. It read the field -> checks index and built a `sorted-set` per write
+  before, which is a tree per merge to answer a question the type settled when it compiled."
+  [model entries]
+  (let [ms (:field-checks model)]
+    (mask-indices (reduce (fn [m e] (bit-or (long m) (long (get ms (nth e 0) 0)))) 0 entries))))
 
 (defn- wants
   "`idxs` plus everything that has to pass before any of them can run, as a mask.
@@ -1938,10 +1941,10 @@
         n         (count fsyms)
         key->sym  (zipmap ks fsyms)
         ;; every local is gensymed: a field could be named k, v, o, acc ...
-        [ksym vsym dsym osym hsym essym ovsym accsym mtasym mta2sym msym thunksym tgtsym isym
-         cachesym xsym newsym tuplessym tupsym]
-        (map gensym ["k" "v" "d" "o" "h" "es" "ov" "acc" "mta" "mta2" "m" "thunk" "target" "i"
-                     "cache" "x" "new" "tuples" "tuple"])
+        [ksym vsym dsym osym hsym essym cursym entsym accsym mtasym mta2sym msym thunksym
+         tgtsym isym cachesym xsym newsym tuplessym tupsym]
+        (map gensym ["k" "v" "d" "o" "h" "es" "cur" "ent" "acc" "mta" "mta2" "m" "thunk"
+                     "target" "i" "cache" "x" "new" "tuples" "tuple"])
         tgthint   (with-meta tgtsym {:tag tname})
         dname     (symbol (str tname "Draft"))
         [extsym vdsym ownsym tokensym bitsym passym]
@@ -2265,22 +2268,34 @@
 
          ;; one allocation for the whole merge, each applicable check once at the end
          (~'cons [_# ~osym]
+           ;; The entries are walked once, into the fields themselves: this type's fields
+           ;; are locals here, so an entry is a rebinding of one of them and the value is
+           ;; constructed out of what the loop carries. There is no map in the middle of
+           ;; it -- what a merge allocates is the value it returns.
            (let [~essym (~(internal 'entries-of) ~osym)
-                 ~ovsym (reduce (fn [~accsym [~ksym ~vsym]]
-                                  (~(internal 'declared-field!) ~model-sym ~ksym)
-                                  (assoc ~accsym ~ksym ~vsym))
-                                {} ~essym)
-                 ;; After the reduce, so a key the type does not declare is reported as
-                 ;; one: `drafting` would not take it either. Only where the option
-                 ;; reaches something, so a type without one emits nothing here.
-                 ~@(when (seq limited)
-                     [(gensym "limited")
-                      `(~(internal 'io-limited-write!) ~model-sym (keys ~ovsym))])
-                 ~hsym  (new ~tname
-                             ~@(map (fn [k f] `(get ~ovsym ~k ~f)) ks fsyms)
-                             ~mtasym)]
+                 ~hsym  (loop [~cursym (seq ~essym)
+                               ~@(interleave fsyms fsyms)]
+                          (if ~cursym
+                            (let [~entsym (first ~cursym)
+                                  ~ksym   (nth ~entsym 0)
+                                  ~vsym   (nth ~entsym 1)]
+                              (case ~ksym
+                                ~@(mapcat (fn [i k]
+                                            [k `(recur (next ~cursym)
+                                                       ~@(assoc fsyms i vsym))])
+                                          (range n) ks)
+                                ;; A key the type does not declare is refused here rather
+                                ;; than admitted and caught at the seal: `drafting` would
+                                ;; not take it either.
+                                (~(internal 'unknown-key!) ~model-sym ~ksym)))
+                            (new ~tname ~@fsyms ~mtasym)))]
+             ;; After the walk, so every key is known to be declared before this speaks,
+             ;; and before anything runs. Only where the option reaches something, so a
+             ;; type without one emits nothing here.
+             ~@(when (seq limited)
+                 [`(~(internal 'io-limited-write!) ~model-sym (map first ~essym))])
              (~(internal 'run-checks!) ~model-sym (:run-sealed ~model-sym) ~hsym
-              (~(internal 'checks-for) ~model-sym (map first ~essym)))
+              (~(internal 'checks-for) ~model-sym ~essym))
              ~hsym))
 
          ;; A keyword call site caches one of these and reads the field directly, the way a
@@ -2400,6 +2415,11 @@
           ;; index, and a scan of `:checks` per call would be the only alternative.
           :check-ids   ~(into {} (map-indexed (fn [i c] [(:name c) i])) parsed)
           :index       ~index
+          ;; field -> the bits of the checks naming it, which is `:index` said in the shape
+          ;; a write can union in one `bit-or`. The same derivation as the invalidation
+          ;; masks a write to a draft seeds with, and for the same reason: what a merge
+          ;; costs at run time should be the `or` and nothing else.
+          :field-checks ~(into {} (map (fn [k] [k (reduce bit-set 0 (get index k))])) ks)
           ;; certificate name -> what it covers, as check names, indices, and the bits of
           ;; a draft's verdict mask they own -- so holding one is an `and`. `array-map`
           ;; applied to the pairs, rather than a literal, which would promote and reorder
