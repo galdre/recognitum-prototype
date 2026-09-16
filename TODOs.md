@@ -851,13 +851,13 @@ so far, or the options if it is still open. None is implemented.
       what the fake source was handed -- one call, two tuples -- and then shows that
       sealing each of them afterwards fetches nothing at all.
 
-- [ ] **F1 — the README's worked example and `dev/recognitum/heist.clj` are the same type
+- [x] **F1 — the README's worked example and `dev/recognitum/heist.clj` are the same type
       written twice.** `recognitum.readme-test` evaluates every `defrecord` block in the
       README, so the example cannot rot into something that does not compile, and that is
       why it is self-contained: it carries its own four-name in-memory table rather than
       requiring `recognitum.roster`, because a README block requiring a dev-only namespace
       is not a thing a reader can type. Nothing keeps the two in step beyond both
-      compiling, so if they diverge in substance the suite will not notice.
+      compiling, so if they diverge in substance the suite will not notice. Ruled by galdre 2026-09-16: two audiences, two artifacts. Accepted as is.
 
 - [ ] **F1 — `unsealed` is documented but demonstrated nowhere.** The README's "Protocol
       implementations" section writes it out and `recognitum.protocol-test` covers it, but
