@@ -51,3 +51,23 @@
   [roster]
   (swap! calls conj [:fetch-vetted roster])
   (into #{} (filter #(get-in table [% :vetted])) roster))
+
+(defn fetch-rosters
+  "The batched form of [[fetch-roster]]: every argument tuple in one call, answered as a map
+  keyed by the tuple it was asked about.
+
+  Keying by the tuple rather than aligning positionally is what lets the library do the
+  deduplication rather than the author -- a hundred values referencing five crews arrive
+  here as five tuples, and each of them is answered once.
+
+  Throws on anything that is not a crew, for the same reason the singular form does: a fetch
+  handed garbage is a fetch the gate should have kept away, and saying so loudly is worth
+  more here than a nil."
+  [rows]
+  (swap! calls conj [:fetch-rosters rows])
+  (into {}
+        (map (fn [[crew :as tuple]]
+               (when-not (and (set? crew) (every? keyword? crew))
+                 (throw (IllegalArgumentException. (str "not a crew: " (pr-str crew)))))
+               [tuple (into #{} (filter table) crew)]))
+        rows))
