@@ -82,13 +82,26 @@ rewrite themselves, and the message tells them how.
 - [x] `README.md` prose, the `:cannot-dissoc` row, the `clean` section, and the demo heading
       all match the behavior.
 
-### 4. `#Heist{…}` prints like a readable literal but is not — FUTURE WORK
+### 4. Printing and reading — SETTLED
 
-Ruled: acknowledged, deferred. `CONSIDERATIONS.md` §8 already records the absent reader literal
-as deliberate.
+The old objection is void. `CONSIDERATIONS.md` §8 said omitting a reader literal "closes a
+bypass"; that was true when `drafting` was the only validating constructor. `map->Type`
+validates, so a literal routed through it is a validating entry point, not a bypass.
 
-- [ ] Future work, not drift: either a real reader literal, or a printed form that does not
-      imply one.
+- [x] `#Heist{…}` was a non-namespaced tag — reserved for Clojure — that did not read. Now
+      `#recognitum.heist/Heist{…}`, qualified by the defining namespace, which both escapes the
+      reserved space and escapes the reader's record-literal path. (A tag whose *name* contains
+      a dot goes to `RecordReader`, which calls a static `create` that only `defrecord`
+      generates; `*data-readers*` is never consulted for those.)
+- [x] `data-readers` returns `{tag -> validating constructor}` for `clojure.edn`. Reading is
+      validating: a bad literal throws `:invalid-field` / `:invariant-violated` at read time.
+- [x] No global registration, and not for lack of trying. `clojure.edn` never consults
+      `*data-readers*`; and `clojure.main` thread-binds that var, so `alter-var-root` at load
+      time is invisible to the loading thread and visible to every other one — measured, not
+      assumed.
+- [x] Drafts print `#<Heist draft {…}>`. `#<` is the reader's own unreadable marker.
+- [x] Dropped `:ctor` from the model — unused, and an unvalidated constructor reachable through
+      `(:ctor (model-of x))`. Third back door found and closed. `:unwrap` was dead too.
 
 ## Stale
 

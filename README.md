@@ -235,6 +235,39 @@ It is off by default and costs nothing when off. When on, each invariant run all
 and reads go through it, so leave it out of production. A predicate that asks for the whole map
 (`keys`, `vals`, `into {}`) cannot be attributed, and the audit abstains rather than guess.
 
+## Printing and reading
+
+A validated value prints with a namespace-qualified tag:
+
+```clojure
+(pr-str heist)
+;=> "#recognitum.heist/Heist{:crew #{…}, :cuts {…}, :name \"The Italian Job\", :take 3000}"
+```
+
+That tag is exactly the key `clojure.edn` wants, and `data-readers` supplies the map:
+
+```clojure
+(edn/read-string {:readers (rec/data-readers)} s)
+```
+
+**Reading is validating.** The reader goes through `map->Heist`, so a literal cannot smuggle in
+a value that would have been rejected on construction — a bad one throws at read time rather
+than producing something that lies about itself.
+
+There is no global registration, deliberately. `clojure.edn` never consults `*data-readers*`;
+it takes `:readers` and nothing else, and it is the reader you want for anything arriving from
+outside the process. Registering globally is also unreliable: `clojure.main` thread-binds
+`*data-readers*`, so a registration made while loading a namespace is invisible to the thread
+that loaded it and visible to every other one. If you want a tag available to `read-string`,
+put it in your own `data_readers.clj`.
+
+A draft prints as explicitly unreadable, because it is unvalidated working state and a form
+implying it round-trips would be claiming something untrue:
+
+```clojure
+(pr-str (draft heist))   ;=> "#<Heist draft {…}>"
+```
+
 ## Running it
 
 ```

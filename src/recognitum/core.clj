@@ -14,6 +14,27 @@
 
 (defn register! "Associate a class with its model map." [cls model] (swap! registry assoc cls model))
 
+(defonce ^:private readers (atom {}))
+
+(defn register-reader! "Associate a print tag with its validating map constructor." [tag ctor]
+  (swap! readers assoc tag ctor))
+
+(defn data-readers
+  "`{tag -> validating constructor}` for every type defined so far, to hand `clojure.edn/read`
+  or `clojure.edn/read-string` as `:readers`.
+
+  There is no global registration, deliberately. `clojure.edn` never consults `*data-readers*`
+  -- it takes `:readers` and nothing else -- and it is the reader you want for anything coming
+  from outside the process. `alter-var-root` on `*data-readers*` is worse than useless besides:
+  `clojure.main` thread-binds that var, so a registration made while loading a namespace is
+  invisible to the very thread that loaded it and visible to every other one.
+
+  Reading is validating. A literal whose contents fail a predicate or an invariant throws at
+  read time rather than producing a value that lies about itself.
+
+      (edn/read-string {:readers (rec/data-readers)} s)"
+  [] @readers)
+
 ;;; ------------------------------------------ Checks ------------------------------------------
 
 (defn unknown-key! [model k]
@@ -317,7 +338,8 @@
         ;; (Heist. a b c mta) with position i replaced by `x`
         ctor-with (fn [i x] `(new ~tname ~@(assoc fsyms i x) ~mtasym))
         field-map (into {} (map (fn [f] [(keyword f) {:form (list 'quote (:valid (meta f)))}])) fields)
-        pred-map  (into {} (map (fn [f] [(keyword f) (:valid (meta f))])) fields)]
+        pred-map  (into {} (map (fn [f] [(keyword f) (:valid (meta f))])) fields)
+        tagsym    (symbol (str (ns-name *ns*)) (str tname))]
     `(do
        (declare ~model-sym)
        ~@(map (fn [f] `(def ~(with-meta (pred-var f) {:private true}) ~(:valid (meta f)))) fields)
@@ -415,11 +437,7 @@
             :field-order ~ks
             :invariants  invs#
             :index       (build-index invs#)
-            :unwrap      (fn [~xsym]
-                           ~(into {} (map (fn [[k f]] [k (list '. xsym (symbol (str "-" f)))])) (map vector ks fsyms)))
-            :ctor        (fn [~msym ~mtasym]
-                           (new ~tname ~@(map (fn [k] `(get ~msym ~k)) ks) ~mtasym))
-
+            :tag         '~tagsym
             :draft-empty      (fn [~ownsym] ~(dctor (repeat n `unset) {} 0 ownsym nil))
             :draft-from       (fn [~svsym ~ownsym]
                                 ~(dctor (mapv sfield fsyms) {} 0 ownsym `(meta ~svsym)))
@@ -437,9 +455,6 @@
                                 (cond-> [] ~@(mapcat (fn [[k f]] [`(identical? ~(dfield f) unset) `(conj ~k)])
                                                      (map vector ks fsyms))))
             :draft-seal       (fn [~dvsym] (new ~tname ~@dfields ~(dfield mtasym)))}))
-       (register! ~tname ~model-sym)
-       (register-draft! ~dname ~model-sym)
-
        ;; `deftype` interns a positional factory that checks nothing -- a public back door
        ;; straight through every guarantee the type exists to make. Replace it with one that
        ;; validates, and unmap the draft's, which nothing outside this file should be calling.
@@ -458,11 +473,19 @@
          [~msym]
          (seal ~model-sym (reduce-kv assoc ((:draft-empty ~model-sym) nil) ~msym)))
 
+       (register! ~tname ~model-sym)
+       (register-draft! ~dname ~model-sym)
+       (register-reader! '~tagsym ~(symbol (str "map->" tname)))
+
        (ns-unmap *ns* '~(symbol (str "->" dname)))
+       ;; A draft is unvalidated working state. `#<` is the reader's own unreadable marker, so
+       ;; the printed form says so rather than implying a round trip that should not exist.
        (defmethod print-method ~dname [x# ^java.io.Writer w#]
-         (.write w# (str "#" '~tname "/draft" (into (sorted-map) x#))))
+         (.write w# (str "#<" '~tname " draft " (into (sorted-map) x#) ">")))
+       ;; The tag is namespace-qualified, so it escapes the reader's record-literal path and is
+       ;; the exact symbol to hand `clojure.edn/read` as a key in `:readers`.
        (defmethod print-method ~tname [x# ^java.io.Writer w#]
-         (.write w# (str "#" '~tname (into (sorted-map) x#))))
+         (.write w# (str "#" '~tagsym (into (sorted-map) x#))))
        ~tname)))
 
 
