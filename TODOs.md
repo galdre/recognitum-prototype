@@ -184,6 +184,13 @@ so far, or the options if it is still open. None is implemented.
       bangs, their `-all` forms, and those bangs) get a `re-` twin. Re-verifying a batch against
       the database is a real case; `recheck-all` for one check across a group is harder to
       picture.
+      **Ruled 2026-09-16, first part: one verb handles both a check name and a certificate
+      name** — a lone check is a certificate containing itself, the answer is always a map
+      keyed by check name, and the separate `check`/`check!` verbs go. That also dissolves the
+      `check-all` ambiguity below (a raw check return and a gate-failure map were
+      indistinguishable; now every answer is keyed). Still open: which name survives
+      (`check` or `certify`, and so `recheck` or `recertify`), and whether one draft and a
+      group share the name.
 
 - [ ] **`passing` and `holding` are misnamed.** Agents named them; galdre has not seen them.
       Present participles read as scoping forms — `drafting` already is one in this library —
