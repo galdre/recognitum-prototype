@@ -350,8 +350,8 @@
         (is (= 'Ledger (:record e)) label)
         (is (= ::nonesuch (:check e)) label)
         (is (= [::a ::b ::a-fits ::always] (:checks e)) label)
-        (is (= [::shape ::rec/every-check] (:certificates e)) label
-            "one verb, so the refusal says what it could have been given of either kind")))
+        (is (= [::shape ::rec/every-check] (:certificates e))
+            (str label ": one verb, so the refusal says what either kind could have been"))))
     (testing "including a check declared on some other type"
       (is (= ::rec/unknown-check (:error (err #(rec/check d ::data))))))
     (testing "and the bare spelling of one this type does declare"
@@ -364,8 +364,8 @@
 (deftest a-sealed-value-answers-true-and-runs-nothing
   ;; Everything a sealed value could be asked about is established, which is what being
   ;; sealed means. So `check` establishes nothing and runs nothing.
-  (reset! runs {})
   (let [c (->Counted 1 "x")]
+    (reset! runs {})
     (is (true? (rec/check c ::n)))
     (is (true? (rec/check c ::both)))
     (is (true? (rec/check c rec/every-check)))

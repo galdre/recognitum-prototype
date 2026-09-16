@@ -292,12 +292,18 @@ You can run checks against a draft before it is complete:
 
 | | returns |
 |---|---|
-| `(rec/check d ::check-name)` | `true`, or the failing check's data |
-| `(rec/check! d ::check-name)` | `true`, or throws |
-| `(rec/certify d ::cert-name)` | `true`, or `{check-name failure-data}` for those that failed |
-| `(rec/certify! d ::cert-name)` | `true`, or throws |
-| `(rec/passing d)` | the set of check names currently passing |
-| `(rec/holding d)` | the set of certificate names currently held |
+| `(rec/check x ::name)` | `true`, or `{check-name failure-data}` for those that failed |
+| `(rec/check! x ::name)` | `true`, or throws |
+| `(rec/recheck x ::name)` | the same, running everything named whatever the record says |
+| `(rec/recheck! x ::name)` | `true`, or throws |
+| `(rec/passed x)` | the set of check names currently passing |
+| `(rec/certificates x)` | the set of certificate names currently held |
+
+`::name` is a check's name **or** a certificate's. A lone check is a certificate containing
+itself, so there is one verb and one answer shape; nothing has to decide which kind of name it
+is holding before it asks. The answer is always keyed by check name, so a `false` a check
+returned is never mistaken for a report and a check that a gate stopped is simply absent from
+it — the blocking check's entry is what says why.
 
 None of them return a draft. The verdict goes in the draft's record, which is what frees the
 return value to be the answer to the question asked.
@@ -311,6 +317,23 @@ failure; none stops at the first.
 A field the draft has never been written to reads as `nil`, so a check naming one judges `nil`
 and answers for it. There is no state distinct from `nil` to report, and nothing to be told
 about before the checks can run.
+
+All six answer for a sealed value too. A sealed value is one every check passed on, so `check`
+returns `true` there without running anything, `passed` names every check the type declares and
+`certificates` every certificate it has.
+
+### Re-running on purpose
+
+`recheck` runs what it names whether or not the record already says it passes. It exists for one
+question `check` cannot answer: *is this still true of the world?* A check over a fetch is a
+verdict at a point in time, and a set bit cannot tell one that still holds from one that has
+quietly stopped holding — so re-verifying a batch against the database has to be able to say
+"run it now", and `check` would skip every row of it.
+
+On a draft the answer is written back, so a check that passed yesterday and fails today is
+*un-passed*: the draft stops claiming it and the next `seal` runs it again. On a sealed value
+there is no record to write and the value cannot change, so `recheck` runs the checks and
+answers — a report about the world rather than a verdict about the value.
 
 ### Metadata
 
@@ -335,8 +358,8 @@ caller could forge, and keys the library writes last cannot be overridden by any
 draft early, before the value is complete:
 
 ```clojure
-(rec/certify d ::h/shape)     ;=> true
-(rec/holding d)               ;=> #{:my.app.heist/shape}
+(rec/check d ::h/shape)       ;=> true
+(rec/certificates d)          ;=> #{:my.app.heist/shape}
 ```
 
 **Holding one is derived, not asserted.** A draft holds a certificate when every check in it
@@ -349,8 +372,9 @@ A built-in certificate covering every check on the type exists without being dec
 called `:recognitum.core/every-check` (the var `rec/every-check` holds it), and is the one
 certificate name a type may not declare for itself.
 
-Certificates are a draft-level facility, and they change nothing about what a sealed value
-guarantees: `seal` enforces every check on the type, whether or not it belongs to one.
+Certificates change nothing about what a sealed value guarantees: `seal` enforces every check on
+the type, whether or not it belongs to one. A sealed value holds all of them, the built-in
+included, because it passed every check — which is strictly more than any certificate claims.
 
 ## IO dependencies
 
@@ -395,25 +419,35 @@ without that having to be stated anywhere. And because an io-dep declares its ow
 gate is narrow: a fetch over `crew` waits on the checks covering `crew`, not on the whole type.
 
 **A fetch is shared for the length of one validation call, and no longer.** Within a single
-`check`, `certify` or `seal`, an io-dep is fetched at most once however many checks name it —
+`check`, `recheck` or `seal`, an io-dep is fetched at most once however many checks name it —
 that is what naming it is for — and when the call returns the fetched value is gone. So a draft
 never carries IO state. What it carries is which checks passed, which is a fact about the
 checking rather than about the world.
 
 ### Checking many at once
 
-`check-all` and `certify-all` take a collection of drafts of one type and run against all of
-them, so a batched fetch sees every argument tuple in one call and distinct tuples are computed
-once however many values share them:
+`check-all` takes a collection of values and runs against all of them, so a batched fetch sees
+every argument tuple in one call and distinct tuples are computed once however many values share
+them:
 
 ```clojure
-(rec/certify-all drafts rec/every-check)   ;=> [true true {::h/cuts-sum-to-take false} …]
+(rec/check-all drafts rec/every-check)   ;=> [true true {::h/cuts-sum-to-take false} …]
 ```
 
 Results are index-aligned with the input, because two drafts holding identical data are `=` and
 keying by draft would silently collapse them. Partial success is a workspace notion, so only the
-non-throwing forms offer it; `check-all!` and `certify-all!` collect every failure across every
+non-throwing forms offer it; `check-all!` and `recheck-all!` collect every failure across every
 value and throw once with all of them, keyed by index.
+
+**The collection may hold more than one type.** Batched fetches are declared per type, so a mixed
+group is one fetch pass per type and still batched within each; the name resolves per type, and a
+type that does not know it fails the whole call before anything runs — a typo is a programmer
+error, and burying it among per-value failures is how one hides. Sealed values may sit in the
+group alongside drafts; they have nothing left to establish and answer `true`.
+
+`recheck-all` and `recheck-all!` are the same call with the record ignored, which is where the
+verb earns its keep: re-verifying a hundred rows against the database is one fetch pass rather
+than a query apiece.
 
 Nothing bulk produces sealed values. A guarantee does not come in partial, and it does not need
 to: bulk checking leaves each draft holding its own verdicts, so sealing them afterwards finds

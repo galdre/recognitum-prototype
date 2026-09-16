@@ -149,7 +149,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
 
 ### I — the checking family, settled
 
-- [ ] **I1. One verb, an explicit re-run, and honest names.** Rulings of 2026-09-16, all
+- [x] **I1. One verb, an explicit re-run, and honest names.** Rulings of 2026-09-16, all
       galdre's. (a) `check` handles both a check name and a certificate name — a lone check is
       a certificate containing itself — and its answer is always a map keyed by check name
       (`true` when everything passed). `certify`, `certify!`, `certify-all`, `certify-all!` are
@@ -301,6 +301,10 @@ so far, or the options if it is still open. None is implemented.
       simply appears among them -- and `check-all` answers that value with the gate's
       failures keyed by check name, as E3 already ruled for the IO gate. If the reading is
       wrong, `establish` is the only place it lives. Confirmed by galdre 2026-09-16: one rule for both gates.
+      Superseded by I1: the answer is keyed now, so a failing gate is reported rather than
+      thrown, from `check` as from `check-all`. `establish` is gone with it. The rule is
+      still one rule for both gates, and it is still that a check the gate stopped has no
+      verdict -- it simply has no entry rather than a throw of its own.
 
 - [x] **G1 — an IO-bound check gets a shape gate too, which buys nothing observable
       yet.** `TODOs` scoped the gate to "every other pure check"; `SPEC.md`'s "Shape
@@ -407,7 +411,7 @@ so far, or the options if it is still open. None is implemented.
       type and embeds in the sealed `meta` method. So a sealed value with no metadata of
       its own answers with that very map and allocates nothing, and there is one narrow
       set of draft-only fns rather than four fns disagreeing about what a sealed value is
-      allowed to be asked. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there.
+      allowed to be asked. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there. Closed by I1: all of them are wide. `check` answers `true` for a sealed value without running anything, `passed` and `certificates` answer for both forms and carry the same values `meta` does, and the `::not-a-draft` refusal is gone from the family -- what is left is `::not-a-value`, for something that is neither form of anything.
 
 - [x] **D1 — the mask is written but barely read.** `run-draft-checks!` records what
       it ran and `seal` is its only caller; the inlined groups at `assoc`, `merge` and the two
@@ -431,7 +435,7 @@ so far, or the options if it is still open. None is implemented.
       alongside it or leave all three narrow deliberately -- the one thing to avoid is
       `passing` answering for a sealed value while `check` throws on one. Ruled in D4:
       all of them stay narrow. `meta` is where a sealed value answers, and it answers
-      from a constant rather than by running anything. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there.
+      from a constant rather than by running anything. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there. Closed by I1: all of them are wide. `check` answers `true` for a sealed value without running anything, `passed` and `certificates` answer for both forms and carry the same values `meta` does, and the `::not-a-draft` refusal is gone from the family -- what is left is `::not-a-value`, for something that is neither form of anything.
 
 - [x] **D2 — a check naming a field never written throws `::missing-field`, which
       `SPEC.md` does not say.** The spec's table gives `check` two outcomes, `true` or the
@@ -449,7 +453,7 @@ so far, or the options if it is still open. None is implemented.
       anything either. `:check`, `:key` and `:keys` still describe the first, which is the
       whole of it wherever one check was asked about. Moot as of 2026-09-16: unset reads as nil and `:missing-field` no longer exists.
 
-- [ ] **D2 — `check` returns the check's own return value, not the failure report.**
+- [x] **D2 — `check` returns the check's own return value, not the failure report.**
       `SPEC.md` says "the failing check's data", and the check contract says what a check
       returns *is* the failure data, so `check` hands back exactly that. The richer report
       -- docstring, declared fields and their values, return value -- is what `check!`
@@ -458,7 +462,10 @@ so far, or the options if it is still open. None is implemented.
       thrown `:check-failed` would be the other reading. Ruled in D3: `certify` hands back
       the checks' own return values, so the two non-throwing forms read alike and the
       phrase "failure data" means one thing throughout. `certify!` throws the same report
-      every other throwing entry point throws.
+      every other throwing entry point throws. Still true after I1, now in the one shape
+      both scales use: what comes back is the checks' own return values keyed by check
+      name, and the key is what says a check failed -- so one that returned `nil` or
+      `false` is reported as faithfully as one that returned a map.
 
 - [ ] **D3 — the built-in certificate is called `:recognitum.core/every-check`.**
       `SPEC.md`'s "Open" section left the name to whoever needed it; D3 needed it, so it
@@ -482,7 +489,7 @@ so far, or the options if it is still open. None is implemented.
       and D4's uniform `meta` wants both constants for a sealed type. Whoever widens
       `passing` for D4 should widen all five together or leave all five narrow; the thing
       to avoid is `meta` answering for a sealed value while the functions behind those keys
-      throw on one. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there.
+      throw on one. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there. Closed by I1: all of them are wide. `check` answers `true` for a sealed value without running anything, `passed` and `certificates` answer for both forms and carry the same values `meta` does, and the `::not-a-draft` refusal is gone from the family -- what is left is `::not-a-value`, for something that is neither form of anything.
 
 - [x] **D3 — `certify` does not save work at the seal yet.** Certifying a draft leaves
       every check it ran marked as passing, but `seal` still selects what to run by the
@@ -687,6 +694,8 @@ so far, or the options if it is still open. None is implemented.
       already shaped for several failures, so a failing gate simply appears among them,
       even where the certificate does not name it. If the reading is wrong, the place to
       change it is `establish`. Confirmed by galdre 2026-09-16, same ruling as the shape-gate twin.
+      Superseded by I1 alongside its shape-gate twin: `check` answers with the gate's
+      failures keyed by check name instead of throwing them.
 
 - [ ] **E1 — an io-dep nothing names compiles, and never fetches.** Every other declaration
       that would mean nothing is a compile error here, and a dead io-dep is arguably one of
@@ -735,7 +744,7 @@ so far, or the options if it is still open. None is implemented.
       `fetch-io-all`, so a singular fetch is called once per distinct tuple across the
       group and a batched one is handed all of them at once.
 
-- [ ] **E3 — what a group answers about a check it could not run is a map, and a check may
+- [x] **E3 — what a group answers about a check it could not run is a map, and a check may
       return a map.** Where a pure check gating a fetch fails, `check` throws (E1's ruling,
       on the precedent of `:missing-field`): the check asked about never ran, so there is no
       verdict to answer with. A group call cannot throw for that -- the other values have
@@ -744,6 +753,10 @@ so far, or the options if it is still open. None is implemented.
       `certify` answers with. A check whose own failure data happens to be a map keyed by
       check names is indistinguishable from it. Nothing in `SPEC.md` decides this; if the
       reading is wrong, `check-all` is the only place it lives.
+      Dissolved by I1: every answer is keyed by check name, at every scale, so there is no
+      raw check return for a gate-failure map to be confused with. `check` no longer throws
+      for a failing gate either -- the blocking check gets the entry and the check that
+      never ran gets none, which says the same thing without inventing a verdict.
 
 - [x] **E3 — a group is refused where a single draft would be accepted.** `check-all` takes
       drafts of one type: one fetch spans the group, the check name resolves against one
@@ -822,6 +835,38 @@ so far, or the options if it is still open. None is implemented.
       `recognitum.bench`, which requires criterium. Nothing in the suite calls
       `quick-benchmark`, so the cost is one dependency on the test classpath and nothing at
       run time.
+
+- [ ] **I1 — one verb leaves one refusal, so `::unknown-certificate` no longer exists.**
+      `check` takes a check name or a certificate name and cannot tell which was meant, so a
+      name the type declares neither of is one error rather than two: `::unknown-check`,
+      carrying `:check`, `:checks` and now `:certificates`, so the message says what it
+      could have been given of either kind. The step's brief named both keywords; there is
+      no call site left that knows which one a caller intended, and two refusals for one
+      question would have to guess. Recorded rather than assumed: if the keyword should be
+      neutral -- `::unknown-name`, say -- `ids-for` is the only place it lives.
+
+- [ ] **I1 — a mixed group's `:record` is a vector of type names.** A group of one type
+      throws `:record 'Ledger` exactly as before. A group of several has no single type to
+      speak for the rest, so `:record` is the names of all of them in first-appearance
+      order and the message reads the same way. `group-name` is the only place this lives.
+      A handler that dispatched on `:record` being a symbol now has a second shape to
+      consider; nothing in the suite or the documents did.
+
+- [ ] **I1 — `recheck` does not re-run the gates it waits on.** What was asked for is these
+      checks, not their prerequisites, so a gate the mask already calls established is not
+      run again -- which means a `recheck` of an IO-bound check re-fetches and re-judges but
+      does not re-confirm the shape of the field the fetch names. That is the narrow reading
+      and the cheap one; the alternative, taking the whole closure by force, would make
+      `(recheck d some-io-check)` cost the same as `(recheck d every-check)` on most types.
+      A gate that has *not* passed still stops the check behind it. `plan-for` is where the
+      reading lives, in the one line that computes `pending`.
+
+- [ ] **I1 — the deferred `README gaps from the exception audit` item is now partly stale.**
+      It asks for `:unknown-certificate` to be named in `certify`'s docstring; neither the
+      keyword nor the function exists. `:not-a-draft`'s replacement, which the same item
+      asks about, is `:not-a-value` -- thrown by every checking and query function for
+      something that is neither a draft nor a sealed value, and by the group forms with the
+      offender's `:index`. `:malformed-batch` and `:incomplete-batch` are still undocumented.
 
 ## Blocking
 

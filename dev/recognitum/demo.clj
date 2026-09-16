@@ -116,12 +116,14 @@
                          (assoc ::heist/cuts (assoc (::heist/cuts h) :mole 400))))))
 
     (section "what a draft has established, and what it still owes")
-    (show "(rec/passing (draft Heist)) -- from the type"
-          (fn [] (rec/passing (rec/draft Heist))))
-    (show "(rec/passing (draft job)) -- from a sealed value"
-          (fn [] (rec/passing (rec/draft job))))
+    (show "(rec/passed (draft Heist)) -- from the type"
+          (fn [] (rec/passed (rec/draft Heist))))
+    (show "(rec/passed job) -- a sealed value is one every check passed on"
+          (fn [] (rec/passed job)))
+    (show "(rec/certificates job) -- so it holds every certificate too"
+          (fn [] (rec/certificates job)))
     (show "after one write, the checks reading it are cleared"
-          (fn [] (rec/passing (assoc (rec/draft job) ::heist/take 4000))))
+          (fn [] (rec/passed (assoc (rec/draft job) ::heist/take 4000))))
     (show "(meta job) -- passed and certificates, from a constant"
           (fn [] (meta job)))
     (show "(meta (assoc (draft job) ::heist/take 4000))"
@@ -136,16 +138,19 @@
             (fn [] (rec/check d ::heist/cuts)))
       (show "(rec/check d ::heist/cuts-sum-to-take) -- it waits on the shape checks"
             (fn [] (rec/check d ::heist/cuts-sum-to-take)))
-      (show "(rec/certify d ::heist/shape) -- take and cuts owed"
-            (fn [] (rec/certify d ::heist/shape)))
-      (show "(rec/holding d)"                (fn [] (rec/holding d)))
+      (show "(rec/check d ::heist/shape) -- one verb, a certificate name; take and cuts owed"
+            (fn [] (rec/check d ::heist/shape)))
+      (show "(rec/certificates d)"           (fn [] (rec/certificates d)))
       (show "and now the shape certificate"
             (fn [] (let [d (-> d (assoc ::heist/take 2) (assoc ::heist/cuts {:charlie 1 :lyle 1}))]
-                     [(rec/certify d ::heist/shape) (rec/holding d)])))
-      (show "a check that fails answers with what it returned"
+                     [(rec/check d ::heist/shape) (rec/certificates d)])))
+      (show "a check that fails answers with what it returned, under its own name"
             (fn [] (rec/check (assoc d ::heist/name "") ::heist/name)))
       (show "check! throws the report instead"
-            (fn [] (rec/check! (assoc d ::heist/name "") ::heist/name))))
+            (fn [] (rec/check! (assoc d ::heist/name "") ::heist/name)))
+      (show "on a sealed value everything is established, so check runs nothing"
+            (fn [] [(rec/check job rec/every-check)
+                    (watching #(rec/check job rec/every-check))])))
 
     (section "io-deps: a fetch resolving, and the check judging what came back")
     (show "who the house has on file for the crew"
@@ -178,13 +183,13 @@
     (let [ds (fn [] [(complete "one"   #{:charlie :lyle} {:charlie 1 :lyle 1})
                      (complete "two"   #{:charlie :lyle} {:charlie 2 :lyle 2})
                      (complete "three" #{:handsome-rob}  {:handsome-rob 3})])]
-      (show "(rec/certify-all ds rec/every-check)"
-            (fn [] (rec/certify-all (ds) rec/every-check)))
+      (show "(rec/check-all ds rec/every-check)"
+            (fn [] (rec/check-all (ds) rec/every-check)))
       (show "the batched fetch is one call for the group"
-            (fn [] (watching #(rec/certify-all (ds) rec/every-check))))
+            (fn [] (watching #(rec/check-all (ds) rec/every-check))))
       (show "and the tuples it was handed -- two, not three"
             (fn [] (do (house/reset-calls!)
-                       (rec/certify-all (ds) rec/every-check)
+                       (rec/check-all (ds) rec/every-check)
                        (second (first (filter (fn [[f]] (= :fetch-rosters f)) @house/calls))))))
       (show "one of them is not vouched for"
             (fn [] (rec/check-all [(complete "a" #{:charlie} {:charlie 1})
@@ -192,8 +197,13 @@
                                   ::heist/crew-is-vouched-for)))
       (show "then sealing each costs no IO at all"
             (fn [] (let [group (ds)]
-                     (rec/certify-all group rec/every-check)
-                     (watching #(mapv rec/seal group))))))
+                     (rec/check-all group rec/every-check)
+                     (watching #(mapv rec/seal group)))))
+      (show "recheck-all asks the house again for the whole group -- one fetch pass"
+            (fn [] (let [group (ds)]
+                     (rec/check-all group rec/every-check)
+                     [(watching #(rec/check-all group rec/every-check))
+                      (watching #(rec/recheck-all group rec/every-check))]))))
 
     (section "io-limited: the fields behind a fetch are draft-only")
     (show "assoc ::heist/crew on a sealed value"

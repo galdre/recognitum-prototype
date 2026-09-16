@@ -51,19 +51,27 @@
 
   A draft also records which of its checks currently pass. That record is a mutable field:
   the draft's data is immutable, but which checks have been run against that data is not
-  part of the data. See [[passing]]. [[check]] and [[check!]] run one named check against a
-  draft and answer the question rather than handing back a value -- the verdict goes in the
+  part of the data. See [[passed]]. [[check]] and [[check!]] run what they name against a
+  value and answer the question rather than handing back a value -- the verdict goes in the
   mask, and a check the mask already says passes is not run again. [[seal]] reads the same
   mask: it runs whatever is not already passing, so work done a check at a time on a draft
   is not repeated when the draft closes.
 
-  A certificate names a subset of those checks, so a draft can be run through a group of
-  them before it is complete. [[certify]] and [[certify!]] establish one; whether a draft
-  *holds* one is derived from the mask rather than recorded anywhere ([[holding]]), so
-  overlapping certificates need no coordination and individual checks can complete one
-  incidentally. Certificates are a draft-level facility and change nothing about what a
-  sealed value guarantees: [[seal]] enforces every check on the type, certified or not --
-  it merely finds a certified draft's share of them already established.
+  One verb covers both scales of that question. A certificate names a subset of a type's
+  checks, so a draft can be run through a group of them before it is complete, and a lone
+  check is a certificate containing itself: [[check]] takes either name and answers in one
+  shape, `true` or a map keyed by check name. Whether a value *holds* a certificate is
+  derived from the mask rather than recorded anywhere ([[certificates]]), so overlapping
+  certificates need no coordination and individual checks can complete one incidentally.
+  Certificates change nothing about what a sealed value guarantees: [[seal]] enforces every
+  check on the type, and merely finds an established draft's share already done.
+
+  [[check]] *establishes* -- it skips whatever the mask already says passes, and a sealed
+  value, where everything is established, answers `true` without running anything.
+  [[recheck]] and its relatives run what they name regardless, which is the only way to ask
+  whether a verdict about the outside world still holds: on a draft the answer is written
+  back, so a check that passed yesterday and fails today is un-passed and the next seal
+  runs it again.
 
   `meta` answers the same way from either form. A value's own metadata comes back with
   `::passed` and `::certificates` merged over the top -- read off the mask for a draft, and
@@ -177,6 +185,15 @@
                      :record (:name model)
                      :failures (apply array-map (into [] cat fs))}))))
 
+(defn- group-name
+  "What a group call calls itself. One type is named as itself; a group of several is named
+  as all of them, in the order they first appear, because there is no single type to speak
+  for the rest and picking one would be a lie about the others."
+  [models]
+  (let [ns' (reduce (fn [acc m] (if (some #{(:name m)} acc) acc (conj acc (:name m))))
+                    [] models)]
+    (if (next ns') ns' (first ns'))))
+
 (defn- bulk-failed!
   "Throw one `:check-failed` carrying every failure of every value in a group call, keyed by
   the value's index in the collection the caller handed over and, under that, by check name
@@ -190,19 +207,21 @@
   `array-map` applied to the pairs at both levels, for the reason [[checks-failed!]] builds
   its map that way: conj past the eighth entry would promote it and lose the order it is
   reporting in."
-  [model fs]
-  (let [fs (apply array-map
+  [models fs]
+  (let [nm (group-name models)
+        fs (apply array-map
                   (into [] (mapcat (fn [[n es]] [n (apply array-map (into [] cat es))])) fs))
         n  (reduce + (map count (vals fs)))]
     (throw (ex-info (format "%s failed %d %s across %d of the values it was given -- %s"
-                            (:name model) n (if (= 1 n) "check" "checks") (count fs)
+                            (if (vector? nm) (apply str (interpose ", " nm)) nm)
+                            n (if (= 1 n) "check" "checks") (count fs)
                             (apply str
                                    (interpose "; "
                                               (mapcat (fn [[i m]]
                                                         (map #(str i ": " (failure-str %)) m))
                                                       fs))))
                     {:error ::check-failed
-                     :record (:name model)
+                     :record nm
                      :bulk true
                      :indexes (vec (keys fs))
                      :failures fs}))))
@@ -542,14 +561,33 @@
 (alter-meta! #'verdict-mask assoc :private true)
 (alter-meta! #'record-verdict! assoc :private true)
 
-(defn- draft-model!
-  "The model for the draft `d`, or a throw naming the operation that wanted one. Everything
-  that reads or writes a verdict wants a draft specifically: the mask is the only thing that
-  could answer, and only a draft has one."
-  [what d]
-  (or (draft-model d)
-      (throw (ex-info (format "%s expects a draft, and %s is not one" what (pr-str d))
-                      {:error ::not-a-draft :value d}))))
+(defn- value-model
+  "The model for `x` -- a draft or a sealed value -- or `nil` where `x` is neither.
+
+  Not the type object: a class is not a value of its type, so the bare `Heist` a definition
+  interns answers `nil` here even though the registry knows it. The checking family asks
+  about values."
+  [x]
+  (let [c (class x)] (or (@draft-registry c) (@registry c))))
+
+(defn- value-model!
+  "[[value-model]], or a throw naming the operation that wanted one.
+
+  The refusal is of something that is not one of this library's values at all. It is not
+  `::not-a-draft`: a sealed value is one every check passed on, so `true` is an honest
+  answer about it, and refusing to answer was the mistake I1 corrects. Only [[unsealed]]
+  still asserts a draft, because that marker is an assertion about what is being returned."
+  [what x]
+  (or (value-model x)
+      (throw (ex-info (format "%s expects a draft or a sealed value, and %s is neither"
+                              what (pr-str x))
+                      {:error ::not-a-value :value x}))))
+
+(defn- value-mask
+  "What `x` has established, as a mask. A draft carries one; a sealed value is one every
+  check passed on, so its mask is the type's constant with every bit set."
+  [model x]
+  (if (draft-model x) (verdict-mask x) (:all-pass model)))
 
 (defn- passed-in
   "The names of the checks `mask` says are passing."
@@ -563,19 +601,21 @@
   (into #{} (keep (fn [[cname {cm :mask}]] (when (= cm (bit-and mask cm)) cname)))
         (:certificates model)))
 
-(defn passing
-  "The set of check names currently passing on the draft `d`.
+(defn passed
+  "The set of check names currently passing on `x`.
 
   A draft opened from a sealed value starts with all of them, since that is what being
   sealed means; one opened from the type starts with none; and a write clears exactly the
-  checks naming the field written. So this is what has been established about `d` as it
-  stands, never what was once true of something it came from.
+  checks naming the field written. So for a draft this is what has been established about it
+  as it stands, never what was once true of something it came from.
 
-  A question about a draft and nothing else: a sealed value has no mask, because it has no
-  state to be in other than valid. Where the question is asked of a value that could be
-  either, `(::passed (meta x))` is the same answer and both forms answer it."
-  [d]
-  (passed-in (draft-model! "passing" d) (verdict-mask d)))
+  A sealed value answers with every check its type declares, because that is what being
+  sealed means and there is no other state it could be in. The name matches the metadata key
+  `::passed`, which carries the same answer for the same value; two spellings of one
+  question, and they may not disagree."
+  [x]
+  (let [model (value-model! "passed" x)]
+    (passed-in model (value-mask model x))))
 
 (defn- check-id
   "The index of the check named `cname` on this type -- the bit it owns in a draft's mask.
@@ -620,17 +660,25 @@
   mask by the last one.
 
   A check that throws records nothing. It reached no verdict, so its bit says what it said
-  before, and the throw propagates: a bug in a check is not a claim about the data."
-  [model d idxs cache]
-  (let [run  (:run-draft model)
+  before, and the throw propagates: a bug in a check is not a claim about the data.
+
+  `draft?` says whether there is anywhere to record. A sealed value has no mask: its checks
+  all passed when it was made, which is why [[check]] never runs one against it at all and
+  only [[recheck]] gets here. Nothing is written down, because there is nothing a verdict
+  about a sealed value could later save -- the value cannot change, so the next call would
+  learn exactly this much again."
+  [model draft? d idxs cache]
+  (let [run  (if draft? (:run-draft model) (:run-sealed model))
         cs   (:checks model)
-        mask (verdict-mask d)]
+        mask (if draft? (verdict-mask d) (:all-pass model))]
     (reduce (fn [acc i]
               (let [g (:shape-mask (nth cs i))]
                 (if-not (or (zero? g) (= g (bit-and mask g)))
                   acc
-                  (let [ret (run i d cache)]
-                    (if (record-verdict! d i (true? ret)) acc (conj acc [i ret]))))))
+                  (let [ret  (run i d cache)
+                        pass (true? ret)]
+                    (when draft? (record-verdict! d i pass))
+                    (if pass acc (conj acc [i ret]))))))
             [] idxs)))
 
 (defn- mask-indices
@@ -707,10 +755,18 @@
   draft of a sealed value that has not been written to, a check an earlier call already
   established, a certificate already held. Every entry point asks this before it does
   anything, so what is skipped here is the whole of what a call with nothing pending
-  costs."
-  [model d idxs]
+  costs. A sealed value's mask has every bit set, so that is also how `check` answers one
+  without running anything.
+
+  `force?` is what [[recheck]] passes: everything named is pending whatever the mask says,
+  so the answer is never `nil` for a non-empty `idxs`. Prerequisites are still read off the
+  mask -- a gate that is established is established, and re-running it would be a different
+  request from the one that was made."
+  [model mask idxs force?]
   (when (seq idxs)
-    (let [pending (not-established d idxs)]
+    (let [pending (if force?
+                    (vec idxs)
+                    (filterv #(not (bit-test (long mask) (long %))) idxs))]
       (when (seq pending)
         ;; Masks rather than sets: a check's index is its bit, so the union of what is
         ;; wanted is a `bit-or` per check and what is left to do is one `bit-and-not`
@@ -719,54 +775,65 @@
         ;; answer and nothing is rebuilt.
         (let [pm   (reduce bit-set 0 pending)
               want (wants model pending)
-              todo (if (= want pm) pending (mask-indices (bit-and-not want (verdict-mask d))))]
+              todo (if (= want pm)
+                     pending
+                     (mask-indices (bit-or pm (bit-and-not want (long mask)))))]
           (when (seq todo)
             (let [[shape pure io] (phases model todo)]
               {:shape shape :pure pure :io io})))))))
 
 (defn- establish-all
-  "Establish, against each draft in `ds`, the checks at its own entry of `idxss`, and answer
+  "Establish, against each value in `xs`, the checks at its own entry of `idxss`, and answer
   with `{:failures [[i ret] ...] :cache {io-dep-name value}}` for each of them, index-aligned
-  with `ds`.
+  with `xs`.
 
-  What is actually run for a draft is whatever its own mask does not already say is passing,
-  together with whatever gates that -- so `check` and `certify` mean *establish this*, not
-  *run exactly this*, and a satisfied prerequisite is free, value by value. Where nothing is
-  pending for any of them, no phase is entered at all: a `seal` of a draft nothing has been
-  written to, and a `check` of a check already established, are the calls this library is
-  arranged to make cheap, so they are answered before anything is built rather than by
-  running an empty pass over each phase in turn.
+  What is actually run for a value is whatever its own mask does not already say is passing,
+  together with whatever gates that -- so [[check]] means *establish this*, not *run exactly
+  this*, and a satisfied prerequisite is free, value by value. Where nothing is pending for
+  any of them, no phase is entered at all: a `seal` of a draft nothing has been written to,
+  and a `check` of a check already established, are the calls this library is arranged to
+  make cheap, so they are answered before anything is built rather than by running an empty
+  pass over each phase in turn. A sealed value's mask is every bit set, which is the same
+  arrangement answering `true` for it without running anything.
+
+  `force?` is [[recheck]]: every check named is run whatever the mask says. A draft's mask
+  is then written with what was found, so a verdict the world has taken back is cleared; a
+  sealed value has no mask to write, and the answer is a report rather than a verdict.
 
   Three phases, because shape gates everything. The shape checks run first and ungated,
   writing their verdicts into the mask; the other pure checks follow, each running only if
   the mask now says the shape checks of the fields it names are passing, so a check the gate
-  stopped is neither run nor reported. A draft anything failed for fetches nothing, and its
+  stopped is neither run nor reported. A value anything failed for fetches nothing, and its
   failures -- the ones asked for and the ones gating them alike -- are its answer. Only the
-  drafts whose pure phases came back clean reach the fetch, and they reach it together: one
+  values whose pure phases came back clean reach the fetch, and they reach it together: one
   pass per io-dep over the whole group, so a batched fetch sees every argument tuple in one
   call and distinct tuples are computed once however many values share them. The gate is per
-  value, so one malformed draft holds up nothing but its own fetch. Where no draft owes an
+  value, so one malformed draft holds up nothing but its own fetch. Where no value owes an
   IO-bound check the fetch pass is not entered either."
-  [model ds idxss]
-  (let [ds    (vec ds)
-        idxss (vec idxss)
-        n     (count ds)]
+  [model xs idxss force?]
+  (let [xs     (vec xs)
+        idxss  (vec idxss)
+        n      (count xs)
+        drafts (mapv #(some? (draft-model %)) xs)]
     (loop [i 0, plans (transient []), pending? false]
       (if (< i n)
-        (let [p (plan-for model (nth ds i) (nth idxss i))]
+        (let [p (plan-for model
+                          (if (nth drafts i) (verdict-mask (nth xs i)) (:all-pass model))
+                          (nth idxss i) force?)]
           (recur (inc i) (conj! plans p) (or pending? (some? p))))
         (if-not pending?
           (vec (repeat n established))
           (let [plans (persistent! plans)]
             (loop [i 0, fss (transient []), ios (transient []), fetching? false]
               (if (< i n)
-                ;; A draft whose shape failed carries nothing to the fetch, and one that
+                ;; A value whose shape failed carries nothing to the fetch, and one that
                 ;; owes no IO-bound check asks for none.
                 (let [p  (nth plans i)
+                      dr (nth drafts i)
                       fs (if p
-                           (let [d (nth ds i)]
-                             (into (record-run model d (:shape p) {})
-                                   (record-run model d (:pure p) {})))
+                           (let [x (nth xs i)]
+                             (into (record-run model dr x (:shape p) {})
+                                   (record-run model dr x (:pure p) {})))
                            [])
                       io (if (or (nil? p) (seq fs)) [] (:io p))]
                   (recur (inc i) (conj! fss fs) (conj! ios io)
@@ -775,7 +842,7 @@
                       ios (persistent! ios)]
                   (if-not fetching?
                     (mapv (fn [fs] (if (seq fs) {:failures fs :cache {}} established)) fss)
-                    (let [caches (fetch-io-all model ds ios)]
+                    (let [caches (fetch-io-all model xs ios)]
                       (mapv (fn [i]
                               (let [fs (nth fss i)
                                     io (nth ios i)]
@@ -783,118 +850,71 @@
                                   (seq fs)    {:failures fs :cache {}}
                                   (empty? io) established
                                   :else       (let [cache (nth caches i)]
-                                                {:failures (record-run model (nth ds i) io cache)
+                                                {:failures (record-run model (nth drafts i)
+                                                                       (nth xs i) io cache)
                                                  :cache    cache}))))
                             (range n)))))))))))))
 
 (defn- establish-group
-  "[[establish-all]] against one draft: a group of one, so that a call spanning values and a
+  "[[establish-all]] against one value: a group of one, so that a call spanning values and a
   call about one go through the same phases and the same fetches."
-  [model d idxs]
-  (first (establish-all model [d] [idxs])))
+  [model x idxs force?]
+  (first (establish-all model [x] [idxs] force?)))
 
 (defn- run-draft-checks!
   "Establish the checks at `idxs` against the draft `d` and throw once with every failure,
   keyed by check name in declaration order."
   [model d idxs]
-  (let [{:keys [failures cache]} (establish-group model d idxs)]
+  (let [{:keys [failures cache]} (establish-group model d idxs false)]
     (when (seq failures)
       (checks-failed! model (failure-entries model d failures cache)))))
 
-(defn- establish
-  "Answer what the check at `i` says about `d`, running it only if its verdict does not
-  already say it passes, and recording what it returned.
-
-  A set bit says this check passed against exactly this data -- a write cleared the bit of
-  everything naming the field it wrote -- so there is nothing left to learn and the check is
-  not called; no fetch happens either, which is what makes bulk checking worth doing. A
-  failure is not retained in the same way: nothing about a cleared bit distinguishes
-  \"failed\" from \"not yet run\", which is why a later call runs it again and produces the
-  failure again.
-
-  Where the check could not be run at all -- something gating its fetch failed -- there is
-  no verdict about it to answer with, so the reason is thrown instead. The question was
-  whether this check passes, and \"the data never got far enough to ask\" is not `false`."
-  [model d i]
-  (let [{:keys [failures cache]} (establish-group model d [i])]
-    (if-let [own (first (filter (fn [[j]] (= j i)) failures))]
-      (second own)
-      (if (seq failures)
-        (checks-failed! model (failure-entries model d failures cache))
-        true))))
-
-(defn check
-  "Run the check `cname` against the draft `d`: `true` if it passes, and whatever the check
-  returned if it does not.
-
-  Not a draft -- none of these return one. The verdict goes in `d`'s mask, which is what
-  frees the return value to be the answer to the question that was asked, and `true` means
-  passed here exactly as it does for a check itself.
-
-  Running a check runs whatever it depends on that is not already passing, so this
-  establishes the check rather than merely calling it: one already passing costs nothing --
-  no fetch either -- and one whose bit a write cleared runs again. A pure check depends on
-  fields, which are read rather than run. An IO-bound one depends on a fetch, and the fetch
-  depends on the checks over the fields it names: those run here first, and only if they
-  pass does anything reach the outside. Where one of them fails, the check asked about was
-  never run, so there is no verdict to answer with and the reason is thrown instead.
-
-  Failures are not retained. What this returns is the failure; a later call re-runs anything
-  not passing and produces it again, fetch included -- a verdict about an IO-bound check is
-  point-in-time, and what it consulted is not kept."
-  [d cname]
-  (let [model (draft-model! "check" d)]
-    (establish model d (check-id model cname))))
-
-(defn check!
-  "[[check]], insisting on the answer: `true`, or one `:check-failed` carrying the failure
-  under the check's name, alongside its docstring, the fields it declared and their values,
-  and what it returned -- the same report every other entry point throws.
-
-  The work is the same work, so a check already passing costs nothing here either."
-  [d cname]
-  (let [model (draft-model! "check!" d)
-        i     (check-id model cname)
-        {:keys [failures cache]} (establish-group model d [i])]
-    (if (seq failures)
-      (checks-failed! model (failure-entries model d failures cache))
-      true)))
-
 (def every-check
   "The certificate covering every check a type declares, which exists without anyone
-  declaring it -- so a draft can be run through everything in one pass rather than leaving
+  declaring it -- so a value can be run through everything in one pass rather than leaving
   whatever a named certificate omitted to be run one check at a time.
 
   It is the one certificate name a type may not declare for itself."
   ::every-check)
 
-(defn- certificate
-  "What the certificate `cname` covers on this type, or a throw naming what it could have
-  asked for. A certificate that does not exist covers nothing, and answering `true` for it
-  would be asserting exactly that nothing."
+(defn- ids-for
+  "The check indices `cname` names on this type: one, where it is a check's name; the
+  certificate's, where it is a certificate's; a throw where it is neither.
+
+  One verb over two kinds of name, because a lone check is a certificate containing itself
+  and nothing downstream of here can tell which was asked for. So there is one refusal too:
+  a name this type does not know is a programmer error whichever kind it was meant to be,
+  and the message says what it could have been given of either kind. Answering `true` for a
+  name that means nothing would be asserting exactly that nothing."
   [model cname]
-  (or (get (:certificates model) cname)
-      (throw (ex-info (format "%s declares no certificate named %s -- its certificates are %s"
+  (if-let [i (get (:check-ids model) cname)]
+    [i]
+    (if-let [c (get (:certificates model) cname)]
+      (:ids c)
+      (throw (ex-info (format "%s declares no check or certificate named %s -- its checks are %s and its certificates are %s"
                               (:name model) (pr-str cname)
+                              (pr-str (mapv :name (:checks model)))
                               (pr-str (vec (keys (:certificates model)))))
-                      {:error ::unknown-certificate :record (:name model) :certificate cname
-                       :certificates (vec (keys (:certificates model)))}))))
+                      {:error ::unknown-check :record (:name model) :check cname
+                       :checks (mapv :name (:checks model))
+                       :certificates (vec (keys (:certificates model)))})))))
 
-(defn holding
-  "The set of certificate names the draft `d` currently holds.
+(defn certificates
+  "The set of certificate names `x` currently holds.
 
-  Derived, never asserted: a draft holds a certificate exactly when every check in it is
+  Derived, never asserted: a value holds a certificate exactly when every check in it is
   currently passing, which is one `and` against the certificate's mask. So overlapping
   certificates need no coordination with each other, running individual checks can complete
   a certificate incidentally, and there is nowhere to record holding one except by having
   actually passed its checks.
 
-  A question about a draft, as [[passing]] is: a sealed value passed every check on its
-  type, which is strictly more than any certificate claims. Where the question is asked of
-  a value that could be either, `(::certificates (meta x))` is the same answer and both
-  forms answer it."
-  [d]
-  (held-in (draft-model! "holding" d) (verdict-mask d)))
+  A sealed value holds every certificate its type declares, the built-in among them, because
+  every check on it passed -- which is strictly more than any certificate claims. The name
+  matches the metadata key `::certificates`, which carries the same answer for the same
+  value."
+  [x]
+  (let [model (value-model! "certificates" x)]
+    (held-in model (value-mask model x))))
 
 (defn- merged-meta
   "`mta` with the library's own keys, `lib`, merged over the top.
@@ -933,172 +953,246 @@
   (apply array-map
          (into [] (mapcat (fn [[i ret]] [(:name (nth (:checks model) i)) ret])) fs)))
 
-(defn certify
-  "Run the certificate `cname` against the draft `d`: `true` if every check in it passes,
-  and otherwise a map of check name -> what that check returned, for those that did not.
-
-  What a failing check returned *is* the failure data, so that is what comes back here, as
-  it does from [[check]]. The richer report -- the docstring, the fields the check declared
-  and their values -- is what [[certify!]] throws.
-
-  Every check in the certificate runs; none of this stops at the first failure. Failures
-  come back keyed by check name in the type's own check declaration order, built with
-  `array-map` so that order survives past the size at which a map literal would lose it.
-
-  A check the certificate does not name can appear among them. Where the certificate holds
-  an IO-bound check, the checks gating its fetch run first, and one of those that fails is
-  both the reason nothing was fetched and the only honest thing to report -- answering
-  `true` would claim a certificate nothing was established for.
-
-  Not a draft: the verdicts go in `d`'s mask, which is what frees the return value to be
-  the answer to the question asked. Nor is holding the certificate recorded anywhere --
-  [[holding]] derives it from those verdicts, so this establishes checks and the
-  certificate follows."
-  [d cname]
-  (let [model (draft-model! "certify" d)
-        fs    (:failures (establish-group model d (:ids (certificate model cname))))]
+(defn- answered
+  "`true`, or what each check that did not pass returned, keyed by check name. The shape
+  every answering form here hands back."
+  [model x idxs force?]
+  (let [fs (:failures (establish-group model x idxs force?))]
     (if (seq fs) (returned-by-name model fs) true)))
 
-(defn certify!
-  "[[certify]], insisting on the answer: `true`, or one `:check-failed` carrying every
-  failure in the certificate, keyed by check name in declaration order, each with the
-  check's docstring, the fields it declared and their values, and what it returned.
-
-  The work is the same work, so a certificate already held costs nothing here either."
-  [d cname]
-  (let [model (draft-model! "certify!" d)
-        {:keys [failures cache]} (establish-group model d (:ids (certificate model cname)))]
+(defn- insisted-one
+  "`true`, or one `:check-failed` carrying the full report for every check that did not
+  pass. The shape every insisting form here throws."
+  [model x idxs force?]
+  (let [{:keys [failures cache]} (establish-group model x idxs force?)]
     (if (seq failures)
-      (checks-failed! model (failure-entries model d failures cache))
+      (checks-failed! model (failure-entries model x failures cache))
       true)))
 
-;;; --------------------------- Checking many drafts at once ---------------------------
+(defn check
+  "Run what `cname` names against `x`: `true` if everything named passes, and otherwise a
+  map of check name -> what that check returned, for those that did not.
 
-(defn- group-model!
-  "The model every draft in `ds` shares; `nil` where `ds` is empty; a throw where something
-  in it is not a draft, or is a draft of another type.
+  `cname` is a check's name or a certificate's. A lone check is a certificate containing
+  itself, so there is one verb and one answer, and nothing has to decide which kind of name
+  it is holding before it asks. `every-check` is the certificate covering the whole type.
 
-  A group is checked together because one fetch spans it, and a fetch belongs to a type: the
-  check name resolves against one model, the argument tuples are built by one type's runner,
-  and a collection of two types has no single answer to either. The offender is named by
-  position, because position is what a group call answers by."
-  [what ds]
-  (reduce (fn [model [n d]]
-            (let [m (or (draft-model d)
-                        (throw (ex-info (format "%s expects drafts, and the value at index %d is not one: %s"
-                                                what n (pr-str d))
-                                        {:error ::not-a-draft :index n :value d})))]
-              (cond
-                (nil? model)         m
-                (identical? m model) model
-                :else
-                (throw (ex-info (format (str "%s expects drafts of one type: the value at index "
-                                             "%d is a %s, where the group is %s")
-                                        what n (:name m) (:name model))
-                                {:error ::mixed-types :record (:name model)
-                                 :index n :found (:name m) :value d})))))
-          nil
-          (map-indexed vector ds)))
+  What a failing check returned *is* the failure data, so that is what comes back, keyed by
+  check name in the type's own declaration order and built with `array-map` so that order
+  survives past the size at which a map literal would lose it. The richer report -- the
+  docstring, the fields the check declared and their values -- is what [[check!]] throws.
+
+  Every check named runs; none of this stops at the first failure. A check the certificate
+  does not name can appear among the failures, and a check that *was* named can be missing
+  from them: where a check's gate fails it never runs, so it has no verdict of its own and
+  gets no entry, and the blocking check's entry is what says why.
+
+  This *establishes* rather than merely calls. Whatever the mask already says is passing
+  costs nothing -- no fetch either -- and whatever a write cleared runs again; the checks
+  gating a fetch run first, and only if they pass does anything reach the outside. On a
+  sealed value everything is established, so `true` comes back and nothing runs at all. Use
+  [[recheck]] to ask the world again.
+
+  Not a draft -- none of these return one. The verdict goes in `x`'s mask, which is what
+  frees the return value to be the answer to the question that was asked. Nor is holding a
+  certificate recorded anywhere: [[certificates]] derives it from those verdicts.
+
+  Failures are not retained. What this returns is the failure; a later call re-runs anything
+  not passing and produces it again, fetch included -- a verdict about an IO-bound check is
+  point-in-time, and what it consulted is not kept.
+
+  Throws `::unknown-check` where the type declares neither a check nor a certificate of that
+  name, and `::not-a-value` where `x` is not a draft or a sealed value of any type here."
+  [x cname]
+  (let [model (value-model! "check" x)]
+    (answered model x (ids-for model cname) false)))
+
+(defn check!
+  "[[check]], insisting on the answer: `true`, or one `:check-failed` carrying every failure
+  keyed by check name in declaration order, each with the check's docstring, the fields it
+  declared and their values, and what it returned -- the same report every other entry point
+  throws.
+
+  The work is the same work, so a check already passing costs nothing here either, and a
+  sealed value answers `true` without running anything."
+  [x cname]
+  (let [model (value-model! "check!" x)]
+    (insisted-one model x (ids-for model cname) false)))
+
+(defn recheck
+  "[[check]], but run it now: every check `cname` names is run whether or not the mask
+  already says it passes. Same argument, same keyed answer.
+
+  It exists because a verdict about the outside world is a verdict at a point in time, and a
+  set bit cannot tell one that still holds from one that has quietly stopped holding. `check`
+  is right to believe the mask -- that is what makes a second call free and a seal after a
+  bulk check perform no IO -- and wrong for the one question `recheck` asks.
+
+  On a draft the answer is written back: a check that passed against yesterday's database and
+  fails against today's is *un-passed*, so the draft stops claiming it and the next [[seal]]
+  runs it again. A check that was failing and now passes has its bit set, the same way.
+
+  On a sealed value there is no mask to write and the value cannot change, so this runs the
+  checks and answers. What comes back is a report about the world rather than a verdict about
+  the value -- a sealed value is one every check passed on, and [[passed]] goes on saying so.
+
+  Prerequisites are still read off the mask: a gate already established is not re-run, because
+  what was asked for was these checks and not their gates. A gate that has *not* passed still
+  stops the check behind it, here as anywhere. Fetches are shared for the length of this one
+  call and no longer, exactly as they are for `check`."
+  [x cname]
+  (let [model (value-model! "recheck" x)]
+    (answered model x (ids-for model cname) true)))
+
+(defn recheck!
+  "[[recheck]], insisting on the answer: `true`, or one `:check-failed` carrying every
+  failure, keyed by check name in declaration order. Same work, and no partial answer to
+  report."
+  [x cname]
+  (let [model (value-model! "recheck!" x)]
+    (insisted-one model x (ids-for model cname) true)))
+
+;;; --------------------------- Checking many values at once ---------------------------
+
+(defn- group-models!
+  "The model for each value in `xs`, index-aligned, or a throw naming by position the first
+  thing that is not a value of this library at all.
+
+  Position, because position is what a group call answers by -- two drafts holding identical
+  data are `=`, so nothing else in a group identifies a member."
+  [what xs]
+  (mapv (fn [n x]
+          (or (value-model x)
+              (throw (ex-info (format (str "%s expects drafts or sealed values, and the "
+                                           "value at index %d is neither: %s")
+                                      what n (pr-str x))
+                              {:error ::not-a-value :index n :value x}))))
+        (range) xs))
+
+(defn- partition-by-model
+  "`[[model [index ...]] ...]` -- the positions of `xs` grouped by the type they belong to,
+  types in the order they first appear and positions ascending within each.
+
+  A group is checked per type because one fetch belongs to a type: the argument tuples are
+  built by one type's runner and a batched fetch is declared on one type, so a mixed group is
+  one pass per type, still batched within each. Identity rather than equality, because a
+  model is a large map and two types' models are told apart by being different objects; and a
+  scan rather than a hash, because the number of distinct types in one call is small."
+  [models]
+  (reduce (fn [acc [n m]]
+            (let [i (first (keep-indexed (fn [k [m2]] (when (identical? m m2) k)) acc))]
+              (if i
+                (update-in acc [i 1] conj n)
+                (conj acc [m [n]]))))
+          []
+          (map-indexed vector models)))
 
 (defn- group-run
-  "Establish `idxs` -- whatever `idxs-of` makes of the group's model -- against every draft
-  in `ds`, and answer `[model ds idxs results]`, or `nil` where there is nothing to check.
+  "Establish `cname` against every value in `xs`, and answer `[models results]`, both
+  index-aligned with `xs`, or `nil` where there is nothing to check.
 
   The one place a group call is assembled, so the answering and the insisting forms run
   exactly the same work and differ only in what they make of it.
 
+  The name is resolved against every type in the group *before* anything runs. A type that
+  does not know it fails the whole call -- it is a programmer error, the same rule a single
+  [[check]] applies, and burying it among per-value failures is how a typo hides. Resolving
+  first is also what keeps the refusal from leaving half the group established.
+
   An empty collection is answered rather than refused: nothing to check is a thing that
   happens to a bulk caller, and there is no value to resolve a name against, so the name is
   not resolved. A collection of one is a group of one and goes through all of this."
-  [what ds idxs-of]
-  (let [ds (vec ds)]
-    (when-let [model (group-model! what ds)]
-      (let [idxs (idxs-of model)]
-        [model ds idxs
-         (establish-all model ds (repeat (count ds) idxs))]))))
+  [what xs cname force?]
+  (let [xs (vec xs)]
+    (when (seq xs)
+      (let [models (group-models! what xs)
+            groups (mapv (fn [[m is]] [m is (ids-for m cname)]) (partition-by-model models))
+            out    (object-array (count xs))]
+        (doseq [[m is idxs] groups]
+          (let [vs (mapv #(nth xs %) is)
+                rs (establish-all m vs (repeat (count is) idxs) force?)]
+            (dotimes [k (count is)] (aset out (nth is k) (nth rs k)))))
+        [models (vec out)]))))
+
+(defn- answered-all
+  "What a group's answering forms hand back: one answer per value, in the order the caller
+  gave them -- `true`, or what each check that did not pass returned, keyed by check name."
+  [models rs]
+  (mapv (fn [m {:keys [failures]}]
+          (if (seq failures) (returned-by-name m failures) true))
+        models rs))
 
 (defn- insisted
   "`true`, or one throw carrying every failure of every value in `rs`. What the bang forms
   make of a group run: partial success is a workspace notion, and a form that throws is not
   offering one."
-  [model ds rs]
+  [models xs rs]
   (let [fs (into [] (keep-indexed (fn [n {:keys [failures cache]}]
                                     (when (seq failures)
-                                      [n (failure-entries model (nth ds n) failures cache)])))
+                                      [n (failure-entries (nth models n) (nth xs n)
+                                                          failures cache)])))
                  rs)]
-    (if (seq fs) (bulk-failed! model fs) true)))
+    (if (seq fs) (bulk-failed! models fs) true)))
 
 (defn check-all
-  "Run the check `cname` against every draft in `ds`, and answer with a vector of what each
-  of them says, index-aligned with `ds`: `true` where it passed, and whatever the check
-  returned where it did not.
+  "Run what `cname` names against every value in `xs`, and answer with a vector index-aligned
+  with `xs`: `true` where everything named passed, and otherwise a map of check name -> what
+  that check returned, for those that did not.
 
-  One call spanning values, which is what a batched fetch is written for: an io-dep behind
-  the check is fetched once per distinct argument tuple across the whole group, and a
-  batched one sees every tuple in a single call. Results are index-aligned rather than keyed
-  by the draft because two drafts holding identical data are `=`, and a map would collapse
-  them into one.
+  One call spanning values, which is what a batched fetch is written for: an io-dep behind a
+  check is fetched once per distinct argument tuple across the whole group, and a batched one
+  sees every tuple in a single call. Results are index-aligned rather than keyed by the value
+  because two drafts holding identical data are `=`, and a map would collapse them into one.
 
-  Per value, this is [[check]]: whatever the draft's own mask already says is passing costs
-  nothing, the checks gating a fetch run first, and a draft whose gate failed carries
-  nothing to the outside while the rest of the group still fetches. Where the gate is what
-  failed, the check asked about never ran and has no verdict of its own to answer with, so
-  that value's answer is the gate's failures, keyed by check name as [[certify]] answers --
-  a group call reports rather than throws, because the other values have answers of their
-  own and a throw would discard them.
+  The group may hold values of more than one type, and sealed values alongside drafts.
+  Batched fetches are declared per type, so a mixed group is one fetch pass per type and
+  still batched within each; `cname` resolves per type, and a type that does not know it
+  fails the whole call before anything runs.
+
+  Per value, this is [[check]]: whatever the value's own mask already says is passing costs
+  nothing, the checks gating a fetch run first, and a value whose gate failed carries nothing
+  to the outside while the rest of the group still fetches. A sealed value has nothing left to
+  establish and answers `true`.
 
   Each draft is left with its own verdicts recorded, which is what makes sealing afterwards
   free. Nothing here produces a sealed value: a guarantee does not come in partial."
-  [ds cname]
-  (if-let [[model _ idxs rs] (group-run "check-all" ds #(vector (check-id % cname)))]
-    (let [i (first idxs)]
-      (mapv (fn [{:keys [failures]}]
-              (if-let [own (first (filter (fn [[j]] (= j i)) failures))]
-                (second own)
-                (if (seq failures) (returned-by-name model failures) true)))
-            rs))
+  [xs cname]
+  (if-let [[models rs] (group-run "check-all" xs cname false)]
+    (answered-all models rs)
     []))
 
 (defn check-all!
   "[[check-all]], insisting on the answer: `true`, or one `:check-failed` carrying every
   failure across every value, keyed by the value's index and, under that, by check name.
 
-  The work is the same work -- one fetch pass for the group, nothing re-established -- and
-  what differs is only that there is no partial success to report. Every value is run before
-  anything is thrown, and each draft keeps the verdicts it earned."
-  [ds cname]
-  (if-let [[model ds _ rs] (group-run "check-all!" ds #(vector (check-id % cname)))]
-    (insisted model ds rs)
+  The work is the same work -- one fetch pass per type, nothing re-established -- and what
+  differs is only that there is no partial success to report. Every value is run before
+  anything is thrown, and each draft keeps the verdicts it earned. Where the group held more
+  than one type, `:record` is the names of all of them rather than one speaking for the rest."
+  [xs cname]
+  (if-let [[models rs] (group-run "check-all!" xs cname false)]
+    (insisted models (vec xs) rs)
     true))
 
-(defn certify-all
-  "Run the certificate `cname` against every draft in `ds`, and answer with a vector
-  index-aligned with `ds`: `true` where every check in it passed, and otherwise a map of
-  check name -> what that check returned, for those that did not.
+(defn recheck-all
+  "[[check-all]], but run it now: every check `cname` names is run for every value, whether or
+  not its mask already says it passes.
 
-  Per value this is [[certify]], and across values it is [[check-all]]: one fetch pass for
-  the whole group, distinct argument tuples fetched once however many values share them, and
-  each draft left holding whatever its own checks established. A certificate is held when
-  its checks pass, so a group that comes back `true` is a group of drafts [[holding]] it."
-  [ds cname]
-  (if-let [[model _ _ rs] (group-run "certify-all" ds #(:ids (certificate % cname)))]
-    (mapv (fn [{:keys [failures]}]
-            (if (seq failures) (returned-by-name model failures) true))
-          rs)
+  This is the shape the verb is really for. Re-verifying a batch against the database is one
+  call, one fetch pass per type, batched within each -- where the same work value by value is
+  a query apiece. Each draft's mask is written with what was found, so a check the world has
+  taken back is un-passed for exactly the values it was taken back for."
+  [xs cname]
+  (if-let [[models rs] (group-run "recheck-all" xs cname true)]
+    (answered-all models rs)
     []))
 
-(defn certify-all!
-  "[[certify-all]], insisting on the answer: `true`, or one `:check-failed` carrying every
-  failure of every check of every value, keyed by the value's index and, under that, by
-  check name in declaration order.
-
-  `(certify-all! ds every-check)` is the bulk shape of sealing a group -- it establishes
-  everything every value owes, in one fetch pass, and leaves each draft's mask saying so.
-  It still does not seal anything: what comes back is an answer, and the values are sealed
-  one at a time afterwards, which by then costs no IO."
-  [ds cname]
-  (if-let [[model ds _ rs] (group-run "certify-all!" ds #(:ids (certificate % cname)))]
-    (insisted model ds rs)
+(defn recheck-all!
+  "[[recheck-all]], insisting on the answer: `true`, or one `:check-failed` carrying every
+  failure across every value, keyed by index and, under that, by check name."
+  [xs cname]
+  (if-let [[models rs] (group-run "recheck-all!" xs cname true)]
+    (insisted models (vec xs) rs)
     true))
 
 (defn- model-of
@@ -1243,9 +1337,9 @@
   every check had been rerun.
 
   What is actually run is whatever `d`'s verdict mask does not already say is passing, so
-  work done incrementally on the draft is not repeated: a check established with [[check]],
-  or a whole certificate established with [[certify]], costs nothing here, and a draft of a
-  sealed value that has been written to pays only for the checks naming the fields written.
+  work done incrementally on the draft is not repeated: anything established with [[check]],
+  one check or a whole certificate, costs nothing here, and a draft of a sealed value that
+  has been written to pays only for the checks naming the fields written.
   The guarantee is extensional -- it is about what the returned value satisfies, not about
   which checks were called -- so a cheaper sound strategy is permitted, and the mask is one.
 
@@ -1539,7 +1633,7 @@
   A certificate is a declaration like any other here, so it means something or the form
   does not compile. A name it gives that is not a check of this type would be a claim about
   a check that does not exist; a certificate covering nothing would be held by every draft
-  of the type, including one nothing has been run against, so `certify` would answer `true`
+  of the type, including one nothing has been run against, so `check` would answer `true`
   while asserting precisely nothing; and a name already spelling a check, or spelling the
   built-in, would make the same word mean two things inside one type.
 
@@ -1891,13 +1985,14 @@
   the gate is narrow: a malformed field no fetch touches holds up nothing.
 
   A fetch is shared for one validation call and no longer. Within a single [[check]],
-  [[certify]] or [[seal]] an io-dep is fetched at most once however many checks name it,
+  [[recheck]] or [[seal]] an io-dep is fetched at most once however many checks name it,
   and when the call returns the value is gone. So a draft carries no IO state: what it
   carries is which checks passed, which is a fact about the checking rather than about the
   world.
 
   `:certificates` maps a certificate name to the checks it covers -- a group a draft can be
-  run through before it is complete, see [[certify]]. Holding one is derived from which
+  run through before it is complete, which [[check]] takes by name exactly as it takes a
+  check's. Holding one is derived from which
   checks are passing rather than recorded anywhere, so nothing coordinates between them,
   and a certificate changes nothing about what sealing demands. A name it covers that is
   not a check of this type, a certificate covering nothing, or one spelled like a check or
@@ -2414,6 +2509,10 @@
           ;; here because a check is named from outside by name and reached from inside by
           ;; index, and a scan of `:checks` per call would be the only alternative.
           :check-ids   ~(into {} (map-indexed (fn [i c] [(:name c) i])) parsed)
+          ;; Every check of this type passing, as a mask. What a draft of a sealed value
+          ;; starts from, and what a sealed value answers with wherever a mask is read:
+          ;; being sealed is exactly every check having passed, so the two are one constant.
+          :all-pass    ~all-pass
           :index       ~index
           ;; field -> the bits of the checks naming it, which is `:index` said in the shape
           ;; a write can union in one `bit-or`. The same derivation as the invalidation

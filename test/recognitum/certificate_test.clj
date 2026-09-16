@@ -487,16 +487,16 @@
         (is (= ::nonesuch (:check e)) label)
         (is (= [::shape ::payroll ::rec/every-check] (:certificates e)) label)
         (is (= [::title ::crew ::pay ::paid-enough ::notes] (:checks e)) label)))
-    (testing "the name of a check is not refused any more -- it is the other half of the verb"
-      (is (true? (rec/check d ::title))))
     (testing "and a certificate declared on some other type is still refused"
       (is (= ::rec/unknown-check (:error (err #(rec/check d ::ns))))))
     (testing "and nothing is established by asking"
-      (is (= #{} (rec/passed d))))))
+      (is (= #{} (rec/passed d)))))
+  (testing "the name of a check is not refused any more -- it is the other half of the verb"
+    (is (true? (rec/check (whole) ::title)))))
 
 (deftest checking-a-certificate-on-a-sealed-value-answers-true-and-runs-nothing
-  (reset! runs {})
   (let [c (->Counted 1 "x")]
+    (reset! runs {})
     (is (true? (rec/check c ::ns)))
     (is (true? (rec/check c ::joint)))
     (is (true? (rec/check! c rec/every-check)))

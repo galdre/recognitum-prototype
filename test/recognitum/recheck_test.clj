@@ -139,7 +139,8 @@
     (is (true? (rec/check d ::all-vetted)))
     (is (true? (rec/recheck d ::all-vetted)))
     (is (contains? (rec/passed d) ::all-vetted))
-    (is (= #{::name ::crew ::all-vetted} (rec/passed d)))))
+    (is (= #{::crew ::all-vetted} (rec/passed d))
+        "::crew is the gate it waited on; ::name gates nothing and was never asked for")))
 
 (deftest a-check-that-was-failing-and-now-passes-is-set-by-recheck
   (let [d (crew "one" #{:charlie :mole})]
@@ -228,6 +229,7 @@
 
 (deftest a-sealed-value-in-a-group-is-rechecked-alongside-the-drafts
   (let [ds [(->Crew "one" #{:charlie}) (crew "two" #{:lyle})]]
+    (reset! log [])
     (is (= [true true] (rec/recheck-all ds ::all-vetted)))
     (is (= 1 (ran ::roster)) "one fetch spanning both forms")
     (swap! vetted disj :lyle)
