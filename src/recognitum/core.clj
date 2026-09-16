@@ -30,7 +30,14 @@
   the draft's data is immutable, but which checks have been run against that data is not
   part of the data. See [[passing]]. [[check]] and [[check!]] run one named check against a
   draft and answer the question rather than handing back a value -- the verdict goes in the
-  mask, and a check the mask already says passes is not run again."
+  mask, and a check the mask already says passes is not run again.
+
+  A certificate names a subset of those checks, so a draft can be run through a group of
+  them before it is complete. [[certify]] and [[certify!]] establish one; whether a draft
+  *holds* one is derived from the mask rather than recorded anywhere ([[holding]]), so
+  overlapping certificates need no coordination and individual checks can complete one
+  incidentally. Certificates are a draft-level facility and change nothing about what a
+  sealed value guarantees: [[seal]] enforces every check on the type, certified or not."
   (:refer-clojure :exclude [defrecord])
   (:require
    [potemkin :as p]))
@@ -277,23 +284,60 @@
                       {:error ::unknown-check :record (:name model) :check cname
                        :checks (mapv :name (:checks model))}))))
 
-(defn- unwritten-deps
-  "The fields `check` names that `d` has never been written to, in arglist order."
-  [model d check]
-  (let [missing (set ((:draft-missing model) d))]
-    (filterv missing (:deps check))))
+(defn- waiting-on
+  "check name -> the fields it names that `d` has never been written to, in arglist order,
+  for every check at `idxs` that is waiting on one.
 
-(defn- missing-field!
+  Every check in the group is asked, rather than the search stopping at the first one that
+  is waiting: nothing else here stops at the first anything, and a caller told about one
+  unwritten field at a time would write one and be told about the next."
+  [model d idxs]
+  (let [missing (set ((:draft-missing model) d))
+        cs      (:checks model)]
+    (apply array-map
+           (into [] (mapcat (fn [i]
+                              (let [c  (nth cs i)
+                                    ks (filterv missing (:deps c))]
+                                (when (seq ks) [(:name c) ks]))))
+                 idxs))))
+
+(defn- missing-fields!
   "A check cannot judge a field nobody wrote. \"Never written\" and \"written to nil\" are
   different things everywhere else here, and the sentinel that tells them apart must not
   reach a check body -- a check handed it would be judging the library's internals, and a
-  verdict recorded from that would be a verdict about nothing."
-  [model check ks]
-  (throw (ex-info (format "%s cannot run %s: it names %s, which %s never written"
-                          (:name model) (pr-str (:name check)) (pr-str (vec ks))
-                          (if (next ks) "were" "was"))
-                  {:error ::missing-field :record (:name model) :check (:name check)
-                   :key (first ks) :keys (vec ks)})))
+  verdict recorded from that would be a verdict about nothing.
+
+  `waiting` is [[waiting-on]]'s answer, never empty. `:waiting` carries all of it; `:check`,
+  `:key` and `:keys` describe the first, which is the whole of it wherever one check was
+  asked about."
+  [model waiting]
+  (let [[cname cks] (first waiting)
+        ks          (into [] (distinct) (mapcat val waiting))]
+    (throw (ex-info (if (next waiting)
+                      (format "%s cannot run %d checks: %s"
+                              (:name model) (count waiting)
+                              (apply str
+                                     (interpose
+                                      "; "
+                                      (map (fn [[c cks]]
+                                             (format "%s names %s, which %s never written"
+                                                     (pr-str c) (pr-str cks)
+                                                     (if (next cks) "were" "was")))
+                                           waiting))))
+                      (format "%s cannot run %s: it names %s, which %s never written"
+                              (:name model) (pr-str cname) (pr-str cks)
+                              (if (next cks) "were" "was")))
+                    {:error ::missing-field :record (:name model) :check cname
+                     :key (first ks) :keys ks :waiting waiting}))))
+
+(defn- run-check!
+  "Call the check at `i` against `d`, write down what it returned, and answer with that.
+  A check that throws records nothing: it reached no verdict, so its bit says what it said
+  before."
+  [model d i]
+  (let [ret ((:run-draft model) i d)]
+    (record-verdict! d i (true? ret))
+    ret))
 
 (defn- establish
   "Answer what the check at `i` says about `d`, running it only if its verdict does not
@@ -307,12 +351,9 @@
   [model d i]
   (if (bit-test (verdict-mask d) i)
     true
-    (let [c (nth (:checks model) i)]
-      (when-let [ks (seq (unwritten-deps model d c))]
-        (missing-field! model c ks))
-      (let [ret ((:run-draft model) i d)]
-        (record-verdict! d i (true? ret))
-        ret))))
+    (let [w (waiting-on model d [i])]
+      (when (seq w) (missing-fields! model w))
+      (run-check! model d i))))
 
 (defn check
   "Run the check `cname` against the draft `d`: `true` if it passes, and whatever the check
@@ -348,6 +389,101 @@
       true
       (let [c (nth (:checks model) i)]
         (checks-failed! model [(failure-entry c ret (dep-values c d))])))))
+
+(def every-check
+  "The certificate covering every check a type declares, which exists without anyone
+  declaring it -- so a draft can be run through everything in one pass rather than leaving
+  whatever a named certificate omitted to be run one check at a time.
+
+  It is the one certificate name a type may not declare for itself."
+  ::every-check)
+
+(defn- certificate
+  "What the certificate `cname` covers on this type, or a throw naming what it could have
+  asked for. A certificate that does not exist covers nothing, and answering `true` for it
+  would be asserting exactly that nothing."
+  [model cname]
+  (or (get (:certificates model) cname)
+      (throw (ex-info (format "%s declares no certificate named %s -- its certificates are %s"
+                              (:name model) (pr-str cname)
+                              (pr-str (vec (keys (:certificates model)))))
+                      {:error ::unknown-certificate :record (:name model) :certificate cname
+                       :certificates (vec (keys (:certificates model)))}))))
+
+(defn holding
+  "The set of certificate names the draft `d` currently holds.
+
+  Derived, never asserted: a draft holds a certificate exactly when every check in it is
+  currently passing, which is one `and` against the certificate's mask. So overlapping
+  certificates need no coordination with each other, running individual checks can complete
+  a certificate incidentally, and there is nowhere to record holding one except by having
+  actually passed its checks.
+
+  A question about a draft, as [[passing]] is: a sealed value passed every check on its
+  type, which is strictly more than any certificate claims."
+  [d]
+  (let [model (draft-model! "holding" d)
+        m     (verdict-mask d)]
+    (into #{} (keep (fn [[cname {:keys [mask]}]] (when (= mask (bit-and m mask)) cname)))
+          (:certificates model))))
+
+(defn- run-certificate!
+  "Establish every check in `cert` against `d` and answer with `[i ret]` for each that did
+  not return `true`, in the type's own check order.
+
+  Only what is not already passing is run, so a certificate the draft already holds costs
+  nothing and one sharing checks with another pays for them once. The fields are pre-flighted
+  over that same set and in one pass, so a draft too incomplete to judge says so about every
+  check that is waiting rather than one at a time."
+  [model d cert]
+  (let [m       (verdict-mask d)
+        pending (filterv #(not (bit-test m %)) (:ids cert))
+        w       (waiting-on model d pending)]
+    (when (seq w) (missing-fields! model w))
+    (reduce (fn [acc i]
+              (let [ret (run-check! model d i)]
+                (if (true? ret) acc (conj acc [i ret]))))
+            [] pending)))
+
+(defn certify
+  "Run the certificate `cname` against the draft `d`: `true` if every check in it passes,
+  and otherwise a map of check name -> what that check returned, for those that did not.
+
+  What a failing check returned *is* the failure data, so that is what comes back here, as
+  it does from [[check]]. The richer report -- the docstring, the fields the check declared
+  and their values -- is what [[certify!]] throws.
+
+  Every check in the certificate runs; none of this stops at the first failure. Failures
+  come back keyed by check name in the type's own check declaration order, built with
+  `array-map` so that order survives past the size at which a map literal would lose it.
+
+  Not a draft: the verdicts go in `d`'s mask, which is what frees the return value to be
+  the answer to the question asked. Nor is holding the certificate recorded anywhere --
+  [[holding]] derives it from those verdicts, so this establishes checks and the
+  certificate follows."
+  [d cname]
+  (let [model (draft-model! "certify" d)
+        fs    (run-certificate! model d (certificate model cname))]
+    (if (seq fs)
+      (apply array-map
+             (into [] (mapcat (fn [[i ret]] [(:name (nth (:checks model) i)) ret])) fs))
+      true)))
+
+(defn certify!
+  "[[certify]], insisting on the answer: `true`, or one `:check-failed` carrying every
+  failure in the certificate, keyed by check name in declaration order, each with the
+  check's docstring, the fields it declared and their values, and what it returned.
+
+  The work is the same work, so a certificate already held costs nothing here either."
+  [d cname]
+  (let [model (draft-model! "certify!" d)
+        fs    (run-certificate! model d (certificate model cname))]
+    (if (seq fs)
+      (checks-failed! model (map (fn [[i ret]]
+                                   (let [c (nth (:checks model) i)]
+                                     (failure-entry c ret (dep-values c d))))
+                                 fs))
+      true)))
 
 (defn model-of
   "The model for `x`, whether `x` is a validated instance or the type itself."
@@ -651,10 +787,10 @@
   key inside `:options`, and for a bare map of checks written where the definition map now
   goes, whose check names arrive here as sections nobody declared.
 
-  `:io-deps` and `:certificates` are part of the form before they are part of the library.
-  An empty one compiles, so a form may be written in its final shape; a populated one is
-  refused rather than accepted and ignored, which would be the silent mis-declaration
-  again, wearing a different hat."
+  `:io-deps` is part of the form before it is part of the library. An empty one compiles,
+  so a form may be written in its final shape; a populated one is refused rather than
+  accepted and ignored, which would be the silent mis-declaration again, wearing a
+  different hat."
   [tname definition]
   (when-not (map? definition)
     (throw (ex-info (format (str "%s: defrecord takes a name, a vector of fields and a "
@@ -688,14 +824,13 @@
                                 tname (pr-str o) (pr-str known-options))
                         {:error ::unknown-option :record tname :option o
                          :options known-options}))))
-    (doseq [s [:io-deps :certificates]]
-      (when (seq (get sections s))
-        (throw (ex-info (format (str "%s declares %s, which the library does not implement yet "
-                                     "-- the section is accepted only empty, so that nothing is "
-                                     "declared and then ignored")
-                                tname s)
-                        {:error ::unsupported-section :record tname :section s
-                         :declared (vec (keys (get sections s)))}))))
+    (when (seq (:io-deps sections))
+      (throw (ex-info (format (str "%s declares :io-deps, which the library does not implement "
+                                   "yet -- the section is accepted only empty, so that nothing "
+                                   "is declared and then ignored")
+                              tname)
+                      {:error ::unsupported-section :record tname :section :io-deps
+                       :declared (vec (keys (:io-deps sections)))})))
     sections))
 
 (def mask-width
@@ -718,6 +853,64 @@
                                  "one check's bit onto another's")
                             tname n mask-width)
                     {:error ::too-many-checks :record tname :count n :limit mask-width}))))
+
+(defn parse-certificates
+  "The `:certificates` section -> certificate name -> `{:checks :ids :mask}`, with the
+  built-in [[every-check]] appended. `check-names` is the type's checks in declaration
+  order, which is the order a certificate is read back in whatever order it was written.
+
+  A certificate is a declaration like any other here, so it means something or the form
+  does not compile. A name it gives that is not a check of this type would be a claim about
+  a check that does not exist; a certificate covering nothing would be held by every draft
+  of the type, including one nothing has been run against, so `certify` would answer `true`
+  while asserting precisely nothing; and a name already spelling a check, or spelling the
+  built-in, would make the same word mean two things inside one type.
+
+  `:mask` is the certificate's checks as bits of a draft's verdict mask, so holding one is
+  a single `and` at run time rather than a walk over names."
+  [tname certificates check-names]
+  (let [known (vec check-names)
+        ids   (zipmap known (range))
+        bad!  (fn [cname why]
+                (throw (ex-info (format "%s certificate %s %s" tname (pr-str cname) why)
+                                {:error ::malformed-certificate :record tname
+                                 :certificate cname})))
+        one   (fn [cname names]
+                (when-not (or (set? names) (sequential? names))
+                  (bad! cname (format (str "is %s -- a certificate is the collection of check "
+                                           "names it covers")
+                                      (pr-str names))))
+                (when (empty? names)
+                  (bad! cname (str "covers no check -- a certificate covering nothing would be "
+                                   "held by every draft of this type, including one nothing "
+                                   "has been run against")))
+                (doseq [c names]
+                  (when-not (contains? ids c)
+                    (throw (ex-info (format (str "%s certificate %s covers %s, which is not a "
+                                                 "check of %s -- its checks are %s")
+                                            tname (pr-str cname) (pr-str c) tname (pr-str known))
+                                    {:error ::unknown-check :record tname :certificate cname
+                                     :check c :checks known}))))
+                (let [idxs (vec (sort (into #{} (map ids) names)))]
+                  {:checks (mapv known idxs)
+                   :ids    idxs
+                   :mask   (reduce bit-set 0 idxs)}))]
+    (doseq [cname (keys certificates)]
+      (when (= cname every-check)
+        (throw (ex-info (format (str "%s declares a certificate named %s, which is the built-in "
+                                     "covering every check on the type")
+                                tname (pr-str every-check))
+                        {:error ::reserved-certificate :record tname :certificate cname})))
+      (when (contains? ids cname)
+        (throw (ex-info (format "%s declares %s as both a check and a certificate"
+                                tname (pr-str cname))
+                        {:error ::duplicate-name :record tname :name cname}))))
+    (apply array-map
+           (into [] cat
+                 (concat (map (fn [[cname names]] [cname (one cname names)]) certificates)
+                         [[every-check {:checks known
+                                        :ids    (vec (range (count known)))
+                                        :mask   (reduce bit-set 0 (range (count known)))}]])))))
 
 (defn- parse-check
   "One entry of the `:checks` map -> `{:name :doc :args :fn}`.
@@ -813,13 +1006,13 @@
         {:options      {:io-limited true}
          :checks       {::name non-blank-string?}
          :io-deps      {}
-         :certificates {}})
+         :certificates {::shape #{::name}}})
 
   Every section is optional and an absent one is an empty one, but a key that names no
   section at all is a compile error: a mistyped `:cheks` would define a type with no checks,
   and a value asserting a validation that never ran is the one thing here that must not be
-  constructible. See [[parse-definition]]. `:io-deps` and `:certificates` are accepted only
-  empty until the library implements them.
+  constructible. See [[parse-definition]]. `:io-deps` is accepted only empty until the
+  library implements it.
 
   `:checks` maps a check name -- a namespace-qualified keyword, unique within the type, and
   what failures report -- to a check, written in one of three forms:
@@ -848,6 +1041,14 @@
   the check rather than a claim about the data, and \"we could not determine whether this
   is valid\" is not \"this is invalid\".
 
+  `:certificates` maps a certificate name to the checks it covers -- a group a draft can be
+  run through before it is complete, see [[certify]]. Holding one is derived from which
+  checks are passing rather than recorded anywhere, so nothing coordinates between them,
+  and a certificate changes nothing about what sealing demands. A name it covers that is
+  not a check of this type, a certificate covering nothing, or one spelled like a check or
+  like the built-in [[every-check]], is a compile error naming the offender. See
+  [[parse-certificates]].
+
   A field becomes a key qualified by the namespace this form is written in -- a `Heist`
   defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
   `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
@@ -863,7 +1064,7 @@
   `(instance? Heist h)` would surprise itself and wants [[of-type?]]. [[unsealed]] opts a
   return out of the seal."
   [tname fields definition & impls]
-  (let [{:keys [options checks]} (parse-definition tname definition)
+  (let [{:keys [options checks certificates]} (parse-definition tname definition)
         impl-forms (parse-impls tname impls)
         model-sym (symbol (str tname "-model"))
         fsyms     (mapv #(with-meta % nil) fields)
@@ -920,6 +1121,10 @@
         ;; full width the mask is every bit of the long, which `(dec (bit-shift-left 1 n))`
         ;; would not give -- the shift wraps.
         all-pass  (if (= nchecks mask-width) -1 (dec (bit-shift-left 1 nchecks)))
+        ;; Resolved here for the same reason an arglist is: a certificate naming a check
+        ;; that does not exist, or covering nothing at all, is a claim about a validation
+        ;; nobody wrote. The built-in comes back on the end of this.
+        certs     (parse-certificates tname certificates (mapv :name parsed))
         cvar      (fn [i] (symbol (str tname "--check-" i)))
         deps-of   (fn [i] (:deps (nth parsed i)))
         ;; Derived from the arglists, so it cannot be misdeclared: there is nowhere to
@@ -1105,6 +1310,11 @@
           :check-ids   ~(into {} (map-indexed (fn [i c] [(:name c) i])) parsed)
           :index       ~index
           :independent ~independent
+          ;; certificate name -> what it covers, as check names, indices, and the bits of
+          ;; a draft's verdict mask they own -- so holding one is an `and`. `array-map`
+          ;; applied to the pairs, rather than a literal, which would promote and reorder
+          ;; past the eighth certificate.
+          :certificates (array-map ~@(into [] cat certs))
           :tag         '~tagsym
           ;; One runner per type, so a check reached by index is still called with direct
           ;; field access rather than a lookup per dependency.

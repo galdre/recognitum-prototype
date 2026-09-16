@@ -207,7 +207,14 @@ the checking, not about the world.
 
 `:certificates` maps a certificate name to a set of check names. A built-in certificate covering
 every check on the type exists without being declared, so bulk checking can run everything in one
-pass rather than leaving whatever a named certificate omitted to run per value.
+pass rather than leaving whatever a named certificate omitted to run per value. It is called
+`:recognitum.core/every-check`, and is the one certificate name a type may not declare for
+itself.
+
+A certificate is a declaration, so it is resolved at macroexpansion as an arglist is. A name it
+covers that is not a check of this type, a certificate covering nothing — which every draft of
+the type would hold, including one nothing had been run against — and a name already spelling a
+check are each a compile error naming the offender.
 
 Certificates are a **draft-level** facility:
 they name a subset of checks you can run early, before the value is complete.
@@ -512,8 +519,5 @@ keyword lookup.
 ---
 
 ## Open
-
-- **What the built-in every-check certificate is called.** Cheap to settle later; nothing depends
-  on the name.
 
 `:options` holds `:io-limited` and nothing else so far. It exists so that it can hold more.

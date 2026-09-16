@@ -60,7 +60,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       invalidation mask for the written field. Snapshot, so versions diverge.
 - [x] **D2. `check` / `check!`.** Return `true` or failure data; none return a draft. Running a
       check runs whatever it depends on that is not already passing.
-- [ ] **D3. Certificates.** The `:certificates` section, holding derived from the mask, and the
+- [x] **D3. Certificates.** The `:certificates` section, holding derived from the mask, and the
       built-in certificate covering every check. `certify` / `certify!`.
 - [ ] **D4. Uniform `meta`.** Library keys merged over the user's, same answer from drafts and
       sealed values.
@@ -164,7 +164,12 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       `nil` (`dep-values` goes through `get`, which returns the default for an unwritten
       field). So it reports `:missing-field` naming the check and every field it is waiting
       on, in arglist order, before the body is called. `certify` (D3) and `check-all` (E3)
-      have the same case and should answer the same way.
+      have the same case and should answer the same way. Ruled in D3: `certify` answers
+      the same way, over the whole group at once -- it pre-flights every check it is about
+      to run and throws one `:missing-field` carrying `:waiting`, a map of check name ->
+      the fields that check is waiting on, because nothing else here stops at the first
+      anything either. `:check`, `:key` and `:keys` still describe the first, which is the
+      whole of it wherever one check was asked about.
 
 - [ ] **D2 — `check` returns the check's own return value, not the failure report.**
       `SPEC.md` says "the failing check's data", and the check contract says what a check
@@ -172,7 +177,46 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       -- docstring, declared fields and their values, return value -- is what `check!`
       throws. D3 has to decide the same thing for `certify`, whose `{check-name
       failure-data}` could plausibly be either; making it match the `:failures` map of a
-      thrown `:check-failed` would be the other reading.
+      thrown `:check-failed` would be the other reading. Ruled in D3: `certify` hands back
+      the checks' own return values, so the two non-throwing forms read alike and the
+      phrase "failure data" means one thing throughout. `certify!` throws the same report
+      every other throwing entry point throws.
+
+- [ ] **D3 — the built-in certificate is called `:recognitum.core/every-check`.**
+      `SPEC.md`'s "Open" section left the name to whoever needed it; D3 needed it, so it
+      is settled there and the bullet is gone. `recognitum.core/every-check` is the var
+      holding it, a type may not declare a certificate of that name
+      (`::reserved-certificate`), and it is the last entry of every model's
+      `:certificates`, so `holding` and `certify` need no special case for it. A type
+      with no checks holds it vacuously, which is honest rather than a carve-out.
+
+- [ ] **D3 — a certificate may be written as a vector as well as a set.** `SPEC.md` says
+      "a set of check names", and a set is what the example writes. The macro accepts any
+      set or sequential collection, because a vector of check names means exactly the same
+      thing and refusing it would buy nothing: the order it is written in is discarded
+      either way, since a certificate is read back in the type's own check order so that
+      failures report in the order every other entry point reports in. A map, a keyword, a
+      bare symbol and a number are refused as `::malformed-certificate`.
+
+- [ ] **D3 — `certify`, `certify!` and `holding` refuse a sealed value, as `check` and
+      `passing` do.** Same note as D2's, now with two more functions in it: a sealed value
+      passed every check, so `true` and "holds every certificate" are honest answers there,
+      and D4's uniform `meta` wants both constants for a sealed type. Whoever widens
+      `passing` for D4 should widen all five together or leave all five narrow; the thing
+      to avoid is `meta` answering for a sealed value while the functions behind those keys
+      throw on one.
+
+- [ ] **D3 — `certify` does not save work at the seal yet.** Certifying a draft leaves
+      every check it ran marked as passing, but `seal` still selects what to run by the
+      dirty-key set rather than by the mask, so a fully certified draft re-runs everything
+      when it seals. That is D5, and `SPEC.md`'s "bulk checking leaves the masks populated,
+      so sealing each value afterwards finds its checks already passing and performs no IO"
+      is not true until it lands. The guarantee is unaffected -- the checks agree, they are
+      merely run twice.
+
+- [ ] **D3 — `README.md` says nothing about certificates.** F1 owns it. The draft-level
+      half of the library -- `check`, `check!`, `certify`, `certify!`, `passing`, `holding`
+      -- is documented only in docstrings and in `SPEC.md`.
 
 - [ ] **D2 — the README documents neither `check` nor `check!`.** F1 owns the README, and
       the draft-level facility is the half of the library it says least about. The four-way
@@ -195,12 +239,16 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       `(doseq [s [:io-deps :certificates]] ...)` guard in `parse-definition`, populate the
       model from the section, and drop the corresponding case from
       `definition-test/a-section-with-no-implementation-behind-it-is-accepted-only-empty`.
+      D3 did its half: the guard is now a `when` over `:io-deps` alone, the model carries
+      `:certificates`, and that test asserts a populated `:certificates` compiles. Only
+      the `:io-deps` half is left, for E1.
 
 - [ ] **C1 — only `:options` was added to the model, and nothing reads it.** The model
       carries `:options` (an empty map where the section was left out) so that E4 has
       somewhere to look for `:io-limited`; `:io-deps` and `:certificates` are not on the
       model at all, because they can only be empty. Whoever lands E1/D3/E4 adds theirs the
-      same way. `known-options` is `#{:io-limited}` and an option outside it is a compile
+      same way. D3 added `:certificates` -- certificate name -> `{:checks :ids :mask}`,
+      emitted as `array-map` applied to the pairs so it stays ordered past eight. `known-options` is `#{:io-limited}` and an option outside it is a compile
       error, so a new option is declared there or it does not compile.
 
 - [x] **C1 — the definition map is required, not optional.** `SPEC.md` says three
