@@ -201,7 +201,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       sealed value, and the outer's result reflects the inner's change. Do not edit TODOs.md
       or SPEC.md; report. Done d194652: `begin-revision` (inner, returns `unsealed`) and `revise` (outer, seals).
 
-- [ ] **I5. Three README additions, ruled 2026-09-16.** (a) Near the top, a brief statement —
+- [x] **I5. Three README additions, ruled 2026-09-16.** (a) Near the top, a brief statement —
       descriptive, not an instruction, few words — that this is intended to behave like
       `clojure.core/defrecord` with deliberate changes, followed by the short list of those
       changes (two types; checks on every write; `dissoc` of a declared field refused;
@@ -213,7 +213,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       io-dep). Names ruled 2026-09-16: **shape validation**, **invariant validation**, **external validation**,
       used consistently; the FP gloss (refinement / invariant / effectful) may appear once in
       parentheses. Placed where the checks are introduced. Do not edit TODOs.md or SPEC.md;
-      report.
+      report. Done 6b63053. Also by galdre's ruling the same day, the six tests that scanned prose or source for forbidden words were deleted ("burn them with fire"); the three tests of what `pr-str` returns stay. Left for a sweep: five demo `show` labels and unset_test's docstring still say "shape check"/"IO-bound check"/"cross-field check".
 
 ### H — later, low priority
 
