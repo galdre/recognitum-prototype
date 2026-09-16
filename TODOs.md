@@ -180,7 +180,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       guard everything it guarded. Remove any reference to it elsewhere. Do not edit TODOs.md
       or SPEC.md; report. Done 133bd72: `recur` via a `loop` over the non-receiver args on both emissions; the dedup was already true by construction and is now pinned by a test; the audit-removal test is deleted.
 
-- [ ] **I3. `:io-limited` takes a literal boolean or a var.** The value check is specific to
+- [x] **I3. `:io-limited` takes a literal boolean or a var.** The value check is specific to
       `:io-limited`, not a rule over all options. Accept `true`, `false`, or a symbol that
       `resolve`s at macroexpansion to a var whose value is a boolean — read the value then; a
       later `alter-var-root` does not change a compiled type, and that is fine. A symbol that
@@ -188,7 +188,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       map) is refused as `::malformed-option`, with a message that says which of those it was.
       Tests: literal true/false; a same-namespace var; a qualified var from another namespace;
       a var holding `nil`; an unresolvable symbol; a call. Do not edit TODOs.md or SPEC.md;
-      report.
+      report. Done c2fbc73. The generic option-value rule is gone; each known option owns its value rule. One edge left: a symbol naming a local (the option written inside a `let`) is reported as "does not resolve in <ns>", which is correct but does not say "that is a local."
 
 ### H — later, low priority
 
