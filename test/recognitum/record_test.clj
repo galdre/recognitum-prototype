@@ -356,14 +356,32 @@
   (is (= :d (ours ::nope :d)))
   (is (= ClassCastException (threw #(theirs :alpha)))))
 
-(deftest ours-departs-tostring-is-the-entries-where-a-defrecords-is-the-object-identity
-  ;; `defrecord` defines no `toString`, so `str` of one is `Object`'s; potemkin's template
-  ;; prints the entries and `AbstractRecord` keeps that. Nothing in `SPEC.md` rules on it,
-  ;; and the readable answer is the one worth keeping.
-  (is (= (str (into {} ours)) (str ours)))
-  (is (re-find #"^recognitum\.record_test\.PlainTwin@" (str theirs))))
-
 ;;; ======================= the same treatment for both types =======================
+
+(deftest str-is-the-identity-string-as-a-defrecords-is
+  ;; `SPEC.md`, "Printing and reading". A record overrides no `toString`, so `str` of one is
+  ;; `Object`'s -- class name, `@`, hex identity hash -- and both of ours answer in the same
+  ;; shape. `str` is what string concatenation and logging call implicitly, so the entries
+  ;; form would dump a whole collection field into every line that so much as mentions a
+  ;; value; the identity string is bounded, and the readable form is one `pr-str` away.
+  (let [marker "tostring-marker"
+        mine   (->Twin marker 2)
+        twin   (->PlainTwin marker 2)]
+    (doseq [[what x] [["the defrecord twin" twin] ["sealed" mine] ["draft" (rec/draft mine)]]]
+      (testing what
+        (let [s (str x)]
+          (is (re-matches (re-pattern (str "\\Q" (.getName (class x)) "\\E@[0-9a-f]+")) s))
+          (testing "carrying no field value, no key and no print tag"
+            (is (false? (.contains s marker)))
+            (is (false? (.contains s "alpha")))
+            (is (false? (.contains s "#")))
+            (is (false? (.contains s "{"))))
+          (testing "and concatenation, which calls it implicitly, says exactly that"
+            (is (= (str "got " s) (str "got " x)))))))
+    (testing "while what pr-str answers is untouched"
+      (is (re-find #"^#recognitum\.record-test/Twin\{" (pr-str mine)))
+      (is (.contains (pr-str mine) marker))
+      (is (.startsWith (pr-str (rec/draft mine)) "#<Twin draft ")))))
 
 (deftest the-draft-type-is-the-sealed-type-in-everything-but-what-spec-names
   (let [d (rec/draft ours)]
