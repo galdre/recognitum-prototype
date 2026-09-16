@@ -205,6 +205,11 @@ running — so it cannot catch the mis-declaration on the write that exploits it
 touches every field and so runs every invariant: **build one instance of each type under the
 audit and every mis-declaration surfaces.** That is the thing to put in your test suite.
 
+`clojure -X:test-audit` runs the whole suite this way, so every type it constructs is checked.
+That catch is not redundant with the ordinary run: a mis-declared `:keys` does not corrupt a
+value until some later write exploits it, so the plain suite passes clean while the audited one
+fails. Worth having both.
+
 It is off by default and costs nothing when off. When on, each invariant run allocates a proxy
 and reads go through it, so leave it out of production. A predicate that asks for the whole map
 (`keys`, `vals`, `into {}`) cannot be attributed, and the audit abstains rather than guess.
@@ -213,6 +218,7 @@ and reads go through it, so leave it out of production. A predicate that asks fo
 
 ```
 clojure -X:test                                        # the suite
+clojure -X:test-audit                                  # the suite, every invariant audited
 clojure -M:dev -e "(require 'prototype.demo)(prototype.demo/run)"
 clojure -M:bench -e "(require 'prototype.bench4)(prototype.bench4/run)"
 ```

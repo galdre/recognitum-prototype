@@ -1,8 +1,11 @@
 (ns prototype.audit-test
   "The opt-in check that an invariant declares every key it reads."
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is testing use-fixtures]]
+   [prototype.audit-fixture :as fixture]
    [prototype.validated-record :as v]))
+
+(use-fixtures :once fixture/audit)
 
 (defn- err [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
@@ -24,15 +27,17 @@
 (defn- build [t m] (v/revising [x t] (merge x m)))
 
 (deftest off-by-default
-  (is (false? v/*audit-invariant-keys*)))
+  ;; the root value, not the current binding -- the suite may be running under the fixture
+  (is (false? (.getRawRoot #'v/*audit-invariant-keys*))))
 
 (deftest the-hole-the-audit-exists-to-find
   ;; No invariant declares :b, so writing :b runs nothing at all -- and the result seals.
-  (let [ok  (build Liar {:a 1 :b 1})
-        bad (v/revising [x ok] (assoc x :b 999))]
-    (is (= 1 (:a bad)))
-    (is (= 999 (:b bad)))
-    (is (instance? Liar bad) "sealed, reporting itself validated, and wrong")))
+  (binding [v/*audit-invariant-keys* false]
+    (let [ok  (build Liar {:a 1 :b 1})
+          bad (v/revising [x ok] (assoc x :b 999))]
+      (is (= 1 (:a bad)))
+      (is (= 999 (:b bad)))
+      (is (instance? Liar bad) "sealed, reporting itself validated, and wrong"))))
 
 (deftest the-audit-catches-it-at-construction
   ;; Construction touches every field, so every invariant runs and every lie is exposed.
@@ -49,8 +54,8 @@
     (is (instance? Honest (v/revising [x (build Honest {:a 1 :b 1})] (merge x {:a 2 :b 2}))))))
 
 (deftest the-audit-does-not-change-what-is-produced
-  (let [plain   (build Honest {:a 1 :b 1})
-        audited (binding [v/*audit-invariant-keys* true] (build Honest {:a 1 :b 1}))]
+  (let [plain   (binding [v/*audit-invariant-keys* false] (build Honest {:a 1 :b 1}))
+        audited (binding [v/*audit-invariant-keys* true]  (build Honest {:a 1 :b 1}))]
     (is (= (into {} plain) (into {} audited)))
     (is (= (class plain) (class audited)))))
 
@@ -74,7 +79,8 @@
       (is (= ::v/invariant-violated (:error (err #(build Sweeper {:a 1 :b 0}))))))))
 
 (deftest the-binding-does-not-leak
-  (binding [v/*audit-invariant-keys* true]
-    (is (= ::v/undeclared-invariant-key (:error (err #(build Liar {:a 1 :b 1}))))))
-  (is (instance? Liar (build Liar {:a 1 :b 1}))
-      "outside the binding the lie is invisible again"))
+  (binding [v/*audit-invariant-keys* false]
+    (is (instance? Liar (build Liar {:a 1 :b 1})) "off: the lie is invisible")
+    (binding [v/*audit-invariant-keys* true]
+      (is (= ::v/undeclared-invariant-key (:error (err #(build Liar {:a 1 :b 1}))))))
+    (is (instance? Liar (build Liar {:a 1 :b 1})) "and off again once the binding unwinds")))

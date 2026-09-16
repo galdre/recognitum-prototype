@@ -1,13 +1,16 @@
 (ns prototype.validated-record-test
   "Reads and writes on a validated value: which checks run, which do not, and what they throw."
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is testing use-fixtures]]
+   [prototype.audit-fixture :as fixture]
    [prototype.heist :as heist]
    [prototype.validated-record :as v])
   (:import
    (prototype.heist Heist)))
 
 (def job heist/italian-job)
+
+(use-fixtures :once fixture/audit)
 
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing."

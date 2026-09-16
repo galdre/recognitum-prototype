@@ -1,7 +1,8 @@
 (ns prototype.draft-test
   "Drafts, `revising`, and what `seal` guarantees."
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is testing use-fixtures]]
+   [prototype.audit-fixture :as fixture]
    [prototype.heist :as heist]
    [prototype.validated-record :as v])
   (:import
@@ -9,6 +10,8 @@
    (prototype.validated_record Invariant)))
 
 (def job heist/italian-job)
+
+(use-fixtures :once fixture/audit)
 
 (defn- err [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))

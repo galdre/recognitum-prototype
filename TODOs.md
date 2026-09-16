@@ -61,6 +61,9 @@ invariants depending on them. `:draft-dirty-keys` is the touched set.
       Zero cost when off; `README.md` has a "Checking your `:keys`" section.
   - [x] `prototype.audit-test` exercises it: the silent hole, the catch at construction, an
         honest type passing, a whole-map read abstaining, and the binding not leaking.
+  - [x] `clojure -X:test-audit` runs the entire suite under the audit, so every type it builds
+        is checked. Verified non-redundant: mis-declaring `Heist`'s "only crew get a cut" passes
+        the plain suite with 0 failures and fails the audited one in 3 places.
 - Not drift: `CONSIDERATIONS.md` §14's note that seal rechecks a key written back to its
   original value is a fair efficiency observation. The contract is extensional, so a cheaper
   sound strategy is permitted. (An earlier draft of this file called it inverted. It is not.)
