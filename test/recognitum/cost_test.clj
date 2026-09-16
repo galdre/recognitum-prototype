@@ -150,7 +150,7 @@
 
 (deftest a-seal-with-nothing-to-run-runs-nothing
   (let [d (tally)]
-    (is (true? (rec/certify d ::shape)) "every check the type has now passes")
+    (is (true? (rec/check d ::shape)) "every check the type has now passes")
     (reset! runs [])
     (is (rec/sealed? (rec/seal d))
         "and ::spare, which no check names, has no shape to be the wrong one")
@@ -199,7 +199,7 @@
         "the first value is established on its own, so the group call finds it done")
     (roster/reset-calls!)
     (let [rs (rec/check-all ds ::known)]
-      (is (= [true false true] rs)
+      (is (= [true {::known false} true] rs)
           "index-aligned, with the established value's answer read off its mask")
       (is (= 1 (roster/call-count :fetch-rosters))
           "one batched call for the whole group, whatever the established value did")

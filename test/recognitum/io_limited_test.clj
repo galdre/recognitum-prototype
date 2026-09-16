@@ -324,14 +324,14 @@
     (is (= ::rec/check-failed (:error (err #(->Job "A Job" #{:charlie} {:napster 1} nil)))))
     (is (= ::rec/check-failed (:error (err #(map->Job {::name "A Job"})))))))
 
-(deftest check-and-certify-on-a-draft-are-untouched
+(deftest checking-a-draft-is-untouched
   (let [d (-> (rec/draft Job)
               (assoc ::name "A Job")
               (assoc ::crew #{:charlie})
               (assoc ::cuts {:charlie 1})
               (assoc ::extra nil))]
     (is (true? (rec/check d ::crew)))
-    (is (true? (rec/certify d ::shape)))
+    (is (true? (rec/check d ::shape)))
     (is (true? (rec/check d ::only-roster-gets-a-cut)))
     (is (= 1 (roster/call-count)))))
 

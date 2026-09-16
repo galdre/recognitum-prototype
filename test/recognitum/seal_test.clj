@@ -83,7 +83,7 @@
 (deftest sealing-a-draft-of-the-type-runs-every-check
   (reset-runs!)
   (let [d (fresh)]
-    (is (= #{} (rec/passing d)) "nothing established: the mask is empty")
+    (is (= #{} (rec/passed d)) "nothing established: the mask is empty")
     (is (rec/sealed? (rec/seal d)))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))
         "every bit was clear, so every check ran -- once each")))
@@ -187,7 +187,7 @@
   ;; but the seal selected by the dirty-key set and ran everything again.
   (reset-runs!)
   (let [d (fresh)]
-    (is (true? (rec/certify d ::shape)))
+    (is (true? (rec/check d ::shape)))
     (is (= {::a 1 ::b 1 ::a-fits 0 ::always 0} (counts)))
     (is (rec/sealed? (rec/seal d)))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))
@@ -196,7 +196,7 @@
 (deftest a-fully-certified-draft-seals-without-running-anything
   (reset-runs!)
   (let [d (fresh)]
-    (is (true? (rec/certify d rec/every-check)))
+    (is (true? (rec/check d rec/every-check)))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts)))
     (is (rec/sealed? (rec/seal d)))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts)))))
@@ -204,7 +204,7 @@
 (deftest a-verdict-established-before-a-write-does-not-cover-the-write
   (reset-runs!)
   (let [d (fresh)]
-    (rec/certify d rec/every-check)
+    (rec/check d rec/every-check)
     (reset-runs!)
     (rec/seal (assoc d ::b "yyyy"))
     (is (= {::a 0 ::b 1 ::a-fits 1 ::always 0} (counts))
@@ -244,7 +244,7 @@
   ;; failure is produced again rather than remembered.
   (reset-runs!)
   (let [d (-> (rec/draft Ledger) (assoc ::a "not an int") (assoc ::b "xxx") (assoc ::c :x))]
-    (is (false? (rec/check d ::a)))
+    (is (= {::a false} (rec/check d ::a)))
     (is (= 1 (ran ::a)))
     (let [e (err #(rec/seal d))]
       (is (= ::rec/check-failed (:error e)))
@@ -257,7 +257,7 @@
   (let [d (-> (rec/draft Ledger) (assoc ::a 99) (assoc ::b "xxx") (assoc ::c :x))]
     (is (= ::rec/check-failed (:error (err #(rec/seal d)))) "99 does not fit inside \"xxx\"")
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts)))
-    (is (= #{::a ::b ::always} (rec/passing d)) "the passes were written down")
+    (is (= #{::a ::b ::always} (rec/passed d)) "the passes were written down")
     (is (= ::rec/check-failed (:error (err #(rec/seal d)))))
     (is (= {::a 1 ::b 1 ::a-fits 2 ::always 1} (counts))
         "only the check that failed was run again")))
@@ -295,7 +295,7 @@
   (reset-runs!)
   (let [d (-> (rec/draft Fragile) (assoc ::n 1) (assoc ::m "not a number"))]
     (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/seal d)))
-    (is (= #{::n} (rec/passing d))
+    (is (= #{::n} (rec/passed d))
         "::n reached a verdict and keeps it; ::boom reached none")
     (is (= 1 (ran ::n)))
     (is (= 1 (ran ::boom)))
@@ -337,12 +337,12 @@
 (deftest a-successful-seal-leaves-every-check-passing-on-the-draft
   (let [d (fresh)]
     (is (rec/sealed? (rec/seal d)))
-    (is (= (set all-checks) (rec/passing d)))
-    (is (= #{::shape ::rec/every-check} (rec/holding d))))
+    (is (= (set all-checks) (rec/passed d)))
+    (is (= #{::shape ::rec/every-check} (rec/certificates d))))
   (testing "including one that had nothing to run"
     (let [d (rec/draft led)]
       (is (rec/sealed? (rec/seal d)))
-      (is (= (set all-checks) (rec/passing d))))))
+      (is (= (set all-checks) (rec/passed d))))))
 
 ;;; ------------------------------------ the guarantee ------------------------------------
 
@@ -365,9 +365,9 @@
             (assoc (rec/draft led) ::c :other)
             (-> (rec/draft led) (assoc ::a 2) (assoc ::b "yyyy"))
             (doto (fresh) (rec/check ::a))
-            (doto (fresh) (rec/certify ::shape))
-            (doto (fresh) (rec/certify rec/every-check))
-            (assoc (doto (fresh) (rec/certify rec/every-check)) ::b "yy")
+            (doto (fresh) (rec/check ::shape))
+            (doto (fresh) (rec/check rec/every-check))
+            (assoc (doto (fresh) (rec/check rec/every-check)) ::b "yy")
             (rec/clean (assoc (rec/draft led) :getaway-car "mini"))
             (with-meta (rec/draft led) {:user-key 1})]]
     (doseq [[i d] (map-indexed vector ds)]
@@ -383,7 +383,7 @@
   (let [bad (fn [d] (some false? (vals (run-every-check d))))]
     (doseq [d [(assoc (rec/draft led) ::a "not an int")
                (assoc (rec/draft led) ::b :not-a-string)
-               (assoc (doto (fresh) (rec/certify rec/every-check)) ::a "not an int")
+               (assoc (doto (fresh) (rec/check rec/every-check)) ::a "not an int")
                (-> (rec/draft led) (assoc ::a 99))]]
       (is (bad d) "the draft really is invalid")
       (is (= ::rec/check-failed (:error (err #(rec/seal d))))

@@ -11,12 +11,12 @@
   complete a certificate incidentally, and there is no way to mark a draft as holding one
   without the checks having actually passed.
 
-  `certify` answers the question and `certify!` insists on the answer, exactly as `check`
-  and `check!` do: `true` when every check in the certificate passes, and neither returns a
-  draft. What `certify` hands back for a failure is the check's own return value -- the
-  failure data, as the contract defines it -- keyed by check name in declaration order.
-  The richer report, with the docstring and the fields the check declared, is what
-  `certify!` throws.
+`check` takes a certificate name exactly as it takes a check name: a lone check is a
+  certificate containing itself, so there is one verb and one answer shape. `true` when
+  every check named passes, and otherwise the checks' own return values -- the failure
+  data, as the contract defines it -- keyed by check name in declaration order. Neither
+  form returns a draft. The richer report, with the docstring and the fields the check
+  declared, is what `check!` throws.
 
   A certificate is a declaration, so it is resolved while the macro runs. A name it gives
   that is not a check of this type, a certificate naming nothing at all, or one spelled the
@@ -203,7 +203,7 @@
 
 (deftest a-certificate-naming-nothing-is-refused
   ;; It would be held by every draft of the type, including one nothing had been checked
-  ;; on, so `certify` would answer `true` while asserting nothing whatsoever.
+  ;; on, so `check` would answer `true` while asserting nothing whatsoever.
   (doseq [v [#{} [] nil]]
     (let [e (compile-data (list 'recognitum.core/defrecord 'Empty
                                 '[a]
@@ -240,113 +240,121 @@
   (testing "and it covers every check the type has"
     (reset! runs {})
     (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
-      (is (true? (rec/certify d rec/every-check)))
+      (is (true? (rec/check d rec/every-check)))
       (is (= {::n 1 ::s 1 ::both 1} @runs))
-      (is (= #{::n ::s ::both} (rec/passing d))))))
+      (is (= #{::n ::s ::both} (rec/passed d))))))
 
 (deftest a-type-with-no-checks-holds-the-built-in-vacuously
   ;; Every check passes when there are none, which is honest rather than a special case.
-  (is (= #{::rec/every-check} (rec/holding (rec/draft Blank))))
-  (is (true? (rec/certify (rec/draft Blank) rec/every-check))))
+  (is (= #{::rec/every-check} (rec/certificates (rec/draft Blank))))
+  (is (true? (rec/check (rec/draft Blank) rec/every-check))))
 
 ;;; ------------------------------------- holding -------------------------------------
 
-(deftest holding-is-derived-from-the-mask
+(deftest certificates-are-derived-from-the-mask
   (let [d (whole)]
-    (is (= #{} (rec/holding d)) "built from the type, so nothing has been established"))
+    (is (= #{} (rec/certificates d)) "built from the type, so nothing has been established"))
   (testing "a draft of a sealed value holds everything, since every check passed on it"
-    (is (= #{::shape ::payroll ::rec/every-check} (rec/holding (rec/draft job))))))
+    (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates (rec/draft job))))))
 
-(deftest certifying-is-what-makes-a-certificate-held
+(deftest checking-a-certificate-is-what-makes-it-held
   (let [d (whole)]
-    (is (true? (rec/certify d ::shape)))
-    (is (= #{::shape} (rec/holding d)))
-    (is (= #{::title ::crew ::pay} (rec/passing d)))))
+    (is (true? (rec/check d ::shape)))
+    (is (= #{::shape} (rec/certificates d)))
+    (is (= #{::title ::crew ::pay} (rec/passed d)))))
 
 (deftest running-individual-checks-can-complete-a-certificate-incidentally
   ;; Holding is derived, so nothing has to know a certificate exists in order to complete
   ;; one.
   (let [d (whole)]
     (rec/check d ::title)
-    (is (= #{} (rec/holding d)))
+    (is (= #{} (rec/certificates d)))
     (rec/check d ::crew)
-    (is (= #{} (rec/holding d)))
+    (is (= #{} (rec/certificates d)))
     (rec/check! d ::pay)
-    (is (= #{::shape} (rec/holding d)))
+    (is (= #{::shape} (rec/certificates d)))
     (testing "and the overlapping one needs only what it has left"
       (rec/check d ::paid-enough)
-      (is (= #{::shape ::payroll} (rec/holding d)))
+      (is (= #{::shape ::payroll} (rec/certificates d)))
       (testing "while the built-in still wants the check no certificate names"
-        (is (not (contains? (rec/holding d) ::rec/every-check)))
+        (is (not (contains? (rec/certificates d) ::rec/every-check)))
         (rec/check d ::notes)
-        (is (= #{::shape ::payroll ::rec/every-check} (rec/holding d)))))))
+        (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates d)))))))
 
 (deftest overlapping-certificates-need-no-coordination
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
-    (is (true? (rec/certify d ::ns)))
-    (is (true? (rec/certify d ::joint)))
-    (is (= #{::ns ::joint ::rec/every-check} (rec/holding d)))
+    (is (true? (rec/check d ::ns)))
+    (is (true? (rec/check d ::joint)))
+    (is (= #{::ns ::joint ::rec/every-check} (rec/certificates d)))
     (is (= {::n 1 ::s 1 ::both 1} @runs) "each check ran once, for whoever wanted it")))
 
 (deftest a-failing-check-leaves-its-certificate-unheld
   (let [d (whole "heist" #{:a :b} :free nil)]
-    (is (= {::pay false} (rec/certify d ::shape)))
-    (is (= #{::title ::crew} (rec/passing d)) "and what did pass is still recorded")
-    (is (= #{} (rec/holding d)))))
+    (is (= {::pay false} (rec/check d ::shape)))
+    (is (= #{::title ::crew} (rec/passed d)) "and what did pass is still recorded")
+    (is (= #{} (rec/certificates d)))))
 
 (deftest a-write-can-take-a-certificate-away
   (let [d (rec/draft job)]
-    (is (= #{::shape ::payroll ::rec/every-check} (rec/holding d)))
+    (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates d)))
     (let [d' (assoc d ::pay 99)]
-      (is (= #{} (rec/holding d')) "::pay and ::paid-enough were cleared, so both go")
-      (is (= #{::shape ::payroll ::rec/every-check} (rec/holding d))
+      (is (= #{} (rec/certificates d')) "::pay and ::paid-enough were cleared, so both go")
+      (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates d))
           "the seed is a snapshot, so the version it came from keeps its own")
       (testing "and re-establishing them gives it back"
-        (is (true? (rec/certify d' ::shape)))
-        (is (= #{::shape} (rec/holding d')))))))
+        (is (true? (rec/check d' ::shape)))
+        (is (= #{::shape} (rec/certificates d')))))))
 
-(deftest holding-is-a-question-about-a-draft
-  (doseq [x [job Job {::title "x"} nil 42]]
-    (is (= ::rec/not-a-draft (:error (err #(rec/holding x)))) (pr-str x))))
+(deftest certificates-answers-for-a-sealed-value-too
+  ;; A sealed value passed every check, so it holds every certificate the type declares.
+  (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates job)))
+  (is (= #{::title ::crew ::pay ::paid-enough ::notes} (rec/passed job)))
+  (testing "and the answer agrees with what meta reports under the same names"
+    (is (= (rec/passed job) (::rec/passed (meta job))))
+    (is (= (rec/certificates job) (::rec/certificates (meta job)))))
+  (testing "but something that is not one of this library's values is refused"
+    (doseq [x [Job {::title "x"} nil 42]]
+      (is (= ::rec/not-a-value (:error (err #(rec/certificates x)))) (pr-str x))
+      (is (= ::rec/not-a-value (:error (err #(rec/passed x)))) (pr-str x)))))
 
-;;; --------------------------------- what certify returns ---------------------------------
+;;; --------------------------------- what check returns ---------------------------------
 
-(deftest certify-answers-true-when-every-check-in-it-passes
+(deftest check-answers-true-when-every-check-in-the-certificate-passes
   (let [d (whole)]
-    (is (true? (rec/certify d ::shape)))
-    (is (true? (rec/certify d ::payroll)))
-    (is (true? (rec/certify! d ::shape)))
-    (is (true? (rec/certify! d ::payroll)))))
+    (is (true? (rec/check d ::shape)))
+    (is (true? (rec/check d ::payroll)))
+    (is (true? (rec/check! d ::shape)))
+    (is (true? (rec/check! d ::payroll)))))
 
 (deftest neither-form-returns-a-draft
   (let [d (whole)]
-    (doseq [r [(rec/certify d ::shape) (rec/certify! d ::payroll)]]
+    (doseq [r [(rec/check d ::shape) (rec/check! d ::payroll)]]
       (is (not (rec/draft? r)))
       (is (not (rec/sealed? r))))))
 
-(deftest certify-answers-with-whatever-each-failing-check-returned
+(deftest check-answers-with-whatever-each-failing-check-returned
   ;; The same reading `check` takes: the failure data is what the check returned, and the
   ;; richer report is what the throwing form throws.
   (let [d (assoc (rec/draft Reporting) ::n -1)
-        r (rec/certify d ::most)]
+        r (rec/check d ::most)]
     (is (= {::data {:too-small -1} ::truthy :nope ::nil nil} r))
     (is (= [::data ::truthy ::nil] (vec (keys r))) "declaration order")
     (is (not (contains? r ::boolean)) "which the certificate does not name")
-    (is (= #{} (rec/passing d)))))
+    (is (= #{} (rec/passed d)))))
 
-(deftest certify-reports-only-the-checks-the-certificate-names
+(deftest check-reports-only-the-checks-the-certificate-names
   (let [d (whole :untitled #{:a :b} :free nil)]
-    (is (= {::pay false} (rec/certify d ::payroll))
+    (is (= {::pay false} (rec/check d ::payroll))
         "::title fails too, and is no business of this certificate -- and ::paid-enough
          waits on ::pay, so it did not run")
-    (is (= {::title false ::pay false} (rec/certify d ::shape))
+    (is (= {::title false ::pay false} (rec/check d ::shape))
         "::paid-enough shares a field with ::pay and is still no part of ::shape")))
 
-(deftest certify-runs-everything-it-was-asked-to-and-stops-at-no-failure
+(deftest check-runs-everything-it-was-asked-to-and-stops-at-no-failure
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n :no) (assoc ::s :no))]
-    (is (= {::n false ::s false} (rec/certify d rec/every-check))
+    (is (= {::n false ::s false} (rec/check d rec/every-check))
         "both shape checks ran and both are reported -- the first failure stopped neither")
     (is (= {::n 1 ::s 1} @runs)
         "::both waits on the pair, so it was not run and is not reported")))
@@ -354,18 +362,18 @@
 (deftest the-failure-map-is-ordered-at-any-size
   ;; A map literal would have stopped holding its insertion order at eight entries.
   (let [d (assoc (rec/draft Ten) ::v :no)
-        r (rec/certify d ::nine)]
+        r (rec/check d ::nine)]
     (is (= 9 (count r)))
     (is (instance? clojure.lang.PersistentArrayMap r))
     (is (= (filterv (complement #{::c0}) ten-order) (vec (keys r)))
         "the type's check order, not the order the certificate was written in")
     (is (not (contains? r ::c0)))))
 
-;;; ---------------------------------- what certify! throws ----------------------------------
+;;; ---------------------------------- what check! throws ----------------------------------
 
-(deftest certify-bang-throws-one-check-failed-carrying-every-failure
+(deftest check-bang-throws-one-check-failed-carrying-every-failure
   (let [d (whole :untitled #{:a :b} :free nil)
-        e (err #(rec/certify! d ::shape))]
+        e (err #(rec/check! d ::shape))]
     (is (= ::rec/check-failed (:error e)))
     (is (= 'Job (:record e)))
     (is (= [::title ::pay] (vec (keys (:failures e))))
@@ -374,9 +382,9 @@
            (get (:failures e) ::title)))
     (is (= {:doc nil :values {::pay :free} :returned false} (get (:failures e) ::pay)))))
 
-(deftest certify-bang-carries-the-docstring-and-the-declared-fields
+(deftest check-bang-carries-the-docstring-and-the-declared-fields
   (let [d (whole "heist" #{:a :b :c} 1 nil)
-        e (err #(rec/certify! d ::payroll))]
+        e (err #(rec/check! d ::payroll))]
     (is (= [::paid-enough] (vec (keys (:failures e)))))
     (let [f (get (:failures e) ::paid-enough)]
       (is (= "the pay covers the crew" (:doc f)))
@@ -384,14 +392,14 @@
       (is (= {::crew #{:a :b :c} ::pay 1} (:values f)))
       (is (= false (:returned f))))))
 
-(deftest certify-bang-records-what-passed-before-it-threw
+(deftest check-bang-records-what-passed-before-it-threw
   (let [d (whole "heist" #{:a :b} :free nil)]
-    (is (= ::rec/check-failed (:error (err #(rec/certify! d ::shape)))))
-    (is (= #{::title ::crew} (rec/passing d)))))
+    (is (= ::rec/check-failed (:error (err #(rec/check! d ::shape)))))
+    (is (= #{::title ::crew} (rec/passed d)))))
 
 (deftest the-order-past-eight-holds-for-the-throwing-form-too
   (let [d (assoc (rec/draft Ten) ::v :no)
-        e (err #(rec/certify! d ::nine))
+        e (err #(rec/check! d ::nine))
         fs (:failures e)]
     (is (= 9 (count fs)))
     (is (instance? clojure.lang.PersistentArrayMap fs))
@@ -402,18 +410,18 @@
 (deftest a-certificate-already-held-runs-nothing
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
-    (is (true? (rec/certify d ::ns)))
+    (is (true? (rec/check d ::ns)))
     (is (= {::n 1 ::s 1} @runs))
-    (is (true? (rec/certify d ::ns)))
+    (is (true? (rec/check d ::ns)))
     (is (= {::n 1 ::s 1} @runs) "the verdicts stand, so there is nothing to establish")
-    (is (true? (rec/certify! d ::ns)))
-    (is (= {::n 1 ::s 1} @runs) "and certify! insists on the answer, not on the work")))
+    (is (true? (rec/check! d ::ns)))
+    (is (= {::n 1 ::s 1} @runs) "and check! insists on the answer, not on the work")))
 
-(deftest a-draft-of-a-sealed-value-has-nothing-left-to-certify
+(deftest a-draft-of-a-sealed-value-has-nothing-left-to-establish
   (let [c (->Counted 1 "x")]
     (reset! runs {})
     (let [d (rec/draft c)]
-      (is (true? (rec/certify d rec/every-check)))
+      (is (true? (rec/check d rec/every-check)))
       (is (= {} @runs)))))
 
 (deftest a-certificate-runs-only-what-is-not-already-passing
@@ -421,14 +429,14 @@
   (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
     (is (true? (rec/check d ::n)))
     (is (= {::n 1} @runs))
-    (is (true? (rec/certify d ::ns)))
+    (is (true? (rec/check d ::ns)))
     (is (= {::n 1 ::s 1} @runs) "::n was already established")))
 
 (deftest a-failed-check-in-a-certificate-is-run-again-next-time
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n :no) (assoc ::s "x"))]
-    (is (= {::n false} (rec/certify d ::ns)))
-    (is (= {::n false} (rec/certify d ::ns)))
+    (is (= {::n false} (rec/check d ::ns)))
+    (is (= {::n false} (rec/check d ::ns)))
     (is (= {::n 2 ::s 1} @runs)
         "the failure is not retained, and the one that passed is")))
 
@@ -438,66 +446,74 @@
   ;; There is nothing to refuse here: a field nobody wrote holds nil, and what each shape
   ;; check thinks of nil is a better answer than the library reporting on its own state.
   (let [d (rec/draft Job)]
-    (is (= {::title false ::crew false ::pay false} (rec/certify d ::shape))
+    (is (= {::title false ::crew false ::pay false} (rec/check d ::shape))
         "every check in it ran, and every one of them is reported")
-    (testing "certify! throws the ordinary report"
-      (is (= ::rec/check-failed (:error (err #(rec/certify! d ::shape))))))
+    (testing "check! throws the ordinary report"
+      (is (= ::rec/check-failed (:error (err #(rec/check! d ::shape))))))
     (testing "and nothing is recorded, because nothing passed"
-      (is (= #{} (rec/passing d))))))
+      (is (= #{} (rec/passed d))))))
 
 (deftest a-cross-field-check-does-not-run-on-a-shape-that-failed
   (let [d (-> (rec/draft Job) (assoc ::title "heist") (assoc ::crew #{:a}))]
-    (is (= {::pay false} (rec/certify d ::shape))
+    (is (= {::pay false} (rec/check d ::shape))
         "::title and ::crew were written and pass; ::pay judges the nil nobody wrote")
-    (is (= {::pay false} (rec/certify d ::payroll))
+    (is (= {::pay false} (rec/check d ::payroll))
         "::paid-enough waits on ::pay, so it neither runs nor appears")
-    (is (not (contains? (rec/passing d) ::paid-enough))
+    (is (not (contains? (rec/passed d) ::paid-enough))
         "and it is not recorded as passing either")))
 
 (deftest a-certificate-already-established-answers-without-running-anything
   (let [d  (rec/draft job)
         d' (assoc (rec/draft Job) ::title "heist")]
-    (is (true? (rec/certify d ::shape)))
-    (is (= {::crew false ::pay false} (rec/certify d' ::shape))
+    (is (true? (rec/check d ::shape)))
+    (is (= {::crew false ::pay false} (rec/check d' ::shape))
         "and one that is not established runs what it has to")))
 
-(deftest certify-does-not-demand-the-fields-of-checks-it-does-not-name
+(deftest a-certificate-does-not-demand-the-fields-of-checks-it-does-not-name
   (let [d (-> (rec/draft Job) (assoc ::pay 10) (assoc ::crew #{:a :b}))]
-    (is (true? (rec/certify d ::payroll))
+    (is (true? (rec/check d ::payroll))
         "::title and ::notes are unwritten, and are no business of this certificate")
-    (is (= #{::payroll} (rec/holding d)))))
+    (is (= #{::payroll} (rec/certificates d)))))
 
 ;;; ---------------------------------- and what it refuses ----------------------------------
 
 (deftest a-certificate-name-the-type-does-not-declare-is-refused
   (let [d (whole)]
-    (doseq [[label f] [["certify" #(rec/certify d ::nonesuch)]
-                       ["certify!" #(rec/certify! d ::nonesuch)]]]
+    (doseq [[label f] [["check" #(rec/check d ::nonesuch)]
+                       ["check!" #(rec/check! d ::nonesuch)]]]
       (let [e (err f)]
-        (is (= ::rec/unknown-certificate (:error e)) label)
+        (is (= ::rec/unknown-check (:error e)) label)
         (is (= 'Job (:record e)) label)
-        (is (= ::nonesuch (:certificate e)) label)
-        (is (= [::shape ::payroll ::rec/every-check] (:certificates e)) label)))
-    (testing "including the name of a check, which is not a certificate"
-      (is (= ::rec/unknown-certificate (:error (err #(rec/certify d ::title))))))
-    (testing "and a certificate declared on some other type"
-      (is (= ::rec/unknown-certificate (:error (err #(rec/certify d ::ns))))))
+        (is (= ::nonesuch (:check e)) label)
+        (is (= [::shape ::payroll ::rec/every-check] (:certificates e)) label)
+        (is (= [::title ::crew ::pay ::paid-enough ::notes] (:checks e)) label)))
+    (testing "the name of a check is not refused any more -- it is the other half of the verb"
+      (is (true? (rec/check d ::title))))
+    (testing "and a certificate declared on some other type is still refused"
+      (is (= ::rec/unknown-check (:error (err #(rec/check d ::ns))))))
     (testing "and nothing is established by asking"
-      (is (= #{} (rec/passing d))))))
+      (is (= #{} (rec/passed d))))))
 
-(deftest certifying-is-a-question-about-a-draft
-  (doseq [x [job Job {::title "x"} nil 42]]
-    (is (= ::rec/not-a-draft (:error (err #(rec/certify x ::shape)))) (pr-str x))
-    (is (= ::rec/not-a-draft (:error (err #(rec/certify! x ::shape)))) (pr-str x))))
+(deftest checking-a-certificate-on-a-sealed-value-answers-true-and-runs-nothing
+  (reset! runs {})
+  (let [c (->Counted 1 "x")]
+    (is (true? (rec/check c ::ns)))
+    (is (true? (rec/check c ::joint)))
+    (is (true? (rec/check! c rec/every-check)))
+    (is (= {} @runs) "everything is established on a sealed value, so nothing runs"))
+  (testing "and anything that is not a value of this library is refused"
+    (doseq [x [Job {::title "x"} nil 42]]
+      (is (= ::rec/not-a-value (:error (err #(rec/check x ::shape)))) (pr-str x))
+      (is (= ::rec/not-a-value (:error (err #(rec/check! x ::shape)))) (pr-str x)))))
 
 (deftest a-check-that-throws-inside-a-certificate-propagates
   ;; A throw is a bug in the check rather than a verdict about the data, so there is
   ;; nothing to write down and nothing to report as invalid.
   (reset! runs {})
   (let [d (assoc (rec/draft Fragile) ::n "not a number")]
-    (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/certify d ::pair)))
-    (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/certify! d ::pair)))
-    (is (= #{::ok} (rec/passing d))
+    (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/check d ::pair)))
+    (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/check! d ::pair)))
+    (is (= #{::ok} (rec/passed d))
         "the check that reached a verdict before it keeps that verdict")
     (is (= 1 (ran ::ok)) "and is not re-run by the second attempt")))
 
@@ -505,17 +521,17 @@
 
 (deftest sealing-enforces-every-check-whether-a-certificate-names-it-or-not
   (let [d (whole "heist" #{:a :b} 10 :not-a-string)]
-    (is (true? (rec/certify d ::shape)))
-    (is (true? (rec/certify d ::payroll)))
-    (is (= #{::shape ::payroll} (rec/holding d)))
+    (is (true? (rec/check d ::shape)))
+    (is (true? (rec/check d ::payroll)))
+    (is (= #{::shape ::payroll} (rec/certificates d)))
     (let [e (err #(rec/seal d))]
       (is (= ::rec/check-failed (:error e)))
       (is (= [::notes] (vec (keys (:failures e))))
           "the check no certificate names is exactly what sealing still wants"))))
 
-(deftest holding-every-certificate-is-not-a-licence-to-seal
+(deftest holding-every-certificate-a-draft-can-is-not-a-licence-to-seal
   (let [d (-> (rec/draft Job) (assoc ::pay 10) (assoc ::crew #{:a :b}))]
-    (is (true? (rec/certify d ::payroll)))
+    (is (true? (rec/check d ::payroll)))
     (let [e (err #(rec/seal d))]
       (is (= ::rec/check-failed (:error e))
           "a certificate is a claim about the checks it names and nothing else")
@@ -524,25 +540,25 @@
 
 (deftest a-certified-draft-still-seals
   (let [d (whole)]
-    (is (true? (rec/certify d rec/every-check)))
+    (is (true? (rec/check d rec/every-check)))
     (let [s (rec/seal d)]
       (is (rec/sealed? s))
       (is (= "heist" (::title s))))))
 
-(deftest a-sealed-value-carries-no-certificate-of-its-own
-  ;; Certificates are a draft-level facility. A sealed value passed every check, which is
-  ;; strictly more than any certificate claims.
-  (is (= ::rec/not-a-draft (:error (err #(rec/holding job)))))
+(deftest a-sealed-value-holds-every-certificate-and-carries-none-as-data
+  ;; A sealed value passed every check, which is strictly more than any certificate claims,
+  ;; so it holds all of them -- and none of that is part of the value.
+  (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates job)))
   (is (not (contains? (into {} job) ::shape)))
   (is (not (re-find #"shape" (pr-str job)))))
 
-(deftest certifying-inside-a-drafting-form-answers-about-the-draft-in-hand
+(deftest checking-a-certificate-inside-a-drafting-form-answers-about-the-draft-in-hand
   (let [a (atom nil)]
     (is (rec/sealed?
          (rec/drafting [x Job]
            (let [x (-> x (assoc ::title "heist") (assoc ::crew #{:a :b})
                        (assoc ::pay 10) (assoc ::notes nil))]
-             (reset! a [(rec/certify x ::shape) (rec/holding x)])
+             (reset! a [(rec/check x ::shape) (rec/certificates x)])
              x))))
     (is (= [true #{::shape}] @a))))
 
@@ -553,9 +569,9 @@
   ;; established about each.
   (let [a (whole)
         b (whole)]
-    (rec/certify a rec/every-check)
-    (is (= #{::shape ::payroll ::rec/every-check} (rec/holding a)))
-    (is (= #{} (rec/holding b)))
+    (rec/check a rec/every-check)
+    (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates a)))
+    (is (= #{} (rec/certificates b)))
     (is (= a b))
     (is (= b a))
     (is (= (hash a) (hash b)))
@@ -564,6 +580,6 @@
 (deftest certificates-do-not-survive-printing
   (let [a (whole)
         b (whole)]
-    (rec/certify a ::shape)
+    (rec/check a ::shape)
     (is (= (pr-str a) (pr-str b)))
     (is (not (re-find #"shape|payroll|every-check" (pr-str a))))))

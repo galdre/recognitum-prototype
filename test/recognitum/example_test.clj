@@ -113,19 +113,19 @@
               (assoc ::heist/cuts {:charlie 1}))]
     (is (true? (rec/check d ::heist/crew-is-vouched-for)))
     (is (= 1 (roster/call-count :fetch-rosters)))
-    (is (contains? (rec/passing d) ::heist/crew-is-vouched-for))
-    (is (contains? (rec/passing d) ::heist/only-crew-get-cuts)
+    (is (contains? (rec/passed d) ::heist/crew-is-vouched-for))
+    (is (contains? (rec/passed d) ::heist/only-crew-get-cuts)
         "and what gated it is established too, since it was actually run"))
   (testing "and a crew the checks over it reject never reaches the fetch"
     (roster/reset-calls!)
     (let [d (-> (rec/draft Heist)
                 (assoc ::heist/crew "not a crew")
                 (assoc ::heist/cuts {:charlie 1}))
-          e (err #(rec/check d ::heist/crew-is-vouched-for))]
-      (is (= ::rec/check-failed (:error e)))
-      (is (= [::heist/crew] (keys (:failures e)))
+          r (rec/check d ::heist/crew-is-vouched-for)]
+      (is (= [::heist/crew] (vec (keys r)))
           "the check asked about never ran, so the gate's failure is the answer --
            and ::only-crew-get-cuts, which is the rest of that gate, waits on ::crew too")
+      (is (not (contains? r ::heist/crew-is-vouched-for)))
       (is (= 0 (roster/call-count))))))
 
 ;;; ------------------------------ deduplication across values ------------------------------
@@ -150,7 +150,7 @@
   (testing "and each draft keeps its own verdict, so sealing afterwards is free"
     (roster/reset-calls!)
     (let [ds [(crew-draft "one" #{:charlie :lyle} {:charlie 1 :lyle 1})]]
-      (rec/certify-all ds rec/every-check)
+      (rec/check-all ds rec/every-check)
       (is (every? #(instance? Heist %) (map rec/seal ds)))
       (is (= 1 (roster/call-count :fetch-rosters))
           "one fetch for the group call, and none at the seal"))))
@@ -192,20 +192,20 @@
               (assoc ::heist/crew #{:charlie :lyle})
               (assoc ::heist/take 2)
               (assoc ::heist/cuts {:charlie 1 :lyle 1}))]
-    (is (true? (rec/certify d ::heist/shape)))
-    (is (contains? (rec/holding d) ::heist/shape))
+    (is (true? (rec/check d ::heist/shape)))
+    (is (contains? (rec/certificates d) ::heist/shape))
     (is (= 0 (roster/call-count)) "a purely pure certificate fetches nothing")
-    (is (true? (rec/certify d ::heist/payout)))
+    (is (true? (rec/check d ::heist/payout)))
     (testing "and the IO-bound check is still owed, so the type's own certificate is not held"
-      (is (not (contains? (rec/holding d) ::rec/every-check)))
+      (is (not (contains? (rec/certificates d) ::rec/every-check)))
       (is (instance? Heist (rec/seal d)))
       (is (= 1 (roster/call-count :fetch-rosters))
           "the seal runs what the certificates left, and only that"))))
 
 (deftest a-failing-certificate-answers-with-the-checks-that-failed
   (let [d (-> (rec/draft job) (assoc ::heist/take 4000))]
-    (is (= [::heist/cuts-sum-to-take] (keys (rec/certify d ::heist/payout))))
-    (is (not (contains? (rec/holding d) ::heist/payout)))))
+    (is (= [::heist/cuts-sum-to-take] (keys (rec/check d ::heist/payout))))
+    (is (not (contains? (rec/certificates d) ::heist/payout)))))
 
 (deftest metadata-answers-the-same-way-from-both-forms
   (is (= (set (check-names)) (::rec/passed (meta job))))

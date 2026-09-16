@@ -74,28 +74,28 @@
 (deftest a-draft-of-the-type-starts-with-nothing-passing
   (let [d (rec/draft Ledger)]
     (is (rec/draft? d))
-    (is (= #{} (rec/passing d)))
+    (is (= #{} (rec/passed d)))
     (is (= 0 (internal/verdict-mask d)) "nothing has been established about a value with no fields"))
   (testing "however it was opened"
-    (is (= #{} (rec/passing ((:draft-empty (internal/model-of Ledger)) nil))))
-    (is (= #{} (seen Ledger rec/passing)))
-    (is (= #{} (seen (rec/draft Ledger) rec/passing)))))
+    (is (= #{} (rec/passed ((:draft-empty (internal/model-of Ledger)) nil))))
+    (is (= #{} (seen Ledger rec/passed)))
+    (is (= #{} (seen (rec/draft Ledger) rec/passed)))))
 
 (deftest a-draft-of-a-sealed-value-starts-with-every-check-passing
-  (is (= all-checks (rec/passing (rec/draft led)))
+  (is (= all-checks (rec/passed (rec/draft led)))
       "a sealed value is one every check passed on -- the draft inherits exactly that")
   (testing "which is a full mask, one bit per check in declaration order"
     (is (= 2r1111 (internal/verdict-mask (rec/draft led)))))
   (testing "and it is the same draft a drafting form opens"
-    (is (= all-checks (seen led rec/passing))))
+    (is (= all-checks (seen led rec/passed))))
   (testing "while drafting an existing draft changes nothing"
     (let [d (rec/draft led)]
       (is (identical? d (rec/draft d)))
-      (is (= all-checks (rec/passing d))))))
+      (is (= all-checks (rec/passed d))))))
 
 (deftest a-type-with-no-checks-has-an-empty-mask-either-way
-  (is (= #{} (rec/passing (rec/draft Nothing))))
-  (is (= #{} (rec/passing (rec/draft (->Nothing 1)))))
+  (is (= #{} (rec/passed (rec/draft Nothing))))
+  (is (= #{} (rec/passed (rec/draft (->Nothing 1)))))
   (is (= 0 (internal/verdict-mask (rec/draft (->Nothing 1))))))
 
 ;;; ------------------------------- set on pass, clear on fail -------------------------------
@@ -103,23 +103,23 @@
 (deftest a-verdict-is-set-when-a-check-passes
   (let [d (rec/draft Ledger)]
     (internal/record-verdict! d (idx Ledger ::b) true)
-    (is (= #{::b} (rec/passing d)))
+    (is (= #{::b} (rec/passed d)))
     (internal/record-verdict! d (idx Ledger ::always) true)
-    (is (= #{::b ::always} (rec/passing d)))
+    (is (= #{::b ::always} (rec/passed d)))
     (testing "and recording the same pass twice says the same thing"
       (internal/record-verdict! d (idx Ledger ::b) true)
-      (is (= #{::b ::always} (rec/passing d))))))
+      (is (= #{::b ::always} (rec/passed d))))))
 
 (deftest a-verdict-is-cleared-when-a-check-fails
   ;; Clearing is what makes re-running a check meaningful: a check that passed earlier and
   ;; fails now must stop counting as passed, and without a clear there is no way to un-pass.
   (let [d (rec/draft led)]
-    (is (= all-checks (rec/passing d)))
+    (is (= all-checks (rec/passed d)))
     (internal/record-verdict! d (idx Ledger ::a-fits) false)
-    (is (= #{::a ::b ::always} (rec/passing d)))
+    (is (= #{::a ::b ::always} (rec/passed d)))
     (testing "and passing it again restores it"
       (internal/record-verdict! d (idx Ledger ::a-fits) true)
-      (is (= all-checks (rec/passing d))))))
+      (is (= all-checks (rec/passed d))))))
 
 (deftest recording-a-verdict-answers-with-the-verdict
   (let [d (rec/draft Ledger)]
@@ -131,60 +131,60 @@
 (deftest a-write-clears-exactly-the-checks-naming-the-field
   (let [d (rec/draft led)]
     (testing "a names ::a and ::a-fits"
-      (is (= #{::b ::always} (rec/passing (assoc d ::a 2)))))
+      (is (= #{::b ::always} (rec/passed (assoc d ::a 2)))))
     (testing "b names ::b and ::a-fits"
-      (is (= #{::a ::always} (rec/passing (assoc d ::b "yyyy")))))
+      (is (= #{::a ::always} (rec/passed (assoc d ::b "yyyy")))))
     (testing "and the two together leave only what names neither"
-      (is (= #{::always} (rec/passing (-> d (assoc ::a 2) (assoc ::b "yyyy"))))))))
+      (is (= #{::always} (rec/passed (-> d (assoc ::a 2) (assoc ::b "yyyy"))))))))
 
 (deftest a-write-to-a-field-no-check-names-clears-nothing
-  (is (= all-checks (rec/passing (assoc (rec/draft led) ::c :something-else)))
+  (is (= all-checks (rec/passed (assoc (rec/draft led) ::c :something-else)))
       "c is a declared field no check reads -- nothing about it can have moved a verdict"))
 
 (deftest a-write-of-an-undeclared-key-clears-nothing
   (let [d (rec/draft led)]
-    (is (= all-checks (rec/passing (assoc d :getaway-car "mini"))))
+    (is (= all-checks (rec/passed (assoc d :getaway-car "mini"))))
     (testing "and removing it again leaves the mask alone"
-      (is (= all-checks (rec/passing (-> d (assoc :getaway-car "mini") (dissoc :getaway-car))))))
+      (is (= all-checks (rec/passed (-> d (assoc :getaway-car "mini") (dissoc :getaway-car))))))
     (testing "as does cleaning it off"
-      (is (= all-checks (rec/passing (rec/clean (assoc d :getaway-car "mini"))))))))
+      (is (= all-checks (rec/passed (rec/clean (assoc d :getaway-car "mini"))))))))
 
 (deftest a-check-naming-no-field-survives-every-write
   (let [d (rec/draft led)]
     (doseq [k [::a ::b ::c]]
-      (is (contains? (rec/passing (assoc d k (get led k))) ::always)
+      (is (contains? (rec/passed (assoc d k (get led k))) ::always)
           (str "no write can invalidate a check that reads nothing -- " k)))))
 
 (deftest writing-the-same-value-back-still-invalidates
   ;; The mask is computed from the arglists, not from the values: the macro knows which
   ;; checks name the field, and nothing compares what was there before.
-  (is (= #{::b ::always} (rec/passing (assoc (rec/draft led) ::a (::a led))))))
+  (is (= #{::b ::always} (rec/passed (assoc (rec/draft led) ::a (::a led))))))
 
 (deftest merging-invalidates-every-field-it-writes
-  (is (= #{::b ::always} (rec/passing (merge (rec/draft led) {::a 2 ::c :x})))))
+  (is (= #{::b ::always} (rec/passed (merge (rec/draft led) {::a 2 ::c :x})))))
 
 ;;; ------------------------------- the seed is a snapshot -------------------------------
 
 (deftest versions-diverge-rather-than-share
   (let [d  (rec/draft led)
         d' (assoc d ::a 2)]
-    (is (= all-checks (rec/passing d)) "the parent keeps every verdict it had")
-    (is (= #{::b ::always} (rec/passing d')))
+    (is (= all-checks (rec/passed d)) "the parent keeps every verdict it had")
+    (is (= #{::b ::always} (rec/passed d')))
     (testing "and a verdict recorded on the child says nothing about the parent"
       (internal/record-verdict! d' (idx Ledger ::b) false)
-      (is (= #{::always} (rec/passing d')))
-      (is (= all-checks (rec/passing d))))
+      (is (= #{::always} (rec/passed d')))
+      (is (= all-checks (rec/passed d))))
     (testing "nor the other way round"
       (internal/record-verdict! d (idx Ledger ::a) false)
-      (is (= #{::b ::a-fits ::always} (rec/passing d)))
-      (is (= #{::always} (rec/passing d'))))))
+      (is (= #{::b ::a-fits ::always} (rec/passed d)))
+      (is (= #{::always} (rec/passed d'))))))
 
 (deftest a-verdict-recorded-before-a-write-carries-into-it
   (let [d (rec/draft Ledger)]
     (internal/record-verdict! d (idx Ledger ::b) true)
     (internal/record-verdict! d (idx Ledger ::always) true)
-    (is (= #{::b ::always} (rec/passing (assoc d ::c :x))) "c names neither")
-    (is (= #{::always} (rec/passing (assoc d ::b "z"))) "b names ::b")))
+    (is (= #{::b ::always} (rec/passed (assoc d ::c :x))) "c names neither")
+    (is (= #{::always} (rec/passed (assoc d ::b "z"))) "b names ::b")))
 
 ;;; ------------------------- the mask travels with the draft -------------------------
 
@@ -192,20 +192,20 @@
   (let [d (rec/draft led)]
     (testing "with-meta"
       (let [m (with-meta d {:user-key 1})]
-        (is (= all-checks (rec/passing m)))
+        (is (= all-checks (rec/passed m)))
         (is (= 1 (:user-key (meta m))))
         (is (= all-checks (:recognitum.core/passed (meta m)))
             "and `meta` reports the same mask the caller's own keys travelled with")))
     (testing "adoption, by hand and by a drafting form"
-      (is (= all-checks (rec/passing (internal/adopt d (Object.)))))
-      (is (= all-checks (seen d rec/passing))))))
+      (is (= all-checks (rec/passed (internal/adopt d (Object.)))))
+      (is (= all-checks (seen d rec/passed))))))
 
 (deftest a-draft-passed-through-a-nested-drafting-keeps-its-verdicts
   (let [a     (atom nil)
         inner (fn [x] (rec/drafting [y x] (assoc y ::a 2)))]
     (is (rec/sealed? (rec/drafting [x led]
                        (let [x' (inner x)]
-                         (reset! a (rec/passing x'))
+                         (reset! a (rec/passed x'))
                          (assoc x' ::a 1)))))
     (is (= #{::b ::always} @a)
         "the inner form passed the draft through, write and verdicts intact")))
@@ -215,7 +215,7 @@
 (deftest two-drafts-holding-the-same-data-are-equal-whatever-they-have-established
   (let [fresh (rec/draft led)
         used  (assoc (rec/draft led) ::a (::a led))]
-    (is (not= (rec/passing fresh) (rec/passing used)))
+    (is (not= (rec/passed fresh) (rec/passed used)))
     (is (= fresh used) "which checks have been run is not part of the data")
     (is (= (hash fresh) (hash used)))
     (is (= (into {} fresh) (into {} used)))))
@@ -224,17 +224,17 @@
 
 (deftest sealing-records-every-verdict-it-reached
   (let [d (-> (rec/draft Ledger) (assoc ::a 1) (assoc ::b "xxx") (assoc ::c :x))]
-    (is (= #{} (rec/passing d)) "built from the type, so nothing was established")
+    (is (= #{} (rec/passed d)) "built from the type, so nothing was established")
     (is (rec/sealed? (rec/seal d)))
-    (is (= all-checks (rec/passing d)) "and the seal wrote down what it found")))
+    (is (= all-checks (rec/passed d)) "and the seal wrote down what it found")))
 
 (deftest a-failed-seal-records-the-passes-and-clears-the-failure
   (let [d (assoc (rec/draft led) ::b "")]          ; "" is a string, but 1 does not fit in it
-    (is (= #{::a ::always} (rec/passing d)) "the write cleared ::b and ::a-fits")
+    (is (= #{::a ::always} (rec/passed d)) "the write cleared ::b and ::a-fits")
     (let [e (err #(rec/seal d))]
       (is (= ::rec/check-failed (:error e)))
       (is (= [::a-fits] (keys (:failures e)))))
-    (is (= #{::a ::b ::always} (rec/passing d))
+    (is (= #{::a ::b ::always} (rec/passed d))
         "::b was re-established, ::a-fits stays cleared, ::a was never touched")))
 
 (deftest a-check-that-throws-leaves-its-verdict-alone
@@ -243,16 +243,28 @@
   ;; throw retroactive about anything else -- the verdicts reached before it stand, which
   ;; is the same rule that keeps the passes of a failed seal.
   (let [d (-> (rec/draft (->Fragile 1 2)) (assoc ::n 3) (assoc ::m "not a number"))]
-    (is (= #{} (rec/passing d)) "each write cleared the check naming the field it wrote")
+    (is (= #{} (rec/passed d)) "each write cleared the check naming the field it wrote")
     (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/seal d)))
-    (is (= #{::n} (rec/passing d))
+    (is (= #{::n} (rec/passed d))
         "::n ran and passed; ::boom threw before it had a verdict to record")))
 
-;;; -------------------------------- passing asks a draft --------------------------------
+;;; -------------------------------- what passed answers --------------------------------
 
-(deftest passing-is-a-question-about-a-draft-and-nothing-else
-  (doseq [x [led (->Nothing 1) {::a 1} nil Ledger]]
-    (is (= ::rec/not-a-draft (:error (err #(rec/passing x)))) (pr-str x))))
+(deftest passed-answers-for-a-sealed-value-too
+  ;; A sealed value has no mask, and does not need one: every check on the type passed, and
+  ;; so every certificate is held. The two names answer for both forms of a value.
+  (is (= all-checks (rec/passed led)))
+  (is (= #{::rec/every-check} (rec/certificates led)))
+  (is (= #{} (rec/passed (->Nothing 1))) "a type with no checks has none passing")
+  (is (= #{::rec/every-check} (rec/certificates (->Nothing 1))))
+  (testing "and it agrees with what meta reports under the same names"
+    (is (= (rec/passed led) (::rec/passed (meta led))))
+    (is (= (rec/certificates led) (::rec/certificates (meta led))))))
+
+(deftest passed-is-a-question-about-a-value-of-this-library
+  (doseq [x [{::a 1} nil Ledger 42]]
+    (is (= ::rec/not-a-value (:error (err #(rec/passed x)))) (pr-str x))
+    (is (= ::rec/not-a-value (:error (err #(rec/certificates x)))) (pr-str x))))
 
 ;;; ------------------------------- the mask has a width -------------------------------
 
@@ -302,10 +314,10 @@
   (let [t          (ns-resolve @scratch 'Edge)
         d          (rec/draft ((ns-resolve @scratch '->Edge) 1))
         last-check :recognitum.verdict-scratch/c63]
-    (is (= 64 (count (rec/passing d))))
-    (is (contains? (rec/passing d) last-check))
+    (is (= 64 (count (rec/passed d))))
+    (is (contains? (rec/passed d) last-check))
     (internal/record-verdict! d (idx t last-check) false)
-    (is (= 63 (count (rec/passing d))))
-    (is (not (contains? (rec/passing d) last-check)))
+    (is (= 63 (count (rec/passed d))))
+    (is (not (contains? (rec/passed d) last-check)))
     (testing "and a write to the one field they all name clears all 64"
-      (is (= #{} (rec/passing (assoc d :recognitum.verdict-scratch/f0 2)))))))
+      (is (= #{} (rec/passed (assoc d :recognitum.verdict-scratch/f0 2)))))))

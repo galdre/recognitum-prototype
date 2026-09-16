@@ -31,15 +31,17 @@
   "Every name `SPEC.md` and `README.md` use as API, and nothing else.
 
   Defining and building: `defrecord`, `drafting`, `draft`, `seal`, `clean`. Telling values
-  apart: `draft?`, `sealed?`, `of-type?`. Running checks on a draft, one, a certificate, or
-  a group at a time: `check`, `check!`, `certify`, `certify!`, `check-all`, `check-all!`,
-  `certify-all`, `certify-all!`, and the built-in certificate `every-check` the README names
-  as a var. What a draft has established: `passing`, `holding`. Opting a protocol method's
-  return out of the implicit seal: `unsealed`. Reading printed values back: `data-readers`."
+  apart: `draft?`, `sealed?`, `of-type?`. Checking, one verb over a check name or a
+  certificate name, one value or a group: `check`, `check!`, `check-all`, `check-all!`, and
+  the built-in certificate `every-check` the README names as a var. Running what the mask
+  would have skipped: `recheck`, `recheck!`, `recheck-all`, `recheck-all!`. What a value has
+  established: `passed`, `certificates`. Opting a protocol method's return out of the
+  implicit seal: `unsealed`. Reading printed values back: `data-readers`."
   '#{defrecord drafting draft seal clean
      draft? sealed? of-type?
-     check check! certify certify! check-all check-all! certify-all certify-all!
-     every-check passing holding
+     check check! check-all check-all!
+     recheck recheck! recheck-all recheck-all!
+     every-check passed certificates
      unsealed data-readers})
 
 (defn- publics [] (set (keys (ns-publics 'recognitum.core))))

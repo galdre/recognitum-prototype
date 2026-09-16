@@ -269,7 +269,7 @@
       (is (rec/draft? back))
       (is (rec/of-type? Ledger back))
       (is (= d back))
-      (is (= (rec/passing d) (rec/passing back))
+      (is (= (rec/passed d) (rec/passed back))
           "and the mask is a field like any other, so the verdicts come back with it"))))
 
 ;;; ============================== what the rows were for ==============================

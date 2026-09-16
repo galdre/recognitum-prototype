@@ -288,10 +288,10 @@
 
 (deftest a-field-a-batched-io-dep-names-is-gated-as-nil-like-any-other
   (let [d (assoc (rec/draft Job) ::cuts {:charlie 1})
-        e (err #(rec/check d ::only-roster-gets-a-cut))]
-    (is (= ::rec/check-failed (:error e)))
-    (is (= [::crew] (vec (keys (:failures e))))
+        r (rec/check d ::only-roster-gets-a-cut)]
+    (is (= [::crew] (vec (keys r)))
         "the gate over the field the batch names, judging the nil nobody wrote")
+    (is (not (contains? r ::only-roster-gets-a-cut)) "which never ran, so has no entry")
     (is (= 0 (ran ::roster)) "so no tuple was built and nothing was handed anywhere")))
 
 ;;; ------------------------------ what a batched fetch returns ------------------------------
@@ -352,14 +352,14 @@
 (deftest a-write-to-a-field-a-batched-fetch-names-clears-the-checks-behind-it
   (let [d (rec/draft job)]
     (is (= #{::name ::crew ::cuts ::only-roster-gets-a-cut ::somebody-is-known}
-           (rec/passing d)))
+           (rec/passed d)))
     (let [d' (assoc d ::crew #{:charlie :lyle :mole})]
-      (is (= #{::name ::cuts} (rec/passing d'))
+      (is (= #{::name ::cuts} (rec/passed d'))
           "the checks behind the batch go stale with the field the batch names"))))
 
 (deftest a-verdict-already-established-costs-no-batched-fetch-at-the-seal
   (let [d (whole)]
-    (is (true? (rec/certify d rec/every-check)))
+    (is (true? (rec/check d rec/every-check)))
     (is (= 1 (ran ::roster)))
     (reset-log!)
     (is (rec/sealed? (rec/seal d)))

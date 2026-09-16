@@ -102,25 +102,26 @@
 
 (deftest a-check-naming-an-unwritten-field-runs-and-answers
   (let [d (rec/draft Strict)]
-    (is (false? (rec/check d ::title)) "nil is what it judged, and false is what it said")
+    (is (= {::title false} (rec/check d ::title))
+        "nil is what it judged, and false is what it said")
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::title)))))
-    (is (= #{} (rec/passing d))))
+    (is (= #{} (rec/passed d))))
   (testing "and one that admits nil simply passes"
     (let [d (rec/draft Note)]
       (is (true? (rec/check d ::title)))
-      (is (contains? (rec/passing d) ::title)))))
+      (is (contains? (rec/passed d) ::title)))))
 
 (deftest a-certificate-judges-an-incomplete-draft-rather-than-refusing-it
-  (is (= {::title false} (rec/certify (rec/draft Strict) rec/every-check)))
-  (is (true? (rec/certify (rec/draft Note) rec/every-check))))
+  (is (= {::title false} (rec/check (rec/draft Strict) rec/every-check)))
+  (is (true? (rec/check (rec/draft Note) rec/every-check))))
 
 (deftest a-group-of-incomplete-drafts-is-judged-value-by-value
   ;; There is no pre-flight left to throw before the first check of the first value: an
   ;; incomplete draft is an ordinary draft holding nils.
   (let [empty-one (rec/draft Strict)
         full      (assoc (rec/draft Strict) ::title "t")]
-    (is (= [false true] (rec/check-all [empty-one full] ::title)))
-    (is (= [{::title false} true] (rec/certify-all [empty-one full] rec/every-check)))))
+    (is (= [{::title false} true] (rec/check-all [empty-one full] ::title)))
+    (is (= [{::title false} true] (rec/check-all [empty-one full] rec/every-check)))))
 
 ;;; ------------------------------------ what it prints ------------------------------------
 
@@ -137,7 +138,7 @@
     (doseq [f [#(rec/seal (rec/draft Strict))
                #(map->Strict {})
                #(rec/check! (rec/draft Strict) ::title)
-               #(rec/certify! (rec/draft Strict) rec/every-check)
+               #(rec/check! (rec/draft Strict) rec/every-check)
                #(rec/drafting [x Strict] x)]]
       (is (= ::rec/check-failed (:error (err f))))))
   (testing "and no machinery behind them"

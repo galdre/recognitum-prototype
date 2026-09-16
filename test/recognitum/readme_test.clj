@@ -37,7 +37,8 @@
   ;; and find missing, which is worse than an omission: it is a false claim with an
   ;; example attached.
   (doseq [token ["^{:valid" "{:valid " ":invalid-field" ":invariant-violated"
-                 ":depends-on" "defvalidated" "validated-record"]]
+                 ":depends-on" "defvalidated" "validated-record"
+                 "certify" "rec/passing" "rec/holding" "(passing" "(holding"]]
     (is (not (mentions? token)) (str "README still documents " token)))
   (testing "and the word invariant, which the check model replaced wholesale"
     (is (not (str/includes? (str/lower-case @readme) "invariant"))
@@ -128,8 +129,8 @@
 (deftest the-readme-covers-the-draft-level-facility
   ;; The half of the library the README has said least about: running checks before the
   ;; value is finished is most of why drafts carry a verdict at all.
-  (doseq [token ["check!" "certify" "certify!" "passing" "holding"
-                 "check-all" "certify-all"]]
+  (doseq [token ["check!" "recheck" "recheck!" "passed" "certificates"
+                 "check-all" "check-all!" "recheck-all"]]
     (is (mentions? token) (str "README says nothing about " token))))
 
 (deftest the-readme-covers-telling-the-two-types-apart

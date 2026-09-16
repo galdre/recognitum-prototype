@@ -219,7 +219,7 @@
     (let [d (assoc (rec/draft Flaky) ::a 1)]
       (is (= {:down true :for 1} (ex-data (try (rec/seal d) nil
                                                (catch clojure.lang.ExceptionInfo ex ex)))))
-      (is (= #{::a} (rec/passing d))
+      (is (= #{::a} (rec/passed d))
           "the pure check reached a verdict; the IO-bound one reached none"))))
 
 ;;; ------------------------------------ how often ------------------------------------
@@ -246,7 +246,7 @@
     (is (true? (rec/check d ::only-roster-gets-a-cut)))
     (is (= 1 (ran ::roster)))
     (testing "what is kept is the verdict, not the evidence"
-      (is (contains? (rec/passing d) ::only-roster-gets-a-cut))
+      (is (contains? (rec/passed d) ::only-roster-gets-a-cut))
       (is (nil? (get d ::roster)) "the fetched value is not a key of the draft")
       (is (nil? (::roster d)))
       (is (= #{::name ::crew ::cuts} (set (keys d)))))
@@ -295,22 +295,24 @@
 
 (deftest a-failing-gate-is-reported-rather-than-fetched-past
   (let [d (-> (whole) (assoc ::crew "not a crew"))
-        e (err #(rec/check d ::only-roster-gets-a-cut))]
-    (is (= ::rec/check-failed (:error e))
+        r (rec/check d ::only-roster-gets-a-cut)]
+    (is (= [::crew] (vec (keys r)))
         "the check could not be established, and the reason is the data")
-    (is (= [::crew] (vec (keys (:failures e)))))
+    (is (not (contains? r ::only-roster-gets-a-cut)) "it never ran, so it has no entry")
     (is (= 0 (ran ::roster)))
     (is (= 0 (ran ::only-roster-gets-a-cut)))
+    (is (= ::rec/check-failed (:error (err #(rec/check! d ::only-roster-gets-a-cut))))
+        "and the insisting form throws the gate's failures")
     (testing "and the verdicts of whatever did run are recorded"
-      (is (= #{::cuts} (rec/passing d))
+      (is (= #{::cuts} (rec/passed d))
           "::cuts is the shape check ::only-roster-gets-a-cut waits on, and it passed"))))
 
-(deftest certify-reports-a-failing-gate-among-its-failures
+(deftest a-certificate-reports-a-failing-gate-among-its-failures
   (let [d (-> (whole) (assoc ::crew "not a crew"))]
-    (is (= [::crew] (vec (keys (rec/certify d ::payout))))
+    (is (= [::crew] (vec (keys (rec/check d ::payout))))
         "::payout does not name ::crew, but ::crew is why nothing in it could be run")
     (is (= 0 (ran ::roster)))
-    (is (= ::rec/check-failed (:error (err #(rec/certify! d ::payout)))))))
+    (is (= ::rec/check-failed (:error (err #(rec/check! d ::payout)))))))
 
 (deftest seal-collects-every-pure-failure-before-it-fetches-anything
   ;; The two-phase seal: collect all pure failures and throw if there are any, otherwise
@@ -332,9 +334,10 @@
   ;; A field nobody wrote holds nil, and the gate over it is what keeps that nil away from
   ;; the outside: the shape check says no, so the fetch never happens.
   (let [d (assoc (rec/draft Job) ::cuts {:charlie 1})
-        e (err #(rec/check d ::only-roster-gets-a-cut))]
-    (is (= ::rec/check-failed (:error e)))
-    (is (= [::crew] (vec (keys (:failures e)))) "the gate over the field the fetch names")
+        r (rec/check d ::only-roster-gets-a-cut)
+        e (err #(rec/check! d ::only-roster-gets-a-cut))]
+    (is (= [::crew] (vec (keys r))) "the gate over the field the fetch names")
+    (is (= [::crew] (vec (keys (:failures e)))))
     (is (= {::crew nil} (:values (get (:failures e) ::crew))))
     (is (= 0 (ran ::roster)))
     (is (= 0 (roster/call-count)))))
@@ -346,9 +349,9 @@
   ;; `crew` -- so a write to `crew` makes its verdict stale, and a verdict that is stale is
   ;; no verdict at all.
   (let [d (rec/draft job)]
-    (is (= #{::name ::crew ::cuts ::only-roster-gets-a-cut} (rec/passing d)))
+    (is (= #{::name ::crew ::cuts ::only-roster-gets-a-cut} (rec/passed d)))
     (let [d' (assoc d ::crew #{:charlie :lyle :mole})]
-      (is (= #{::name ::cuts} (rec/passing d'))
+      (is (= #{::name ::cuts} (rec/passed d'))
           "::crew because it names the field, ::only-roster-gets-a-cut because its fetch does")
       (testing "and the index says the same thing"
         (is (= [::crew ::only-roster-gets-a-cut]
@@ -357,7 +360,7 @@
 
 (deftest a-verdict-already-established-costs-no-fetch-at-the-seal
   (let [d (whole)]
-    (is (true? (rec/certify d rec/every-check)))
+    (is (true? (rec/check d rec/every-check)))
     (is (= 1 (ran ::roster)))
     (reset-log!)
     (is (rec/sealed? (rec/seal d)))
@@ -384,9 +387,9 @@
 
 (deftest a-failed-io-check-is-run-again-next-time
   (let [d (-> (whole) (assoc ::cuts {:stranger 1}))]
-    (is (false? (rec/check d ::only-roster-gets-a-cut)))
+    (is (= {::only-roster-gets-a-cut false} (rec/check d ::only-roster-gets-a-cut)))
     (is (= 1 (ran ::roster)))
-    (is (false? (rec/check d ::only-roster-gets-a-cut)))
+    (is (= {::only-roster-gets-a-cut false} (rec/check d ::only-roster-gets-a-cut)))
     (is (= 2 (ran ::roster)) "nothing about a cleared bit distinguishes failed from unrun")))
 
 ;;; ------------------------- writes to a sealed value reach IO too -------------------------

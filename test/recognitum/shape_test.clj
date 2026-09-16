@@ -221,34 +221,35 @@
 
 (deftest a-check-whose-gate-passes-answers-for-itself
   (let [d (fresh {::item "hat" ::price 500 ::cuts {:a 1} ::tags [:x]})]
-    (is (false? (rec/check d ::cheap)) "run, and its own return value is the answer")
+    (is (= {::cheap false} (rec/check d ::cheap))
+        "run, and its own return value is the answer, under its own name")
     (is (true? (rec/check d ::price)) "which is what the gate established on the way")))
 
 (deftest a-check-whose-gate-fails-has-no-verdict-to-answer-with
   ;; The question was whether this check passes. "The data never got far enough to ask" is
-  ;; not `false`, so the reason is thrown rather than returned -- the same ruling the IO
-  ;; gate already makes.
+  ;; not `false`, and the keyed answer says so without inventing one: the blocking check
+  ;; gets the entry and the check asked about gets none -- the same ruling the IO gate makes.
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})
-        e (err #(rec/check d ::cheap))]
-    (is (= ::rec/check-failed (:error e)))
-    (is (= [::price] (keys (:failures e)))))
+        r (rec/check d ::cheap)]
+    (is (= [::price] (vec (keys r))))
+    (is (not (contains? r ::cheap))))
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::cheap)))))))
 
 (deftest a-certificate-reports-the-gate-that-stopped-it
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
-    (is (= {::price false} (rec/certify d ::pricing))
+    (is (= {::price false} (rec/check d ::pricing))
         "a check the certificate does not name, because it is the only honest thing to say")
-    (is (= #{} (rec/holding d)) "nothing in ::pricing was established"))
+    (is (= #{} (rec/certificates d)) "nothing in ::pricing was established"))
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
-    (is (= ::rec/check-failed (:error (err #(rec/certify! d ::pricing)))))))
+    (is (= ::rec/check-failed (:error (err #(rec/check! d ::pricing)))))))
 
 (deftest a-group-reports-the-gate-per-value
   (let [bad  (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})
         good (fresh {::item "hat" ::price 50 ::cuts {:a 50} ::tags [:x]})]
     (is (= [{::price false} true] (rec/check-all [bad good] ::cheap))
         "one value's gate failing discards nothing about the other")
-    (is (= [{::price false} true] (rec/certify-all [bad good] ::pricing)))))
+    (is (= [{::price false} true] (rec/check-all [bad good] ::pricing)))))
 
 ;;; ------------------------- a skipped check records no verdict -------------------------
 
@@ -256,10 +257,10 @@
   ;; The sharp end of the whole arrangement: a skipped check must not leave a bit behind
   ;; that `seal` would later believe.
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
-    (is (= {::price false} (rec/certify d rec/every-check)))
-    (is (= #{::item ::cuts ::tagged} (rec/passing d))
+    (is (= {::price false} (rec/check d rec/every-check)))
+    (is (= #{::item ::cuts ::tagged} (rec/passed d))
         "everything that ran and passed, and nothing that was skipped")
-    (is (= #{} (rec/holding d)))
+    (is (= #{} (rec/certificates d)))
     (testing "so fixing the shape runs them at last"
       (let [e (err #(rec/seal (assoc d ::price 500)))]
         (is (= [::cheap ::split] (keys (:failures e))))))))

@@ -124,17 +124,17 @@
 (deftest a-failing-check-shows-in-the-metadata-as-not-passing
   (let [d (whole "a title longer than the body" "short" :memo)]
     (is (true? (rec/check d ::title)))
-    (is (false? (rec/check d ::long)) "the body says less than the title")
+    (is (= {::long false} (rec/check d ::long)) "the body says less than the title")
     (is (= #{::title ::body} (passed d))
         "::long waits on both shape checks, so establishing it established them")
     (is (= #{} (certs d)))))
 
 (deftest certifying-shows-up-as-the-certificate-being-held
   (let [d (whole)]
-    (is (true? (rec/certify d ::shape)))
+    (is (true? (rec/check d ::shape)))
     (is (= #{::title ::body ::tag} (passed d)))
     (is (= #{::shape} (certs d)))
-    (is (true? (rec/certify d ::rec/every-check)))
+    (is (true? (rec/check d ::rec/every-check)))
     (is (= all-checks (passed d)))
     (is (= all-certs (certs d)))))
 
@@ -155,16 +155,16 @@
     (is (= #{::rec/every-check} (certs d)))))
 
 (deftest the-metadata-and-the-predicates-agree-at-every-step
-  ;; `passing` and `holding` answer the same question directly; `meta` is the uniform way
-  ;; to ask it, and the two must never diverge.
+  ;; `passed` and `certificates` answer the same question directly; `meta` is the uniform
+  ;; way to ask it, and the two must never diverge.
   (let [d (whole)]
     (doseq [step [#(rec/check % ::title)
                   #(rec/check % ::long)
-                  #(rec/certify % ::shape)
+                  #(rec/check % ::shape)
                   #(rec/check % ::tag)]]
       (step d)
-      (is (= (rec/passing d) (passed d)))
-      (is (= (rec/holding d) (certs d))))))
+      (is (= (rec/passed d) (passed d)))
+      (is (= (rec/certificates d) (certs d))))))
 
 ;;; ------------------------------- merged over, not under -------------------------------
 
@@ -235,13 +235,19 @@
             (assoc h ::title "another"))]
     (is (= {:src :test ::rec/passed all-checks ::rec/certificates all-certs} (meta s)))))
 
-(deftest passing-and-holding-still-answer-for-a-draft-alone
-  ;; `meta` is the uniform interface; `passing` and `holding` remain questions about a
-  ;; draft's mask, and a sealed value has no mask. The constant is built where it is merged.
-  (is (= ::rec/not-a-draft (:error (err #(rec/passing note)))))
-  (is (= ::rec/not-a-draft (:error (err #(rec/holding note)))))
-  (is (= all-checks (passed note)))
-  (is (= all-certs (certs note))))
+(deftest passed-and-certificates-answer-for-both-forms-and-agree-with-meta
+  ;; They carry the same names as the keys and must carry the same values. A draft reads
+  ;; its mask; a sealed value reads the type's constant, since being sealed is exactly
+  ;; every check having passed.
+  (doseq [x [note (rec/draft note) (whole) (rec/draft Note) (->Bare :x) (rec/draft Bare)]]
+    (is (= (::rec/passed (meta x)) (rec/passed x)) (pr-str x))
+    (is (= (::rec/certificates (meta x)) (rec/certificates x)) (pr-str x)))
+  (is (= all-checks (rec/passed note)))
+  (is (= all-certs (rec/certificates note)))
+  (testing "and a value that is not one of this library's is refused by both"
+    (doseq [x [Note {::title "x"} nil 42]]
+      (is (= ::rec/not-a-value (:error (err #(rec/passed x)))) (pr-str x))
+      (is (= ::rec/not-a-value (:error (err #(rec/certificates x)))) (pr-str x)))))
 
 ;;; ------------------------- not part of the value it is about -------------------------
 
@@ -259,7 +265,7 @@
   (let [a (whole)
         b (whole)]
     (rec/check a ::title)
-    (rec/certify a ::shape)
+    (rec/check a ::shape)
     (is (not= (meta a) (meta b)) "different verdicts")
     (is (= a b) "same data")
     (is (= (hash a) (hash b))))
