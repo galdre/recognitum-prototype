@@ -192,6 +192,14 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
 
 ### H — later, low priority
 
+- [ ] **H2. Raise or name the limits.** The verdict mask is one `long`, so a type may declare
+      at most 64 checks (`::too-many-checks` at macroexpansion, which names it). Fields are
+      capped at 20 by Clojure's parameter limit on the generated `->Type`, with Clojure's own
+      message "Can't specify more than 20 params", which does not name fields. Either widen
+      the mask (two longs, or a `BitSet`) and give `->Type` a map-taking fallback past 20, or
+      at least refuse a 21st field in the macro with a message that says so. Galdre: fix
+      later.
+
 - [ ] **H1. `recognitum.walk`.** `clojure.walk/walk` is a plain `cond`: on `IRecord` it does
       `(reduce conj form form)`, one write per entry, with no protocol or multimethod to
       intercept. So `postwalk` over an `:io-limited` sealed value throws `::io-limited`, and
@@ -262,10 +270,11 @@ so far, or the options if it is still open. None is implemented.
       operation rather than by keyword. Compile-time refusals and typo-catchers
       (`:unknown-check`) are not worth documenting in a table at all. Undecided in shape.
 
-- [ ] **README gaps from the exception audit.** Once the above settle: `:malformed-batch` and
-      `:incomplete-batch` (a batched fetch returned the wrong shape) get documented; whatever
-      replaces `:not-a-draft` gets documented; `certify`'s docstring names
-      `:unknown-certificate` as a possibility. `:io-limited` is already in README.
+- [ ] **README gaps from the exception audit.** Once the documentation shape settles:
+      `:malformed-batch` and `:incomplete-batch` (a batched fetch returned the wrong shape) get
+      documented; `:not-a-value` (checking something that is not a recognitum value) gets
+      documented. `:unknown-certificate` no longer exists — one verb, one refusal
+      (`:unknown-check`). `:io-limited` is already in README.
 
 - [ ] **SPEC.md's future.** It began as the target for the rewrite and drifted into a design
       rationale document without that being decided. Galdre: make a list of what it holds that
@@ -532,14 +541,14 @@ so far, or the options if it is still open. None is implemented.
       the draft-level facility is the half of the library it says least about. The four-way
       table C0 left for F1 is in the same position. Both landed in F1.
 
-- [ ] **D1 — a type may declare at most 64 checks, and at most 20 fields.** The verdict
+- [x] **D1 — a type may declare at most 64 checks, and at most 20 fields.** The verdict
       mask is one long, so a 65th check would alias the first and a value could seal on a
       check that never ran; that is `::too-many-checks` at macroexpansion
       (`reject-too-many-checks!`). The written-field mask has the same width and cannot
       reach it, because a 21st field makes `->Type` a function of 21 parameters and
       Clojure refuses more than 20 -- with the message "Can't specify more than 20
       params", which says nothing about fields. If the field ceiling ever matters, refuse
-      it in the macro with a message that names it.
+      it in the macro with a message that names it. Ruled by galdre 2026-09-16: "okay for now, fix later." Moved to H2.
 
 - [x] **C1 — `:io-deps` and `:certificates` compile only empty.** The sections are part of
       the form before they are part of the library, so a populated one throws
@@ -858,37 +867,37 @@ so far, or the options if it is still open. None is implemented.
       `quick-benchmark`, so the cost is one dependency on the test classpath and nothing at
       run time.
 
-- [ ] **I1 — one verb leaves one refusal, so `::unknown-certificate` no longer exists.**
+- [x] **I1 — one verb leaves one refusal, so `::unknown-certificate` no longer exists.**
       `check` takes a check name or a certificate name and cannot tell which was meant, so a
       name the type declares neither of is one error rather than two: `::unknown-check`,
       carrying `:check`, `:checks` and now `:certificates`, so the message says what it
       could have been given of either kind. The step's brief named both keywords; there is
       no call site left that knows which one a caller intended, and two refusals for one
       question would have to guess. Recorded rather than assumed: if the keyword should be
-      neutral -- `::unknown-name`, say -- `ids-for` is the only place it lives.
+      neutral -- `::unknown-name`, say -- `ids-for` is the only place it lives. Presented to galdre 2026-09-16; no objection. Stands.
 
-- [ ] **I1 — a mixed group's `:record` is a vector of type names.** A group of one type
+- [x] **I1 — a mixed group's `:record` is a vector of type names.** A group of one type
       throws `:record 'Ledger` exactly as before. A group of several has no single type to
       speak for the rest, so `:record` is the names of all of them in first-appearance
       order and the message reads the same way. `group-name` is the only place this lives.
       A handler that dispatched on `:record` being a symbol now has a second shape to
-      consider; nothing in the suite or the documents did.
+      consider; nothing in the suite or the documents did. Presented to galdre 2026-09-16; no objection. Stands.
 
-- [ ] **I1 — `recheck` does not re-run the gates it waits on.** What was asked for is these
+- [x] **I1 — `recheck` does not re-run the gates it waits on.** What was asked for is these
       checks, not their prerequisites, so a gate the mask already calls established is not
       run again -- which means a `recheck` of an IO-bound check re-fetches and re-judges but
       does not re-confirm the shape of the field the fetch names. That is the narrow reading
       and the cheap one; the alternative, taking the whole closure by force, would make
       `(recheck d some-io-check)` cost the same as `(recheck d every-check)` on most types.
       A gate that has *not* passed still stops the check behind it. `plan-for` is where the
-      reading lives, in the one line that computes `pending`.
+      reading lives, in the one line that computes `pending`. Presented to galdre 2026-09-16; no objection. Correct on the merits too: gates are pure checks over field values, which the world cannot change.
 
-- [ ] **I1 — the deferred `README gaps from the exception audit` item is now partly stale.**
+- [x] **I1 — the deferred `README gaps from the exception audit` item is now partly stale.**
       It asks for `:unknown-certificate` to be named in `certify`'s docstring; neither the
       keyword nor the function exists. `:not-a-draft`'s replacement, which the same item
       asks about, is `:not-a-value` -- thrown by every checking and query function for
       something that is neither a draft nor a sealed value, and by the group forms with the
-      offender's `:index`. `:malformed-batch` and `:incomplete-batch` are still undocumented.
+      offender's `:index`. `:malformed-batch` and `:incomplete-batch` are still undocumented. 2026-09-16: the discussion item is updated below.
 
 ## Blocking
 
