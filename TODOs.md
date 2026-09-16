@@ -361,7 +361,7 @@ so far, or the options if it is still open. None is implemented.
       carries rather than deleting them. F1 rewrote the README end to end without wanting
       the word, so nothing was narrowed; the constraint stands for whoever does want it.
 
-- [ ] **D1 — `passing` answers for a draft only, and D4 will want it for both.**
+- [x] **D1 — `passing` answers for a draft only, and D4 will want it for both.**
       `SPEC.md`'s uniform `meta` says a sealed value reports the same
       `:recognitum.core/passed` key a draft does, holding every check, "a compile-time
       constant for a sealed type". `passing` throws `::not-a-draft` for anything but a
@@ -375,7 +375,7 @@ so far, or the options if it is still open. None is implemented.
       type and embeds in the sealed `meta` method. So a sealed value with no metadata of
       its own answers with that very map and allocates nothing, and there is one narrow
       set of draft-only fns rather than four fns disagreeing about what a sealed value is
-      allowed to be asked.
+      allowed to be asked. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there.
 
 - [x] **D1 — the mask is written but barely read.** `run-draft-checks!` records what
       it ran and `seal` is its only caller; the inlined groups at `assoc`, `merge` and the two
@@ -391,7 +391,7 @@ so far, or the options if it is still open. None is implemented.
       `:draft-dirty-keys` and `:independent` are all deleted, so a write maintains the
       verdict mask and nothing else.
 
-- [ ] **D2 — `check` and `check!` refuse a sealed value, as `passing` does.** Both throw
+- [x] **D2 — `check` and `check!` refuse a sealed value, as `passing` does.** Both throw
       `::not-a-draft` for anything but a draft, which is `SPEC.md`'s framing ("Running
       checks on a draft") and matches `passing`. But a sealed value is one every check
       passed on, so `true` is an honest answer there too, and D4's uniform `meta` wants the
@@ -399,7 +399,7 @@ so far, or the options if it is still open. None is implemented.
       alongside it or leave all three narrow deliberately -- the one thing to avoid is
       `passing` answering for a sealed value while `check` throws on one. Ruled in D4:
       all of them stay narrow. `meta` is where a sealed value answers, and it answers
-      from a constant rather than by running anything.
+      from a constant rather than by running anything. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there.
 
 - [ ] **D2 — a check naming a field never written throws `::missing-field`, which
       `SPEC.md` does not say.** The spec's table gives `check` two outcomes, `true` or the
@@ -444,13 +444,13 @@ so far, or the options if it is still open. None is implemented.
       failures report in the order every other entry point reports in. A map, a keyword, a
       bare symbol and a number are refused as `::malformed-certificate`.
 
-- [ ] **D3 — `certify`, `certify!` and `holding` refuse a sealed value, as `check` and
+- [x] **D3 — `certify`, `certify!` and `holding` refuse a sealed value, as `check` and
       `passing` do.** Same note as D2's, now with two more functions in it: a sealed value
       passed every check, so `true` and "holds every certificate" are honest answers there,
       and D4's uniform `meta` wants both constants for a sealed type. Whoever widens
       `passing` for D4 should widen all five together or leave all five narrow; the thing
       to avoid is `meta` answering for a sealed value while the functions behind those keys
-      throw on one.
+      throw on one. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there.
 
 - [x] **D3 — `certify` does not save work at the seal yet.** Certifying a draft leaves
       every check it ran marked as passing, but `seal` still selects what to run by the
