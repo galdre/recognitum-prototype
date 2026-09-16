@@ -243,6 +243,10 @@ method handing back an already-sealed value.
 Inside the body the receiver is a draft in both cases, so a body asking `(instance? Heist h)`
 would surprise itself and wants `(rec/of-type? Heist h)` instead.
 
+`recur` works in a method body exactly as it does on a `defrecord` — it targets the body
+itself, with the receiver excluded, so `(tally [h n] (if (pos? n) (recur (dec n)) h))` means
+here what it would mean there.
+
 **`unsealed` opts out**, as `reduced` opts out of a reduction:
 
 ```clojure

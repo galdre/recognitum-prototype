@@ -1409,6 +1409,23 @@
   [model ret]
   (if (instance? Unsealed ret) (opted-out model ret) ret))
 
+(defn- recurrable-body
+  "A method body wrapped in a `loop` rebinding every argument but the receiver to itself, so
+  that `recur` inside it means what it means in a `defrecord` method body.
+
+  Neither emission puts the body in tail position of the method: on the draft type it is an
+  argument to [[draft-impl-return]], and on the sealed type it is inside the `try` that pops
+  the ownership frame -- and \"Cannot recur across try\" is not a fact about the body anyone
+  wrote. A `loop` inside both is the recur target instead. The receiver is left out because
+  a `defrecord` method body's recur leaves it out: the arity is the one the author would
+  have written against `defrecord`, and rebinding the receiver would let a body swap the
+  draft the wrapper owns for something else halfway through.
+
+  It allocates nothing -- a loop with no recur compiles to the body -- and a body with no
+  `recur` in it means exactly what it meant before."
+  [args body]
+  `(loop [~@(interleave (rest args) (rest args))] ~@body))
+
 (defn- owned-here?
   "Is `x` a draft belonging to a `drafting` form already on the stack?"
   [x]
@@ -1638,7 +1655,12 @@
   built-in, would make the same word mean two things inside one type.
 
   `:mask` is the certificate's checks as bits of a draft's verdict mask, so holding one is
-  a single `and` at run time rather than a walk over names."
+  a single `and` at run time rather than a walk over names.
+
+  A certificate is a set of check names however it was written, so any collection will do
+  and a repeat in one is one name given twice: the names are resolved to indices through a
+  set here, and `[::a ::a ::b]` compiles to exactly what `#{::a ::b}` compiles to, mask
+  included. Nothing downstream could tell them apart in any case -- a check owns one bit."
   [tname certificates check-names]
   (let [known (vec check-names)
         ids   (zipmap known (range))
@@ -2231,7 +2253,9 @@
                               form
                               (let [[mname args & body] form]
                                 `(~mname ~args
-                                   (~(internal 'draft-impl-return) ~model-sym (do ~@body))))))
+                                   (~(internal 'draft-impl-return)
+                                    ~model-sym
+                                    ~(recurrable-body args body))))))
                           impl-forms)
         ;; The sealed type wraps it: the receiver the body sees is a draft of the value,
         ;; owned by this call, so an enclosing-style `drafting` inside the body passes it
@@ -2251,7 +2275,7 @@
                                        (try
                                          (let [~recv ((:draft-from ~model-sym)
                                                       ~selfsym ~toksym)]
-                                           ~@body)
+                                           ~(recurrable-body args body))
                                          (finally (pop-thread-bindings)))))))))
                            impl-forms)
         ;; Run the checks at `idxs` over the expressions `argvs-of` gives for each -- locals
