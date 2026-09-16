@@ -265,7 +265,8 @@
     (is (= (hash a) (hash b))))
   (is (= note (with-meta note {:src :test})))
   (is (= (hash note) (hash (with-meta note {:src :test}))))
-  (is (= note (rec/draft note)) "and across the two forms, which hold the same entries"))
+  (is (false? (= note (rec/draft note)))
+      "but the two forms are two types, and a record decides equality on the class first"))
 
 (deftest the-library-keys-do-not-survive-printing
   (let [s (pr-str note)]
