@@ -69,7 +69,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### E — IO
 
-- [ ] **E1. `:io-deps`, singular form.** Fake the IO in `dev/` — an in-memory table standing in
+- [x] **E1. `:io-deps`, singular form.** Fake the IO in `dev/` — an in-memory table standing in
       for a database is enough, and nothing here should need a real one to be exercised or
       tested. Arglists as everywhere else, io-deps nameable by other
       io-deps, topological fetch order, cycles rejected at compile time. The gate: an io-dep
@@ -244,7 +244,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       params", which says nothing about fields. If the field ceiling ever matters, refuse
       it in the macro with a message that names it.
 
-- [ ] **C1 — `:io-deps` and `:certificates` compile only empty.** The sections are part of
+- [x] **C1 — `:io-deps` and `:certificates` compile only empty.** The sections are part of
       the form before they are part of the library, so a populated one throws
       `:recognitum.core/unsupported-section` at macroexpansion rather than being accepted
       and ignored — accepting a declaration nothing reads is the silent mis-declaration
@@ -253,15 +253,20 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       model from the section, and drop the corresponding case from
       `definition-test/a-section-with-no-implementation-behind-it-is-accepted-only-empty`.
       D3 did its half: the guard is now a `when` over `:io-deps` alone, the model carries
-      `:certificates`, and that test asserts a populated `:certificates` compiles. Only
-      the `:io-deps` half is left, for E1.
+      `:certificates`, and that test asserts a populated `:certificates` compiles. E1 did
+      the other half: the guard is gone entirely, `::unsupported-section` with it, and
+      `definition-test/a-section-with-no-implementation-behind-it-is-accepted-only-empty`
+      is now `every-section-now-has-something-behind-it`.
 
 - [ ] **C1 — only `:options` was added to the model, and nothing reads it.** The model
       carries `:options` (an empty map where the section was left out) so that E4 has
       somewhere to look for `:io-limited`; `:io-deps` and `:certificates` are not on the
       model at all, because they can only be empty. Whoever lands E1/D3/E4 adds theirs the
       same way. D3 added `:certificates` -- certificate name -> `{:checks :ids :mask}`,
-      emitted as `array-map` applied to the pairs so it stays ordered past eight. `known-options` is `#{:io-limited}` and an option outside it is a compile
+      emitted as `array-map` applied to the pairs so it stays ordered past eight. E1 added
+      `:io-deps` (in fetch order), `:io-names`, `:run-io`, and three keys per check --
+      `:io`, `:gate` and `:field-closure`. `:options` is still what nothing reads, which is
+      E4's business. `known-options` is `#{:io-limited}` and an option outside it is a compile
       error, so a new option is declared there or it does not compile.
 
 - [x] **C1 — the definition map is required, not optional.** `SPEC.md` says three
@@ -316,7 +321,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       definition form and belongs to whoever revisits C1, not here. Until then `SPEC.md`'s
       sentence overclaims by one clause.
 
-- [ ] **B2 — the io-dep half of the resolution has no end-to-end path yet.** `resolve-deps`
+- [x] **B2 — the io-dep half of the resolution has no end-to-end path yet.** `resolve-deps`
       takes the set of declared io-deps and `reject-duplicate-names!` takes their names, but
       the macro passes `#{}` and `#{}` because there is no `:io-deps` section until E1. So the
       reachable macro-level behaviour is that every keyword in an arglist is unresolvable; a
@@ -324,7 +329,9 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       io-dep, are covered by calling those two fns directly in `recognitum.resolution-test`.
       E1 should replace the `io-deps #{}` binding in `defrecord` with the declared set, pass
       the io-dep names to `reject-duplicate-names!`, resolve each io-dep's own arglist through
-      `resolve-deps` with `:what :io-dep`, and add the end-to-end cases.
+      `resolve-deps` with `:what :io-dep`, and add the end-to-end cases. Done in E1; the
+      end-to-end cases are in `recognitum.io-deps-test`, and `resolution-test` keeps the
+      direct ones as the smallest statement of the same rules.
 
 - [ ] **A1 — the README performance table was not re-measured.** The bench runs and its
       numbers sit inside the run-to-run spread the table already warns about, but qualified
@@ -346,12 +353,51 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       reaching them through the protocol object. Not done here because D1 made them public
       deliberately and D5 is not the step that should reverse that.
 
-- [ ] **D5 — `seal` is one phase, and `SPEC.md` describes two.** "The gate makes it
+- [x] **D5 — `seal` is one phase, and `SPEC.md` describes two.** "The gate makes it
       two-phase: collect all pure failures and throw if there are any, otherwise fetch and
       collect the IO ones." Every check is pure until E1, so the second phase has nothing
       to hold and `seal` collects once over everything not already passing. E1 owns
       splitting what `not-established` hands back at the gate; the selection itself does
-      not change, since a check already passing is run in neither phase.
+      not change, since a check already passing is run in neither phase. E1 split it:
+      `establish-group` runs the pure phase, throws with everything it found if anything
+      failed, and only then fetches and runs the IO-bound half. The selection is unchanged.
+
+- [ ] **E1 — the example model, the demo and the README have no io-dep in them.** F1 owns
+      all three and its entry already says the demo should illustrate one. E1 left
+      `recognitum.heist` exactly as it was and put the fake source beside it, in
+      `dev/recognitum/roster.clj`: an in-memory table, a log of every call made to it, and
+      a `fetch-roster` that throws on anything that is not a crew -- which is what makes a
+      leaking gate show up as an exception rather than as a quietly wrong report.
+      `recognitum.io-deps-test` uses it. Wiring it into `Heist` would have changed what
+      every other suite's `Heist` does at the seal, which is not E1's to do.
+
+- [ ] **E1 — `check` throws where a check it is gated behind fails.** `SPEC.md` says
+      `check` returns `true` or the failing check's data, and says separately that running
+      a check runs whatever it depends on that is not already passing. Where a pure check
+      gating an IO-bound check's fetch fails, the check asked about is never run, so there
+      is no data of its own to return: E1 throws the ordinary `:check-failed` carrying the
+      gate's failures, on the precedent of `:missing-field`, which D2 already throws from
+      the non-throwing form for the same reason. `certify` needs no such rule -- it is
+      already shaped for several failures, so a failing gate simply appears among them,
+      even where the certificate does not name it. If the reading is wrong, the place to
+      change it is `establish`.
+
+- [ ] **E1 — an io-dep nothing names compiles, and never fetches.** Every other declaration
+      that would mean nothing is a compile error here, and a dead io-dep is arguably one of
+      those. It is not refused, because unlike a certificate covering nothing it asserts
+      nothing while it sits there: it is unreachable code rather than a false claim.
+      `io-deps-test/an-io-dep-nothing-names-never-fetches` pins the behaviour either way.
+
+- [ ] **E1 — the batched form is refused as an unresolvable arglist entry.** `[[crew] :as
+      rows]` is E2. Until then `[crew]` is an entry naming neither a field nor an io-dep and
+      is reported as `::unknown-dependency`, which is true but says nothing about the form
+      being a batched fetch written too early. E2 owns the message either way.
+
+- [ ] **E1 — nothing is deduplicated across values yet.** Within one validation call an
+      io-dep is fetched once however many checks name it. Across values it is fetched once
+      each, because there is no call that spans values until `check-all` / `certify-all`.
+      E3 owns that, and `fetch-io` is where the argument tuple would become the cache key
+      rather than the io-dep name.
 
 ## Blocking
 

@@ -100,9 +100,10 @@
 ;;; ------------------------- a keyword names an io-dep, or nothing -------------------------
 
 (deftest a-keyword-in-an-arglist-must-name-a-declared-io-dep
-  ;; A keyword in an arglist always means an io-dep. None can be declared yet, so every
-  ;; keyword is unresolvable -- but it is rejected as an unknown io-dep, not as a stray
-  ;; symbol, because which kind of thing it is is visible where it is written.
+  ;; A keyword in an arglist always means an io-dep, and this type declares none, so every
+  ;; keyword in it is unresolvable -- but it is rejected as an unknown io-dep, not as a
+  ;; stray symbol, because which kind of thing it is is visible where it is written. One
+  ;; that does resolve, against a declared `:io-deps`, is `recognitum.io-deps-test`.
   (let [e (compile-data '(recognitum.core/defrecord Fetching
                            [a]
                            {:checks {:scratch/c ([a :scratch/roster] (= a roster))}}))]
@@ -185,11 +186,12 @@
     (is (= [1 2] (get (:index model) ::b)))
     (is (= ::rec/check-failed (:error (err #(->Resolved 5 2)))))))
 
-;;; --------------------- the rules, where the macro cannot reach them yet ---------------------
+;;; ------------------------------ the rules, against the fns ------------------------------
 
-;; `:io-deps` arrives in E1. The resolution itself is written once and used by checks and
-;; io-deps alike, so the rules governing io-dep names are exercised here directly against it
-;; rather than waiting for a section that can declare one.
+;; The resolution is written once and used by checks and io-deps alike. These exercise it
+;; directly, with the io-dep set handed in, because that is the smallest statement of the
+;; rule; `recognitum.io-deps-test` reaches the same rules through a `defrecord` form that
+;; declares the io-deps for real.
 
 (deftest resolve-deps-turns-an-arglist-into-dependency-keys
   (is (= [:t/a :t/roster :t/b]

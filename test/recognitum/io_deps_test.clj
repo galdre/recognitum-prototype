@@ -534,6 +534,30 @@
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= '[a] (:dependency e)))))
 
+(deftest an-arglist-may-not-bind-one-name-twice
+  ;; What the body sees of `::roster` is `roster`, so an io-dep whose name spells a field's
+  ;; would shadow it -- and silently, since a repeated parameter is legal Clojure and the
+  ;; second one wins. A dependency declared and then shadowed is a dependency the body
+  ;; cannot read, so the form does not compile.
+  (let [e (compile-data '(recognitum.core/defrecord Shadowed
+                           [crew]
+                           {:checks  {:scratch/c ([crew :other/crew] (= crew crew))}
+                            :io-deps {:other/crew ([crew] crew)}}))]
+    (is (= ::rec/duplicate-dependency (:error e)))
+    (is (= :scratch/c (:check e)))
+    (is (= 'crew (:dependency e))))
+  (testing "which is the same rule a field named twice runs into"
+    (let [e (compile-data '(recognitum.core/defrecord Twice
+                             [a]
+                             {:checks {:scratch/c ([a a] (int? a))}}))]
+      (is (= ::rec/duplicate-dependency (:error e)))
+      (is (= 'a (:dependency e)))))
+  (testing "while an io-dep named for a field it does not itself name is fine"
+    (is (nil? (compiles '(recognitum.core/defrecord Fine
+                           [crew]
+                           {:checks  {:scratch/c ([:other/crew] (some? crew))}
+                            :io-deps {:other/crew ([crew] crew)}}))))))
+
 (deftest a-rejected-io-dep-defines-nothing
   (is (some? (compiles '(recognitum.core/defrecord Refused
                           [a]

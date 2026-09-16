@@ -196,24 +196,20 @@
 
 ;;; --------------------------- the sections with nothing behind them ---------------------------
 
-(deftest a-section-with-no-implementation-behind-it-is-accepted-only-empty
-  ;; `:io-deps` is part of the form before it is part of the library. Accepting a
-  ;; declaration and then ignoring it would be the silent mis-declaration this whole design
-  ;; is arranged to prevent, so a populated one is refused until it means something.
-  ;; (`:certificates` was in the same position until D3 gave it meaning; it now compiles,
-  ;; and `recognitum.certificate-test` owns what it means.)
-  (let [e (compile-data '(recognitum.core/defrecord Fetching
-                           [a]
-                           {:io-deps {:scratch/roster ([a] [a])}}))]
-    (is (= ::rec/unsupported-section (:error e)))
-    (is (= 'Fetching (:record e)))
-    (is (= :io-deps (:section e))))
-  (testing "while a populated :certificates now defines something"
-    (is (nil? (compiles '(recognitum.core/defrecord Certified
-                           [a]
-                           {:checks {:scratch/a int?}
-                            :certificates {:scratch/shape #{:scratch/a}}})))))
-  (testing "a keyword in an arglist is still an io-dep nobody declared"
+(deftest every-section-now-has-something-behind-it
+  ;; Each of these was accepted only empty while the library had no implementation for it,
+  ;; because accepting a declaration and then ignoring it is the silent mis-declaration this
+  ;; whole design is arranged to prevent. D3 gave `:certificates` its meaning and E1 gave
+  ;; `:io-deps` theirs, so both now define something; `recognitum.certificate-test` and
+  ;; `recognitum.io-deps-test` own what.
+  (is (nil? (compiles '(recognitum.core/defrecord Fetching
+                         [a]
+                         {:io-deps {:scratch/roster ([a] [a])}}))))
+  (is (nil? (compiles '(recognitum.core/defrecord Certified
+                         [a]
+                         {:checks {:scratch/a int?}
+                          :certificates {:scratch/shape #{:scratch/a}}}))))
+  (testing "while a keyword in an arglist still has to name one that was declared"
     (let [e (compile-data '(recognitum.core/defrecord Fetching2
                              [a]
                              {:io-deps {}
@@ -272,8 +268,9 @@
     (is (= ::rec/unknown-section (:error (err #(rec/parse-definition 'T {:cheks {}})))))
     (is (= ::rec/malformed-section (:error (err #(rec/parse-definition 'T {:checks [1]})))))
     (is (= ::rec/unknown-option (:error (err #(rec/parse-definition 'T {:options {:nope 1}})))))
-    (is (= ::rec/unsupported-section
-           (:error (err #(rec/parse-definition 'T {:io-deps {:t/r 'identity}})))))))
+    (is (= {:options {} :checks {} :io-deps {:t/r 'identity} :certificates {}}
+           (rec/parse-definition 'T {:io-deps {:t/r 'identity}}))
+        "and a populated :io-deps is a section like any other, now that it means something")))
 
 (deftest the-sections-are-named-once-and-in-spec-order
   (is (= [:options :checks :io-deps :certificates] (vec rec/definition-sections)))
