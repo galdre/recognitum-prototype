@@ -113,9 +113,16 @@ as deliberate.
 
 - [x] `clean` and `:extraneous-keys` are now covered by `prototype.draft-test`, along with the
       `dissoc` rules and the unset-vs-nil distinction.
-- [ ] A `revising` body returning a sealed value instead of a draft throws a bare
-      `NullPointerException`, not an `ex-info`. Decide whether that is a supported mistake worth
-      a real error.
+- [x] A `revising` body returning a sealed value threw a bare `NullPointerException`. Ruled: it
+      is not a mistake. `seal` is now idempotent — an already-sealed value passes through, so
+      `seal` is a projection and a sealed value is a fixed point of it. Anything that is neither
+      a draft nor sealed throws `:cannot-seal` with a real message. Added `sealed?` alongside
+      `draft?`.
+  - [ ] Open: whether there should also be a throwing variant of `seal` that refuses an
+        already-sealed value. Argument for one: a body that ignored its draft binding and
+        operated on the original — `(revising [x job] (promote job ...))` — now returns a
+        plausible-looking result with the draft's work silently discarded, and nothing says so.
+        A dev-time warning was floated as an alternative. Undecided.
 
 ## Post-migration
 

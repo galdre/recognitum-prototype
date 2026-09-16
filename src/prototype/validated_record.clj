@@ -172,6 +172,10 @@
   [x]
   (let [r @registry] (or (r (class x)) (r x))))
 
+(defn sealed?
+  "Is `x` an instance of a registered validated type -- something [[seal]] has already produced?"
+  [x] (some? (@registry (class x))))
+
 (defn owner-of [d] ((:draft-owner (draft-model d)) d))
 
 (defn adopt
@@ -214,29 +218,44 @@
     (throw (ex-info "clean expects a draft" {:value d})))
   (if (extraneous d) ((:draft-clean (draft-model d)) d) d))
 
+(defn- seal-draft [model d]
+  ;; Only the touched keys are actually checked, which is equivalent to checking all of
+  ;; them: an untouched field still holds a value that already satisfied its predicate,
+  ;; and an invariant with no touched key among its own reads only unchanged values.
+  ;; That second step is sound only so far as each invariant's `:keys` is accurate.
+  (when-let [extra (extraneous d)]
+    (throw (ex-info (format "%s has no field(s) %s -- use `clean` to strip them"
+                            (:name model) (pr-str (vec extra)))
+                    {:error ::extraneous-keys :record (:name model) :keys (vec extra)})))
+  (when-let [missing (seq ((:draft-missing model) d))]
+    (throw (ex-info (format "%s is missing field %s" (:name model) (first missing))
+                    {:error ::missing-field :record (:name model) :key (first missing)})))
+  (let [dirty ((:draft-dirty-keys model) d)]
+    (doseq [k dirty] (check-value! model k (get d k)))
+    (when (seq dirty) (check-invariants! model d dirty)))
+  ((:draft-seal model) d))
+
 (defn seal
   "Validate `d` and return the sealed value. What comes back is validated exactly as if
-  every field predicate and every invariant had been rerun."
+  every field predicate and every invariant had been rerun.
+
+  Idempotent: an already-sealed value passes straight through, so `seal` is a projection and a
+  sealed value is a fixed point of it. That is what lets a `revising` body end in a call that
+  may or may not have sealed already, without the caller having to know which."
   ([d]
-   (when-not (draft? d)
-     (throw (ex-info "seal expects a draft" {:value d})))
-   (seal (draft-model d) d))
+   (cond
+     (draft? d)  (seal (draft-model d) d)
+     (sealed? d) d
+     :else (throw (ex-info "seal expects a draft or an already-sealed value"
+                           {:error ::cannot-seal :value d}))))
   ([model d]
-   ;; Only the touched keys are actually checked, which is equivalent to checking all of
-   ;; them: an untouched field still holds a value that already satisfied its predicate,
-   ;; and an invariant with no touched key among its own reads only unchanged values.
-   ;; That second step is sound only so far as each invariant's `:keys` is accurate.
-   (when-let [extra (extraneous d)]
-     (throw (ex-info (format "%s has no field(s) %s -- use `clean` to strip them"
-                             (:name model) (pr-str (vec extra)))
-                     {:error ::extraneous-keys :record (:name model) :keys (vec extra)})))
-   (when-let [missing (seq ((:draft-missing model) d))]
-     (throw (ex-info (format "%s is missing field %s" (:name model) (first missing))
-                     {:error ::missing-field :record (:name model) :key (first missing)})))
-   (let [dirty ((:draft-dirty-keys model) d)]
-     (doseq [k dirty] (check-value! model k (get d k)))
-     (when (seq dirty) (check-invariants! model d dirty)))
-   ((:draft-seal model) d)))
+   (if-not (identical? model (draft-model d))
+     (if (identical? model (model-of d))
+       d
+       (throw (ex-info (format "%s: expected a draft or an already-sealed %s, got %s"
+                               (:name model) (:name model) (pr-str (class d)))
+                       {:error ::cannot-seal :record (:name model) :value d})))
+     (seal-draft model d))))
 
 (defn owned-here?
   "Is `x` a draft belonging to a `revising` form already on the stack?"

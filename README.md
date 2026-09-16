@@ -95,6 +95,9 @@ Inside the draft, writes are unchecked. Reaching the end of `revising` seals it:
 touched is validated, and every invariant those fields could break is re-run. If anything fails,
 nothing is returned — you still have your original value, untouched.
 
+Sealing is idempotent, so a body that has already produced a finished value is fine — `seal` is a
+projection, and a sealed value is a fixed point of it.
+
 ```clojure
 (revising [h heist]
   (reduce apply-changeset h changesets))   ; 500 writes, one validation
@@ -165,6 +168,7 @@ Everything throws `ex-info` with an `:error` key you can dispatch on:
 | `:missing-field` | sealing a value with a field never written |
 | `:cannot-dissoc` | `dissoc` of a declared field — use `assoc … nil` if its predicate admits nil |
 | `:undeclared-invariant-key` | under `*audit-invariant-keys*`, an invariant read a key it does not declare |
+| `:cannot-seal` | sealing something that is neither a draft nor an already-sealed value |
 
 Invariant failures carry what you need to debug them:
 

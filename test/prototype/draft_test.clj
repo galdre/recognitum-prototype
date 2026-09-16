@@ -95,6 +95,25 @@
       (is (= "The Sequel" (:name h)))
       (is (= 3250 (:take h))))))
 
+(deftest seal-is-idempotent
+  ;; A sealed value is a fixed point of seal, so seal is a projection: seal . seal = seal.
+  (is (identical? job (v/seal job)))
+  (let [once (v/seal (v/draft job))]
+    (is (identical? once (v/seal once))))
+  (testing "which lets a revising body end in a call that may already have sealed"
+    (is (= 3250 (:take (v/revising [x job] (heist/promote job :lyle 250)))))
+    (is (= "S"  (:name (v/revising [x job] (v/seal (heist/rename x "S")))))))
+  (testing "but a value that is neither a draft nor sealed is still refused"
+    (is (= ::v/cannot-seal (:error (err #(v/seal {:a 1})))))
+    (is (= ::v/cannot-seal (:error (err #(v/revising [x job] {:a 1})))))))
+
+(deftest sealed?-distinguishes-the-two
+  (is (true?  (v/sealed? job)))
+  (is (false? (v/sealed? (v/draft job))))
+  (is (false? (v/sealed? {})))
+  (is (false? (v/draft? job)))
+  (is (true?  (v/draft? (v/draft job)))))
+
 (deftest a-draft-made-outside-any-revising-is-adopted
   (is (instance? Heist (v/revising [x (v/draft job)] (heist/rename x "S"))))
   (testing "or can be sealed by hand"
