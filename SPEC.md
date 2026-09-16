@@ -254,7 +254,7 @@ Certificates do not survive serialization and take no part in `=` or `hash`.
 |---|---|
 | `(check d ::check-name)` | `true`, or the failing check's data |
 | `(check! d ::check-name)` | `true`, or throws |
-| `(certify d ::cert-name)` | `true`, or a vector of failures for those that failed |
+| `(certify d ::cert-name)` | `true`, or `{check-name failure-data}` for those that failed |
 | `(certify! d ::cert-name)` | `true`, or throws |
 
 None of them return a draft. The verdict goes in the mask, so the return value is free to be the
@@ -270,11 +270,9 @@ passing and produces it again.
 Every one of them checks everything it was asked to check and reports every failure. None stops
 at the first.
 
-Failures come back in declaration order — the order the checks are written in the form, which the
-macro sees before the map literal loses it. That is why a collection of failures is a vector
-rather than a map keyed by check name: a map literal does not preserve insertion order past eight
-entries, and ordering is a guarantee here. Each failure names its own check, so indexing by name
-is one step away when you want it.
+Failures come back keyed by check name, in declaration order — the order the checks are written
+in the form, which the macro sees before a map literal would lose it. Built with `array-map`
+rather than as a literal, so insertion order holds at any size.
 
 ### Checking many drafts at once
 
@@ -433,10 +431,9 @@ Everything throws `ex-info` with an `:error` key to dispatch on.
 | `:cannot-dissoc` | `dissoc` of a declared field |
 | `:cannot-seal` | sealing something neither a draft nor sealed |
 
-A `:check-failed` carries a vector of failures in declaration order, never a single one — every
-throwing entry point runs everything it was asked to run first. Each failure names its check and
-carries the check's docstring, the fields it declared and their values, and whatever the check
-returned.
+A `:check-failed` carries every failure, never one — each throwing entry point runs everything it
+was asked to run first. They are keyed by check name in declaration order, and each carries the
+check's docstring, the fields it declared and their values, and whatever the check returned.
 
 ## Performance
 
