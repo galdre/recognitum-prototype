@@ -63,9 +63,48 @@
                      :invariant doc :depends-on ks
                      :values (select-keys m ks)}))))
 
+(def ^:dynamic *audit-invariant-keys*
+  "When true, every invariant runs against a proxy recording which keys its predicate reads,
+  and reading one the invariant does not declare throws [[undeclared-invariant-key!]].
+
+  Bind it in tests, not in production: the proxy costs an allocation per invariant run and a
+  layer of indirection per key read.
+
+  It can only speak for invariants that actually run, and an invariant is skipped precisely
+  when none of its declared keys were touched -- so it will not catch a bad `:keys` on the
+  write that exploits it. Construction touches every field and therefore runs every invariant,
+  so building one instance under the audit does catch every mis-declaration in a type."
+  false)
+
+(p/def-map-type KeyAuditor [m seen]
+  ;; `seen` is a volatile holding the set of keys read so far, or ::all once the predicate has
+  ;; asked for the whole map -- at which point nothing can be attributed and the audit abstains.
+  (get [_ k default] (vswap! seen #(if (= ::all %) % (conj % k))) (get m k default))
+  (assoc [_ k v] (KeyAuditor. (assoc m k v) seen))
+  (dissoc [_ k] (KeyAuditor. (dissoc m k) seen))
+  (keys [_] (vreset! seen ::all) (keys m))
+  (meta [_] (meta m))
+  (with-meta [_ mta] (KeyAuditor. (with-meta m mta) seen)))
+
+(defn undeclared-invariant-key! [model ^Invariant inv undeclared]
+  (let [doc (.-doc inv) declared (.-keys inv)]
+    (throw (ex-info (format "%s invariant %s reads %s but declares only %s -- seal skips an invariant none of whose declared keys were touched, so this one can be skipped on a write that breaks it"
+                            (:name model) (pr-str doc) (pr-str (vec (sort undeclared))) (pr-str declared))
+                    {:error ::undeclared-invariant-key :record (:name model)
+                     :invariant doc :declared declared :also-read (set undeclared)}))))
+
 (defn run-invariant! [model m ^Invariant inv]
-  (when-not (try ((.-pred inv) m) (catch Throwable _ false))
-    (invariant-failed! model inv m)))
+  (if-not *audit-invariant-keys*
+    (when-not (try ((.-pred inv) m) (catch Throwable _ false))
+      (invariant-failed! model inv m))
+    (let [seen (volatile! #{})
+          ok   (try ((.-pred inv) (KeyAuditor. m seen)) (catch Throwable _ false))
+          read @seen]
+      ;; A mis-declared `:keys` is a defect in the type, so it outranks a mere data failure.
+      (when-not (= ::all read)
+        (when-let [undeclared (seq (remove (.-keys inv) read))]
+          (undeclared-invariant-key! model inv undeclared)))
+      (when-not ok (invariant-failed! model inv m)))))
 
 (defn run-invariants-for!
   "Run the invariants that depend on the single key `k`."

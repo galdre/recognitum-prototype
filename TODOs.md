@@ -55,10 +55,12 @@ invariants depending on them. `:draft-dirty-keys` is the touched set.
       ("values were checked by the write that set them") and never states the guarantee. It is
       also false on its own terms, since draft writes check nothing (see #1). Replace it with
       the equivalence.
-- [ ] The equivalence holds only if every invariant declares its `:keys` accurately. A predicate
-      reading a key it did not declare can be skipped at seal, and the guarantee fails silently.
-      `README.md:39-40` states the obligation; nothing enforces it. Decide whether it stays an
-      obligation or becomes a check.
+- [x] The equivalence holds only if every invariant declares its `:keys` accurately. Ruled: add
+      a check, off by default. `*audit-invariant-keys*` runs each invariant against a proxy
+      recording its key reads and throws `:undeclared-invariant-key` on one it does not declare.
+      Zero cost when off; `README.md` has a "Checking your `:keys`" section.
+  - [ ] Nothing exercises it permanently. Constructing one instance of a type under the audit
+        catches every mis-declaration in that type — that belongs in the test suite below.
 - Not drift: `CONSIDERATIONS.md` §14's note that seal rechecks a key written back to its
   original value is a fair efficiency observation. The contract is extensional, so a cheaper
   sound strategy is permitted. (An earlier draft of this file called it inverted. It is not.)
