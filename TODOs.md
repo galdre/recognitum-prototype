@@ -190,7 +190,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       a var holding `nil`; an unresolvable symbol; a call. Do not edit TODOs.md or SPEC.md;
       report. Done c2fbc73. The generic option-value rule is gone; each known option owns its value rule. One edge left: a symbol naming a local (the option written inside a `let`) is reported as "does not resolve in <ns>", which is correct but does not say "that is a local."
 
-- [ ] **I4. Demonstrate `unsealed` in `heist.clj`, in two stages.** Add two protocol methods to
+- [x] **I4. Demonstrate `unsealed` in `heist.clj`, in two stages.** Add two protocol methods to
       the example `Heist`. An inner one — `begin-revision` or similar — opens the change and
       returns `(unsealed draft)` on purpose, so a caller gets a free draft to keep working on.
       An outer one — `revise` or similar — calls the inner one on its (draft) receiver, which
@@ -199,7 +199,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       sealed `Heist`; called directly, the inner returns a draft. Show both in the demo. Tests
       in protocol_test or a heist example test: the inner returns a draft, the outer returns a
       sealed value, and the outer's result reflects the inner's change. Do not edit TODOs.md
-      or SPEC.md; report.
+      or SPEC.md; report. Done d194652: `begin-revision` (inner, returns `unsealed`) and `revise` (outer, seals).
 
 ### H — later, low priority
 
