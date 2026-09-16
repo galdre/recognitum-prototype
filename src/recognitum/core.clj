@@ -194,6 +194,28 @@
   "Is `x` an instance of a registered validated type -- something [[seal]] has already produced?"
   [x] (some? (@registry (class x))))
 
+(defn of-type?
+  "Is `x` a value of type `t` -- either form of it?
+
+  `defrecord` generates two classes, so `instance?` asks something narrower than what is
+  usually meant by \"is this a Heist\": it holds of a sealed `Heist` and not of a draft of
+  that same `Heist`. This is the question about the type. [[draft?]] and [[sealed?]] are the
+  questions about the form, of any type, and \"a draft of Heist\" composes from one of each --
+  which is the right amount of spelling out for something that specific.
+
+  False for anything the library does not know, `t` itself included: a class is not a value
+  of its type, however registered the type is. False, rather than a throw, when `t` names no
+  registered type at all -- a predicate that throws is not a predicate.
+
+  A function rather than a predicate generated per type, so a definition interns nothing into
+  its namespace that could collide with a name written there by hand."
+  [t x]
+  (if-let [model (or (@registry t) (@draft-registry t))]
+    (let [c (class x)]
+      (or (identical? model (@registry c))
+          (identical? model (@draft-registry c))))
+    false))
+
 (defn owner-of [d] ((:draft-owner (draft-model d)) d))
 
 (defn adopt

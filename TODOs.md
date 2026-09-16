@@ -42,7 +42,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### C — the definition form
 
-- [ ] **C0. `of-type?`.** True for either form of a registered type; false for anything
+- [x] **C0. `of-type?`.** True for either form of a registered type; false for anything
       unregistered, including the type object itself. Needed before C2, since a wrapped body
       receives a draft and `instance?` stops meaning what an author expects.
 - [ ] **C1. The definition map.** Wrap the checks in `{:options … :checks … :io-deps …
@@ -126,6 +126,12 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       "audit" in any sense without the suite failing. If a later document wants the word for
       something unrelated, narrow those two assertions to the token list the file already
       carries rather than deleting them.
+
+- [ ] **C0 — `README.md` does not mention `of-type?`, `draft?` or `sealed?` at all.** The
+      four-way table in `SPEC.md` under "Telling values apart" has no counterpart in the
+      README, which still leaves a reader with `instance?` and no warning that it is true of
+      a sealed value and false of a draft of the same type. F1 owns the README; add the table
+      there rather than growing a section this step would only have to rewrite.
 
 - [ ] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
       the `:invalid-field` / `:invariant-violated` errors.** None of those exist. F1 owns the
