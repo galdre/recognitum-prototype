@@ -226,7 +226,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       messages are user-visible and should go first. Do not add a test scanning for the old
       words. Do not edit TODOs.md or SPEC.md; report. Done 7d8ab96: 103 sites to 0; the two emitted messages now say "external validation(s)" and "shape validation", each pinned by a test; the generated `map->Type` docstring too. Adjectival "IO-bound" kept in eight predicate sentences. "pure check" left as is — it draws the pure/IO line, which no ruled name does.
 
-- [ ] **I7. Exceptions documented where they are thrown.** (a) Every public function that can
+- [x] **I7. Exceptions documented where they are thrown.** (a) Every public function that can
       throw gets a closing docstring paragraph naming each `:error` it can throw, when, and the
       ex-data keys — including the generated `->Type`/`map->Type`. (b) README's Errors section
       replaces the keyword table with the one shape: every throw is an `ex-info` with `:error`
@@ -238,7 +238,17 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       it is a candidate for deletion. (d) Audit that every throw carries `:error` and, where a
       type is involved, `:record`; fix stragglers (the batch-shape errors, `:not-a-value`).
       (e) Fold in the deferred note: a test that a protocol method with a `^long` parameter
-      compiles and runs on both types, and works with `recur`. Do not edit TODOs.md; report.
+      compiles and runs on both types, and works with `recur`. Do not edit TODOs.md; report. Done 4ebc10a. (d) found four throws with no `:error` key at all (`conj` of a non-entry, `draft`, `clean`, `drafting` on a non-value) — now `::cannot-conj`, `::cannot-draft`, `::not-a-draft`. (e) found `^long` on a protocol method fails identically on clojure.core/defrecord (Clojure's floor, pinned); and one real defect via `definterface`, queued as I8.
+
+- [ ] **I8. A primitive-hinted `definterface` method breaks the `loop` emission.** With
+      `(definterface ITally (tally [^long n]))`, `deftype` compiles it and `rec/defrecord` does
+      not: `recurrable-body` interleaves `(rest args)` verbatim, so the `^long` rides into the
+      binding position and the compiler refuses "Can't type hint a local with a primitive
+      initializer". Fix: strip metadata from the binding names only —
+      `(interleave (map #(with-meta % nil) (rest args)) (rest args))`. Verified by the I7 agent in
+      a throwaway patch: compiles, runs on both types, `recur` works. Test first with a
+      `definterface` carrying `^long`, on both types, with and without `recur`. Do not edit
+      TODOs.md; report.
 
 ### H — later, low priority
 
