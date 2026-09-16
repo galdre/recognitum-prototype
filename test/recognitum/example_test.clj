@@ -57,7 +57,7 @@
   (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts
           ::heist/cuts-sum-to-take ::heist/only-crew-get-cuts ::heist/crew-is-vouched-for]
          (check-names))
-      "the IO-bound check is added to the pure ones, not in place of them"))
+      "the external validation is added to the pure ones, not in place of them"))
 
 ;;; ----------------------------------- a fetch resolving -----------------------------------
 
@@ -100,7 +100,7 @@
     (is (= ::rec/check-failed (:error e)))
     (is (contains? (:failures e) ::heist/crew))
     (is (not (contains? (:failures e) ::heist/crew-is-vouched-for))
-        "the IO-bound check has no verdict, because it never ran"))
+        "the external validation has no verdict, because it never ran"))
   (is (= 0 (roster/call-count)) "and nothing was queried"))
 
 (deftest a-check-runs-early-and-waits-only-on-what-its-fetch-names
@@ -160,7 +160,7 @@
 (deftest the-example-model-is-io-limited
   (is (true? (get-in (model) [:options :io-limited])))
   (is (= #{::heist/crew} (set (:io-limited-keys (model))))
-      "exactly the fields an IO-bound check reads, which here is what the fetch names"))
+      "exactly the fields an external validation reads, which here is what the fetch names"))
 
 (deftest a-sealed-write-of-an-io-backed-field-is-refused
   (let [e (err #(assoc job ::heist/crew #{:charlie}))]
@@ -196,7 +196,7 @@
     (is (contains? (rec/certificates d) ::heist/shape))
     (is (= 0 (roster/call-count)) "a purely pure certificate fetches nothing")
     (is (true? (rec/check d ::heist/payout)))
-    (testing "and the IO-bound check is still owed, so the type's own certificate is not held"
+    (testing "the external validation is still owed, so the type's certificate is not held"
       (is (not (contains? (rec/certificates d) ::rec/every-check)))
       (is (instance? Heist (rec/seal d)))
       (is (= 1 (roster/call-count :fetch-rosters))
@@ -313,8 +313,8 @@
   "What the bench's hand-rolled side says about `m`, a bare-keyed map: `:ok`, `:rejected`,
   or `:threw`.
 
-  In the library's own two phases: each field predicate is that field's shape check, and a
-  cross-field predicate runs only where the shape predicates over the fields it reads came
+  In the library's own two phases: each field predicate is that field's shape validation, and
+  an invariant predicate runs only where the shape predicates over the fields it reads came
   back true. Every predicate that runs does run, so a throw in one is not hidden by an
   earlier one having already said no -- which is what makes this an oracle for gating
   rather than a restatement of it."
@@ -323,11 +323,11 @@
                     (map (fn [[k p]]
                            [k (try (boolean (p (get m k))) (catch Throwable _ :threw))]))
                     bench/field-preds)
-        cross (for [[p ks] [[#(bench/cuts-add-up? m) [:take :cuts]]
+        inv   (for [[p ks] [[#(bench/cuts-add-up? m) [:take :cuts]]
                             [#(bench/only-crew? m)   [:crew :cuts]]]
                     :when (every? #(true? (get shape %)) ks)]
                 (try (boolean (p)) (catch Throwable _ :threw)))
-        rs    (concat (vals shape) cross)]
+        rs    (concat (vals shape) inv)]
     (cond (some #{:threw} rs) :threw
           (every? true? rs)   :ok
           :else               :rejected)))
@@ -340,7 +340,7 @@
 
 (deftest the-bench-compares-like-with-like
   (is (= 6 (count (:checks (internal/model-of BenchHeist))))
-      "four fields and two cross-field checks")
+      "four fields and two invariant validations")
   (is (= 4 (count bench/field-preds)))
   (is (= (count (:checks (internal/model-of BenchHeist)))
          (+ (count bench/field-preds) 2))

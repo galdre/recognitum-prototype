@@ -52,8 +52,8 @@
   (let [e (err #(rec/drafting [x Heist] (assoc x ::heist/name "X")))]
     (is (= ::rec/check-failed (:error e)))
     (is (= [::heist/crew ::heist/take ::heist/cuts] (vec (keys (:failures e))))
-        "each shape check says what it thinks of the nil nobody wrote, and the two
-         cross-field checks wait on them")))
+        "each shape validation says what it thinks of the nil nobody wrote, and the two
+         invariant validations wait on them")))
 
 ;;; ------------------------- "never written" is "written to nil" -------------------------
 
@@ -63,7 +63,7 @@
    {::title string?
     ::body  ([body] (or (nil? body) (string? body)))}})
 
-(deftest nil-is-a-legal-value-when-the-shape-check-admits-it
+(deftest nil-is-a-legal-value-when-the-shape-validation-admits-it
   (let [n (rec/drafting [x Note] (merge x {::title "t" ::body nil}))]
     (is (nil? (::body n)))
     (is (= [::title ::body] (keys n)) "the field is present, holding nil"))

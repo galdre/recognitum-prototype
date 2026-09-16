@@ -13,8 +13,8 @@
   after a write it runs. That is the whole value of the mask: the evidence behind a verdict
   is not kept, but the verdict is.
 
-  A check that is not named after a field waits on the shape checks of the fields it names,
-  so `check` runs those too where they are not already passing -- which is the whole of
+  A check that is not named after a field waits on the shape validations of the fields it
+  names, so `check` runs those too where they are not already passing -- which is the whole of
   \"runs whatever it depends on\". Where one of them fails, the check asked about never ran
   and has no verdict of its own, so it gets no entry and the blocking check's entry is what
   appears.
@@ -194,7 +194,7 @@
   (let [d (fresh)]
     (rec/check d ::a-fits)
     (is (= #{::a ::b ::a-fits} (rec/passed d))
-        "a check spanning two fields establishes their shape checks on the way")
+        "a check spanning two fields establishes their shape validations on the way")
     (is (not (contains? (rec/passed d) ::always))
         "and nothing it does not wait on")))
 
@@ -252,7 +252,7 @@
     (is (= 2 (ran ::n)))
     (is (= #{} (rec/passed d)))))
 
-(deftest a-pure-check-waits-on-the-shape-checks-of-the-fields-it-names
+(deftest a-pure-check-waits-on-the-shape-validations-of-the-fields-it-names
   ;; Which is why it restates neither of them: `::both` is handed an n and an s that have
   ;; already been established as an int and a string.
   (reset! runs {})
@@ -283,7 +283,7 @@
   ;; no verdict, so it gets no key, and nothing has to be thrown to say so.
   (let [d (rec/draft Ledger)
         r (rec/check d ::a-fits)]
-    (is (= [::a ::b] (vec (keys r))) "both shape checks it was waiting on")
+    (is (= [::a ::b] (vec (keys r))) "both shape validations it was waiting on")
     (is (not (contains? r ::a-fits)) "the check asked about never ran, so it has no entry"))
   (is (= [::b] (vec (keys (rec/check (assoc (rec/draft Ledger) ::a 1) ::a-fits))))
       "and only the one still in the way")

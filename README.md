@@ -680,8 +680,8 @@ building a set per write (`clojure -M:bench -e "(require 'recognitum.bench)(reco
 | | hand-rolled | this library |
 |---|---|---|
 | read a field | 2.1 ns | 2.3 ns |
-| write one field, no cross-field check on it | 13.2 ns | 14.8 ns |
-| write one field, two cross-field checks on it | 217 ns | 175 ns |
+| write one field, no invariant validation on it | 13.2 ns | 14.8 ns |
+| write one field, two invariant validations on it | 217 ns | 175 ns |
 | `merge` two fields | 860 ns | 962 ns |
 | construct | 1418 ns | 1927 ns |
 | one rename in a `drafting` | 257 ns | 888 ns |
@@ -691,17 +691,17 @@ building a set per write (`clojure -M:bench -e "(require 'recognitum.bench)(reco
 
 One row moved because the library changed: `merge`, which read 1518 ns against 835 ns in the
 table this replaces and now reads 962 against 860. The other row that looks different is the
-write with no cross-field check on it, where nothing on that path was touched — both sides are
-a dozen nanoseconds there and the spread swamps the gap. Measured on its own, in a JVM that has
-run nothing else, that row reads 9.3 ns against 12.3 ns hand-rolled, and read 9.7 against 12.4
-before this change; measured after twenty other rows in one JVM, as the table measures it, it
-reads half again that. Do not read a row that small as a comparison.
+write with no invariant validation on it, where nothing on that path was touched — both sides
+are a dozen nanoseconds there and the spread swamps the gap. Measured on its own, in a JVM that
+has run nothing else, that row reads 9.3 ns against 12.3 ns hand-rolled, and read 9.7 against
+12.4 before this change; measured after twenty other rows in one JVM, as the table measures it,
+it reads half again that. Do not read a row that small as a comparison.
 
 A write to a sealed value costs less than the hand-rolled twin where there is anything to
-compare — the row with two cross-field checks on the field reads four fifths of it, run after
+compare — the row with two invariant validations on the field reads four fifths of it, run after
 run — which is the arglists paying for themselves: the checks depending on the field are known
-when the type is compiled, and each one is called with the fields it named handed to it
-directly rather than looked up out of the value.
+when the type is compiled, and each one is called with the fields it named handed to it directly
+rather than looked up out of the value.
 
 A `drafting` costs a fixed few hundred nanoseconds beyond the checks it runs — a draft opened, a
 seal performed, a verdict mask consulted — which is the whole of the gap at one write and is

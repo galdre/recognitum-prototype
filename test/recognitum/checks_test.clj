@@ -208,7 +208,8 @@
     (is (= {::c 1} @hits))
     (reset! hits {})
     (rec/drafting [x v] (-> x (assoc ::a 0) (assoc ::b 9)))
-    (is (= {::a 1 ::b 1 ::a-below-b 1} @hits) "the cross-field check runs once, not twice")))
+    (is (= {::a 1 ::b 1 ::a-below-b 1} @hits)
+        "the invariant validation runs once, not twice")))
 
 (deftest a-draft-write-runs-no-check-at-all
   (let [v (indexed)]

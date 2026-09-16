@@ -51,8 +51,8 @@
 
 ;;; ---------------------------------------- types ----------------------------------------
 
-;; `::shape` covers the three single-field checks; `::payroll` covers a single-field check
-;; and the cross-field one, so the two certificates overlap on `::pay` and neither knows it.
+;; `::shape` covers the three single-field checks; `::payroll` covers a single-field check and
+;; the invariant validation, so the two certificates overlap on `::pay` and neither knows it.
 ;; `::notes` belongs to no certificate at all, which is what makes "sealing enforces every
 ;; check" visible.
 (rec/defrecord Job
@@ -382,7 +382,7 @@
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n :no) (assoc ::s :no))]
     (is (= {::n false ::s false} (rec/check d rec/every-check))
-        "both shape checks ran and both are reported -- the first failure stopped neither")
+        "both shape validations ran and both are reported -- the first stopped neither")
     (is (= {::n 1 ::s 1} @runs)
         "::both waits on the pair, so it was not run and is not reported")))
 
@@ -471,7 +471,7 @@
 
 (deftest a-certificate-over-fields-nobody-wrote-judges-nil
   ;; There is nothing to refuse here: a field nobody wrote holds nil, and what each shape
-  ;; check thinks of nil is a better answer than the library reporting on its own state.
+  ;; validation thinks of nil is a better answer than the library reporting on its own state.
   (let [d (rec/draft Job)]
     (is (= {::title false ::crew false ::pay false} (rec/check d ::shape))
         "every check in it ran, and every one of them is reported")
@@ -480,7 +480,7 @@
     (testing "and nothing is recorded, because nothing passed"
       (is (= #{} (rec/passed d))))))
 
-(deftest a-cross-field-check-does-not-run-on-a-shape-that-failed
+(deftest an-invariant-validation-does-not-run-on-a-shape-that-failed
   (let [d (-> (rec/draft Job) (assoc ::title "heist") (assoc ::crew #{:a}))]
     (is (= {::pay false} (rec/check d ::shape))
         "::title and ::crew were written and pass; ::pay judges the nil nobody wrote")

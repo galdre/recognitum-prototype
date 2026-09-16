@@ -90,7 +90,7 @@
            ::heist/cuts-sum-to-take ::heist/only-crew-get-cuts
            ::heist/crew-is-vouched-for}
          (passed heist/italian-job))
-      "the IO-bound check included: a sealed value is one every check passed on")
+      "the external validation included: a sealed value is one every check passed on")
   (is (= #{::heist/shape ::heist/payout ::rec/every-check} (certs heist/italian-job))
       "and every certificate the type declares follows from that"))
 
@@ -126,7 +126,7 @@
     (is (true? (rec/check d ::title)))
     (is (= {::long false} (rec/check d ::long)) "the body says less than the title")
     (is (= #{::title ::body} (passed d))
-        "::long waits on both shape checks, so establishing it established them")
+        "::long waits on both shape validations, so establishing it established them")
     (is (= #{} (certs d)))))
 
 (deftest certifying-shows-up-as-the-certificate-being-held

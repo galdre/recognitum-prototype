@@ -308,7 +308,7 @@
 
 (deftest a-field-never-written-is-judged-as-nil
   ;; There is nothing to refuse: the field holds nil, as it would on a `defrecord` whose
-  ;; field was never set, and its shape check is what says whether that will do. `c` is
+  ;; field was never set, and its shape validation is what says whether that will do. `c` is
   ;; named by no check, so nothing has anything to say about it and it seals holding nil.
   (reset-runs!)
   (let [e (err #(rec/seal (assoc (rec/draft Ledger) ::a 1)))]

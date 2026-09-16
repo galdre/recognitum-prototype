@@ -3,7 +3,7 @@
 
   A check that queries a database, run on every bare `assoc`, means business logic makes a
   query per write. The option says so where the type is written: direct `assoc` and `merge`
-  on a *sealed* value are refused for any field an IO-bound check reads, and those writes
+  on a *sealed* value are refused for any field an external validation reads, and those writes
   go through `drafting` instead, where N writes cost one round of checks at the seal rather
   than N rounds on the way there.
 
@@ -11,7 +11,7 @@
   check runs -- there is nothing to defer to, because the caller asked for a sealed value
   and a sealed value is what it would have had to produce.
 
-  Which fields it reaches is computed, not declared. A field an IO-bound check reads --
+  Which fields it reaches is computed, not declared. A field an external validation reads --
   its own fields, and the fields of every fetch it names -- is draft-only; a field only
   pure checks read, or that no check reads at all, is written exactly as before. Declaring
   io-deps is what makes that distinction computable, so the option narrows itself and the
@@ -67,9 +67,9 @@
 
 ;;; ------------------------------------- the types -------------------------------------
 
-;; `crew` is read by an IO-bound check only through the fetch that names it; `cuts` is read
-;; by one directly; `name` is read by a pure check and nothing else; `extra` is read by no
-;; check at all. So two of the four are draft-only and two are not, and the difference is
+;; `crew` is read by an external validation only through the fetch that names it; `cuts` is
+;; read by one directly; `name` is read by a pure check and nothing else; `extra` is read by
+;; no check at all. So two of the four are draft-only and two are not, and the difference is
 ;; computed from the arglists rather than written anywhere.
 (rec/defrecord Job
   [name crew cuts extra]
@@ -157,8 +157,8 @@
     (is (false? (:io-limited (internal/model-of Unlimited))))
     (is (= {:io-limited false} (:options (internal/model-of Unlimited))))))
 
-(deftest the-draft-only-fields-are-exactly-those-an-io-bound-check-reads
-  (testing "cuts is named by an IO-bound check; crew is read by the fetch it names"
+(deftest the-draft-only-fields-are-exactly-those-an-external-validation-reads
+  (testing "cuts is named by an external validation; crew is read by the fetch it names"
     (is (= #{::cuts ::crew} (:io-limited-keys (internal/model-of Job)))))
   (testing "name is read by a pure check and extra by none, so neither is limited"
     (is (not (contains? (:io-limited-keys (internal/model-of Job)) ::name)))
@@ -177,7 +177,7 @@
     (is (= 'Job (:record e)))
     (is (= ::crew (:key e)))
     (is (= [::crew] (:keys e))))
-  (testing "the same for a field an IO-bound check names directly"
+  (testing "the same for a field an external validation names directly"
     (is (= ::rec/io-limited (:error (err #(assoc job ::cuts {:charlie 2})))))))
 
 (deftest a-refused-write-runs-nothing-and-fetches-nothing
@@ -230,8 +230,12 @@
   (testing "and the message says where the write belongs"
     (let [m (msg #(assoc job ::crew #{:charlie}))]
       (is (re-find #"io-limited" m))
+      (is (re-find #"an external validation" m))
       (is (re-find #"drafting" m))
-      (is (re-find #"crew" m)))))
+      (is (re-find #"crew" m))))
+  (testing "and several keys at once are named in the plural"
+    (let [m (msg #(merge job {::crew #{:charlie} ::cuts {}}))]
+      (is (re-find #"external validations" m)))))
 
 ;;; ------------------------------------ merge ------------------------------------
 
@@ -407,7 +411,7 @@
 (def io-as-a-string "A var holding a string, which is not a boolean either." "true")
 
 ;; The option written as an unqualified symbol naming a var in this namespace. Its crew is
-;; read by an IO-bound check, so a direct write to it on a sealed value is refused -- the
+;; read by an external validation, so a direct write to it on a sealed value is refused -- the
 ;; declaration has to do the work, not merely be recorded.
 (rec/defrecord ViaVar
   [name crew]
@@ -463,7 +467,7 @@
       (let [e (err #(assoc v ::crew #{:charlie}))]
         (is (= ::rec/io-limited (:error e)))
         (is (= [::crew] (:keys e))))
-      (testing "while a field no IO-bound check reaches is written as before"
+      (testing "while a field no external validation reaches is written as before"
         (is (= "Another" (::name (assoc v ::name "Another")))))
       (testing "and drafting is where that write belongs"
         (is (rec/sealed? (rec/drafting [d v] (assoc d ::crew #{:charlie}))))))))

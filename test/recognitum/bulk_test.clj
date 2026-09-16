@@ -314,7 +314,7 @@
   (let [d (crew-draft "one" #{:charlie} {:charlie 1})]
     (is (= [true] (rec/check-all [d] ::known-get-cuts)))
     (is (= #{::crew ::cuts ::known-get-cuts} (rec/passed d))
-        "the check asked about, the shape check of the field it names, and the gate its
+        "the check asked about, the shape validation of the field it names, and the gate its
          fetch waited on")
     (is (= 0 (ran ::name)) "and nothing that gates nothing")))
 
@@ -384,7 +384,7 @@
 
 (deftest a-field-nobody-wrote-is-judged-as-nil-for-that-value-alone
   ;; No pre-flight: a draft nobody finished is an ordinary draft holding nils, and the
-  ;; shape check over each of them says what it thinks. One incomplete value discards
+  ;; shape validation over each of them says what it thinks. One incomplete value discards
   ;; nothing about the others.
   (let [ds [(ledger 1 "xxx") (assoc (rec/draft Ledger) ::a 1)]]
     (is (= [true {::b :nope}] (rec/check-all ds ::fits))
@@ -505,7 +505,7 @@
         rs (rec/check-all ds rec/every-check)]
     (is (true? (first rs)))
     (is (= [::a ::b] (vec (keys (second rs))))
-        "both shape checks, in declaration order; ::fits waits on the pair")
+        "both shape validations, in declaration order; ::fits waits on the pair")
     (is (= [::fits] (vec (keys (nth rs 2))))
         "and where the shapes pass, the check that waits on them is what is left")))
 

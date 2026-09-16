@@ -38,7 +38,7 @@
            (:error (err #(read-bad "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 1 :cuts {:a 1} :z 2}")))))
     (is (= [:recognitum.heist/cuts]
            (keys (:failures (err #(read-bad "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 1}")))))
-        "a key the literal omits reads as nil, and the shape check over it says so")))
+        "a key the literal omits reads as nil, and the shape validation over it says so")))
 
 (deftest a-draft-prints-as-explicitly-unreadable
   ;; #< is the reader's own unreadable marker. A draft is unvalidated working state; a printed

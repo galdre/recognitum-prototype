@@ -12,18 +12,18 @@
   first failure either -- every entry point runs everything it was asked to run and throws
   once with all of it, keyed by check name.
 
-  A check named after a field is that field's shape check: the statement of what a
+  A check named after a field is that field's shape validation: the statement of what a
   well-formed value of that field is. It names exactly that field or the form does not
-  compile, and every other check waits on the shape checks of the fields it names -- so a
-  check spanning two fields receives well-formed input by construction and restates
-  nothing, and one whose gate has not passed neither runs nor appears among the failures.
-  That makes three phases, which is the order failures come back in: shape checks, then the
-  other pure checks, then the IO-bound ones, in declaration order within each.
+  compile, and every other check waits on the shape validations of the fields it names -- so a
+  check spanning two fields receives well-formed input by construction and restates nothing,
+  and one whose gate has not passed neither runs nor appears among the failures. That makes
+  three phases, which is the order failures come back in: shape validations, then invariant
+  validations, then external validations, in declaration order within each.
 
   A field nobody has written reads as `nil`, everywhere, exactly as it would on a
   `defrecord` whose field was never set. There is no sentinel and no state distinct from
   `nil`: a draft opened from the type starts with every field `nil`, and whether that will
-  do is the shape check's business and nobody else's.
+  do is the shape validation's business and nobody else's.
 
   A write to a validated value runs the checks naming the field written, so such a value
   is never observable in an invalid state. A draft is not a validated value: writes into
@@ -232,13 +232,13 @@
   built.
 
   Shape first, because a check named after a field is the statement of what that field is
-  and everything else waits on it; the IO-bound ones last, because nothing reaches the
+  and everything else waits on it; the external validations last, because nothing reaches the
   outside until the values it will carry there are known to be well-formed. Within a phase
-  there is no ordering to compute: shape checks depend on nothing, and every other check
-  depends only on shape checks.
+  there is no ordering to compute: shape validations depend on nothing, and every other check
+  depends only on shape validations.
 
   One pass, because the usual answer is that nothing is IO-bound and most types have a
-  shape check for every field."
+  shape validation for every field."
   [model idxs]
   (let [cs (:checks model)]
     (reduce (fn [[s p i] j]
@@ -250,7 +250,7 @@
             [[] [] []] idxs)))
 
 (defn- gate-broken?
-  "Did any shape check gating the check at `i` fail in this pass? `failed` is the set of
+  "Did any shape validation gating the check at `i` fail in this pass? `failed` is the set of
   check indices that did.
 
   What a sealed value's paths ask, where there is no verdict mask to read: every check of
@@ -397,14 +397,14 @@
 (defn- run-checks!
   "Run the checks at `idxs` against `x` and throw once with every failure, in phase order.
 
-  Three phases, because shape gates everything. The shape checks run first and ungated;
-  then the other pure checks, each of them only if the shape checks of the fields it names
-  came back `true` -- so a check spanning two fields is never handed a shape its own type
-  rejected in the same pass, and a check the gate stopped is neither run nor reported,
-  since \"cuts is not a map\" is the actionable failure and \"did not run because cuts is
-  not a map\" adds nothing to it. If any of that failed the throw happens there and nothing
-  is fetched, because the payload that would trigger a query is the one least worth
-  trusting. Only when the pure phases are clean is anything fetched.
+  Three phases, because shape gates everything. The shape validations run first and ungated;
+  then the other pure checks, each of them only if the shape validations of the fields it
+  names came back `true` -- so a check spanning two fields is never handed a shape its own
+  type rejected in the same pass, and a check the gate stopped is neither run nor reported,
+  since \"cuts is not a map\" is the actionable failure and \"did not run because cuts is not
+  a map\" adds nothing to it. If any of that failed the throw happens there and nothing is
+  fetched, because the payload that would trigger a query is the one least worth trusting.
+  Only when the pure phases are clean is anything fetched.
 
   A gate that is not among `idxs` is a gate that passed: a sealed value's checks all passed
   when it was made, so the only ones that can be in doubt are those naming a field being
@@ -434,7 +434,7 @@
                    :instead (list 'assoc 'm k nil)})))
 
 (defn- io-checks-on
-  "The IO-bound checks that read `k`, by name and in declaration order."
+  "The external validations that read `k`, by name and in declaration order."
   [model k]
   (into [] (comp (map (:checks model)) (filter (comp seq :io)) (map :name))
         (get (:index model) k)))
@@ -444,12 +444,12 @@
 
   A check that queries a database, run on every bare `assoc`, means business logic makes a
   query per write. `:options {:io-limited true}` says so where the type is written: the
-  fields an IO-bound check reads are written under [[drafting]], where N writes cost one
+  fields an external validation reads are written under [[drafting]], where N writes cost one
   round of checks at the seal rather than N rounds on the way there.
 
   It refuses rather than defers. The caller asked for a sealed value, and a sealed value is
   one every check passed on -- there is nothing to defer to -- so nothing is fetched and no
-  check runs. Fields no IO-bound check reaches are unaffected, which is what declaring
+  check runs. Fields no external validation reaches are unaffected, which is what declaring
   io-deps buys: the option narrows itself and the author never restates it."
   [model ks]
   (let [ks    (vec ks)
@@ -463,7 +463,7 @@
                             (:name model)
                             (names ks)
                             (if many? "are" "is")
-                            (if many? "IO-bound checks" "an IO-bound check")
+                            (if many? "external validations" "an external validation")
                             (names (distinct (apply concat (vals by))))
                             (if many? "them" "it"))
                     {:error ::io-limited :record (:name model)
@@ -710,18 +710,18 @@
 (defn- wants
   "`idxs` plus everything that has to pass before any of them can run, as a mask.
 
-  Two kinds of prerequisite. Anything that is not a shape check waits on the shape checks
-  of the fields it names; anything IO-bound waits, as well, on the pure checks over the
-  fields its fetches name -- nothing reaches a database until the values it will carry
-  there are established as well-formed. Both are masks the macro computed, so folding one
-  in is a `bit-or`.
+  Two kinds of prerequisite. Anything that is not a shape validation waits on the shape
+  validations of the fields it names; anything IO-bound waits, as well, on the pure checks
+  over the fields its fetches name -- nothing reaches a database until the values it will
+  carry there are established as well-formed. Both are masks the macro computed, so folding
+  one in is a `bit-or`.
 
   The closure is taken to a fixed point, over whatever each round added rather than over
   everything again, because a prerequisite has prerequisites of its own: the pure checks
-  gating a fetch are ordinary cross-field checks, and each of them waits on the shape
-  checks of the fields it names. It settles at once in practice -- what those add are shape
-  checks, which wait on nothing -- and the loop is what makes that a fact about this type
-  rather than an assumption about every type.
+  gating a fetch are ordinary invariant validations, and each of them waits on the shape
+  validations of the fields it names. It settles at once in practice -- what those add are
+  shape validations, which wait on nothing -- and the loop is what makes that a fact about
+  this type rather than an assumption about every type.
 
   The gate is narrow without anyone arranging it: an io-dep declares its own fields, so a
   fetch over `crew` waits on the checks covering `crew` and not on the whole type."
@@ -740,16 +740,15 @@
   {:failures [] :cache {}})
 
 (defn- plan-for
-  "What is left to do about the checks at `idxs` for the draft `d`: the shape checks to run,
-  the other pure checks, and the IO-bound ones -- each of them what the draft's mask does
-  not already say is passing, together with whatever prerequisites those have.
+  "What is left to do about the checks at `idxs` for the draft `d`: the shape validations to
+  run, the other pure checks, and the external validations -- each of them what the draft's
+  mask does not already say is passing, together with whatever prerequisites those have.
 
   Prerequisites are pulled in here rather than discovered when a check turns out not to be
-  runnable: [[wants]] takes the closure, and [[phases]] puts each of them where it belongs.
-  A check that is not a shape check waits on the shape checks of the fields it names, which
-  land in the shape phase; anything IO-bound waits as well on the pure checks over the
-  fields its fetches name, which land in the pure phase, and on their shape gates with
-  them.
+  runnable: [[wants]] takes the closure, and [[phases]] puts each of them where it belongs. A
+  check that is not a shape validation waits on the shape validations of the fields it names,
+  which land in the shape phase; anything IO-bound waits as well on the pure checks over the
+  fields its fetches name, which land in the pure phase, and on their shape gates with them.
 
   `nil` where there is nothing to do at all, which is the case worth not paying for: a
   draft of a sealed value that has not been written to, a check an earlier call already
@@ -800,16 +799,16 @@
   is then written with what was found, so a verdict the world has taken back is cleared; a
   sealed value has no mask to write, and the answer is a report rather than a verdict.
 
-  Three phases, because shape gates everything. The shape checks run first and ungated,
-  writing their verdicts into the mask; the other pure checks follow, each running only if
-  the mask now says the shape checks of the fields it names are passing, so a check the gate
+  Three phases, because shape gates everything. The shape validations run first and ungated,
+  writing their verdicts into the mask; the other pure checks follow, each running only if the
+  mask now says the shape validations of the fields it names are passing, so a check the gate
   stopped is neither run nor reported. A value anything failed for fetches nothing, and its
   failures -- the ones asked for and the ones gating them alike -- are its answer. Only the
   values whose pure phases came back clean reach the fetch, and they reach it together: one
   pass per io-dep over the whole group, so a batched fetch sees every argument tuple in one
   call and distinct tuples are computed once however many values share them. The gate is per
   value, so one malformed draft holds up nothing but its own fetch. Where no value owes an
-  IO-bound check the fetch pass is not entered either."
+  external validation the fetch pass is not entered either."
   [model xs idxss force?]
   (let [xs     (vec xs)
         idxss  (vec idxss)
@@ -827,7 +826,7 @@
             (loop [i 0, fss (transient []), ios (transient []), fetching? false]
               (if (< i n)
                 ;; A value whose shape failed carries nothing to the fetch, and one that
-                ;; owes no IO-bound check asks for none.
+                ;; owes no external validation asks for none.
                 (let [p  (nth plans i)
                       dr (nth drafts i)
                       fs (if p
@@ -998,8 +997,8 @@
   certificate recorded anywhere: [[certificates]] derives it from those verdicts.
 
   Failures are not retained. What this returns is the failure; a later call re-runs anything
-  not passing and produces it again, fetch included -- a verdict about an IO-bound check is
-  point-in-time, and what it consulted is not kept.
+  not passing and produces it again, fetch included -- a verdict about an external validation
+  is point-in-time, and what it consulted is not kept.
 
   Throws `::unknown-check` where the type declares neither a check nor a certificate of that
   name, and `::not-a-value` where `x` is not a draft or a sealed value of any type here."
@@ -1319,10 +1318,10 @@
   ;; the draft rather than about any check's judgement: no check names it, so no check has
   ;; anything to say about it.
   ;;
-  ;; A field nobody wrote is not refused here, and is not a separate notion. It holds nil,
-  ;; as it would on a `defrecord` whose field was never set, and its shape check says what
-  ;; it thinks of nil -- which is a better answer than the library reporting that nobody
-  ;; wrote anything, and leaves a field with no shape check free to seal holding it.
+  ;; A field nobody wrote is not refused here, and is not a separate notion. It holds nil, as
+  ;; it would on a `defrecord` whose field was never set, and its shape validation says what
+  ;; it thinks of nil -- which is a better answer than the library reporting that nobody wrote
+  ;; anything, and leaves a field with no shape validation free to seal holding it.
   (when-let [extra (extraneous d)]
     (throw (ex-info (format "%s has no field(s) %s -- use `clean` to strip them"
                             (:name model) (pr-str (vec extra)))
@@ -1514,20 +1513,20 @@
 (defn- malformed-shape-check!
   "Refuse a check named after a field that does not name exactly that field.
 
-  The naming convention is the declaration: `::name` is the check that says what a
-  well-formed `name` is, and nothing else marks it. So `::name ([name crew] ...)` is not a
-  shape check written loosely -- it is two claims at once, that this is what a `name` is and
+  The naming convention is the declaration: `::name` is the check that says what a well-formed
+  `name` is, and nothing else marks it. So `::name ([name crew] ...)` is not a shape
+  validation written loosely -- it is two claims at once, that this is what a `name` is and
   that it depends on something other than `name`, and the second destroys what the first is
-  for. Shape checks depending on nothing is exactly what makes the dependency structure two
-  levels deep: every other check depends only on shape checks, so no ordering among checks
-  ever has to be computed and a gate can be one bitwise `and`.
+  for. Shape validations depending on nothing is exactly what makes the dependency structure
+  two levels deep: every other check depends only on shape validations, so no ordering among
+  checks ever has to be computed and a gate can be one bitwise `and`.
 
   A check that is not named after a field may name whatever it likes."
   [tname c field]
   (let [names (:deps c)]
     (throw (ex-info (format (str "%s check %s is named after the field %s, so it is that "
-                                 "field's shape check and must name exactly that field -- "
-                                 "it names %s")
+                                 "field's shape validation and must name exactly that "
+                                 "field -- it names %s")
                             tname (pr-str (:name c)) (pr-str field)
                             (if (seq names)
                               (apply str (interpose ", " (map pr-str names)))
@@ -1560,7 +1559,8 @@
   in general could only be the rule of whichever one happened to be written first.
 
   `:io-limited` makes direct `assoc` and `merge` on a *sealed* value throw for any field an
-  IO-bound check reads, so those writes go through `drafting` instead. See [[io-limited!]]."
+  external validation reads, so those writes go through `drafting` instead. See
+  [[io-limited!]]."
   #{:io-limited})
 
 (defn- io-limited-option
@@ -2017,19 +2017,19 @@
   declared. An exception is not caught: it is a bug in the check rather than a claim about
   the data, and \"we could not determine whether this is valid\" is not \"this is invalid\".
 
-  A check *named after a field* is that field's shape check -- the statement of what a
-  well-formed value of that field is. The naming convention is the whole of the
-  declaration, and such a check names exactly its own field or the form does not compile.
-  Every other check waits on the shape checks of the fields it names: `::cuts-sum-to-take
-  [take cuts]` runs once `::take` and `::cuts` have passed, so it receives well-formed
-  input by construction and restates nothing, and a throw out of it is therefore the bug
-  the contract above says a throw is. A check whose gate has not passed neither runs nor
-  appears among the failures -- the shape failure is the actionable one. A field with no
-  shape check has no declared shape, so the checks naming it run against whatever it holds
-  and have to be total over anything: the author's choice, made loudly.
+  A check *named after a field* is that field's shape validation -- the statement of what a
+  well-formed value of that field is. The naming convention is the whole of the declaration,
+  and such a check names exactly its own field or the form does not compile. Every other check
+  waits on the shape validations of the fields it names: `::cuts-sum-to-take [take cuts]` runs
+  once `::take` and `::cuts` have passed, so it receives well-formed input by construction and
+  restates nothing, and a throw out of it is therefore the bug the contract above says a throw
+  is. A check whose gate has not passed neither runs nor appears among the failures -- the
+  shape failure is the actionable one. A field with no shape validation has no declared shape,
+  so the checks naming it run against whatever it holds and have to be total over anything:
+  the author's choice, made loudly.
 
-  That is three phases, and it is the order failures come back in: the shape checks, then
-  the other pure checks, then the IO-bound ones, in declaration order within each.
+  That is three phases, and it is the order failures come back in: the shape validations, then
+  the other pure checks, then the external validations, in declaration order within each.
 
   `:io-deps` names functions that fetch something from outside the value -- a database row,
   an upstream response. They are written exactly as checks are, arglist and all, and follow
@@ -2059,11 +2059,11 @@
   catches it inside the fetch, which loses nothing; the reverse is not recoverable.
 
   Shape gates IO. Pure checks run first and ungated; an io-dep fetches once every pure check
-  over the fields *it* names has passed and every io-dep it names has fetched; an IO-bound
-  check runs once its io-deps have fetched. Nothing reaches a database until the values it
-  will carry there are established as well-formed, because the payload that triggers the
-  query is the one least worth trusting -- and because an io-dep declares its own fields,
-  the gate is narrow: a malformed field no fetch touches holds up nothing.
+  over the fields *it* names has passed and every io-dep it names has fetched; an external
+  validation runs once its io-deps have fetched. Nothing reaches a database until the values
+  it will carry there are established as well-formed, because the payload that triggers the
+  query is the one least worth trusting -- and because an io-dep declares its own fields, the
+  gate is narrow: a malformed field no fetch touches holds up nothing.
 
   A fetch is shared for one validation call and no longer. Within a single [[check]],
   [[recheck]] or [[seal]] an io-dep is fetched at most once however many checks name it,
@@ -2084,9 +2084,9 @@
   holding one -- read where the form is written, so the type is compiled with what the var
   held then and a later `alter-var-root` leaves it alone.
   `:io-limited` makes direct `assoc` and `merge` on a sealed value throw for any field an
-  IO-bound check reads -- its own fields and its fetches' alike -- so those writes go
+  external validation reads -- its own fields and its fetches' alike -- so those writes go
   through [[drafting]], where N of them cost one round of checks at the seal rather than a
-  query apiece on the way there. Fields no IO-bound check reaches are written as before,
+  query apiece on the way there. Fields no external validation reaches are written as before,
   and the set is computed from the arglists rather than declared. See [[io-limited!]].
 
   A field becomes a key qualified by the namespace this form is written in -- a `Heist`
@@ -2198,13 +2198,13 @@
                                                          (:args c)))))
                         (seq checks))
         _         (reject-duplicate-names! tname (map :name parsed) io-names)
-        ;; A check named after a field is that field's shape check -- the check that says
+        ;; A check named after a field is that field's shape validation -- the check that says
         ;; what a well-formed value of that field is. The naming convention is the whole of
-        ;; the declaration, and it is marked here so that nothing downstream re-derives it.
-        ;; It names exactly its own field or the form does not compile, which is what keeps
-        ;; the dependency structure two levels deep: shape checks depend on nothing, every
-        ;; other check depends only on shape checks, and no ordering among checks ever has
-        ;; to be computed.
+        ;; the declaration, and it is marked here so that nothing downstream re-derives it. It
+        ;; names exactly its own field or the form does not compile, which is what keeps the
+        ;; dependency structure two levels deep: shape validations depend on nothing, every
+        ;; other check depends only on shape validations, and no ordering among checks ever
+        ;; has to be computed.
         field-key? (set ks)
         parsed    (mapv (fn [c]
                           (let [sh (when (contains? field-key? (:name c)) (:name c))]
@@ -2245,12 +2245,12 @@
         deps-of   (fn [i] (:deps (nth parsed i)))
         pure?     (fn [i] (empty? (:io (nth parsed i))))
         shape?    (fn [i] (some? (:shape (nth parsed i))))
-        ;; field key -> the index of that field's shape check, where it has one. A field
+        ;; field key -> the index of that field's shape validation, where it has one. A field
         ;; with none has no declared shape: the checks naming it run against whatever it
         ;; holds and have to be total over anything, which is the author's choice made
         ;; loudly rather than a hole.
         shape-id  (into {} (keep-indexed (fn [i c] (when (:shape c) [(:shape c) i]))) parsed)
-        ;; Every other check waits on the shape checks of the fields it names, so it
+        ;; Every other check waits on the shape validations of the fields it names, so it
         ;; receives well-formed input by construction and restates nothing. A throw from it
         ;; is therefore a genuine bug in the check, which is what the check contract already
         ;; says a throw is. Sorted, so a phase reports in declaration order; as a mask too,
@@ -2297,7 +2297,7 @@
         survives  (fn [k] (reduce bit-clear all-pass (get index k)))
         ;; ---- :io-limited ----
         ;; Which fields a direct write to a sealed value is refused for: exactly those an
-        ;; IO-bound check reads, computed from the same index rather than declared
+        ;; external validation reads, computed from the same index rather than declared
         ;; anywhere. A check reads the fields it names and the fields its fetches name, so
         ;; a field behind a fetch is reached without anyone saying so, and a field only
         ;; pure checks read -- or no check at all -- is written exactly as before. The
@@ -2340,12 +2340,12 @@
                                          (finally (pop-thread-bindings)))))))))
                            impl-forms)
         ;; Run the checks at `idxs` over the expressions `argvs-of` gives for each -- locals
-        ;; or direct field reads, so evaluating one twice costs nothing. The shape checks
+        ;; or direct field reads, so evaluating one twice costs nothing. The shape validations
         ;; are called first and every other one after, each of those guarded by the shape
-        ;; checks of the fields it names: a check whose gate did not come back `true` is not
-        ;; called and stands as `true`, which is exactly what it means for it not to be
-        ;; reported. That is sound here and only here, because a gate that failed is itself
-        ;; in this group and about to throw -- nothing a skipped check stands for escapes.
+        ;; validations of the fields it names: a check whose gate did not come back `true` is
+        ;; not called and stands as `true`, which is exactly what it means for it not to be
+        ;; reported. That is sound here and only here, because a gate that failed is itself in
+        ;; this group and about to throw -- nothing a skipped check stands for escapes.
         ;;
         ;; A gate not among `idxs` is a gate that passed: this is the sealed path, and a
         ;; sealed value is one every check passed on, so the only verdicts in doubt are
@@ -2386,12 +2386,12 @@
                                                ~@(interleave (deps-of i)
                                                              (argvs-of i))))))
                                         order)])))))))
-        ;; Phase three, for the paths that produce a sealed value: the IO-bound checks among
-        ;; `idxs`, run against the value `xform` builds once the inline group above has
+        ;; Phase three, for the paths that produce a sealed value: the external validations
+        ;; among `idxs`, run against the value `xform` builds once the inline group above has
         ;; passed. Not inlined, because what a fetch is handed has to be computed in the
         ;; graph's order and shared across the checks naming it -- and because the value has
-        ;; to exist before it can be asked for the fields the fetches read. It escapes only
-        ;; if the checks pass, as it does through `merge` already.
+        ;; to exist before it can be asked for the fields the fetches read. It escapes only if
+        ;; the checks pass, as it does through `merge` already.
         with-io   (fn [idxs xform]
                     (let [io (io-idxs idxs)]
                       (if (seq io)
@@ -2410,9 +2410,9 @@
          (~'get [_# ~ksym ~dsym]
            (case ~ksym ~@(interleave ks fsyms) ~dsym))
 
-         ;; The checks naming this field are known here, so the pure ones are called with
-         ;; the new value and the untouched fields directly -- no lookup, and no allocation
-         ;; unless they all pass. The IO-bound ones run after, against the value they are
+         ;; The checks naming this field are known here, so the pure ones are called with the
+         ;; new value and the untouched fields directly -- no lookup, and no allocation unless
+         ;; they all pass. The external validations run after, against the value they are
          ;; about to admit: shape gates IO, so a write that fails a check over the field
          ;; itself never reaches a fetch. Nothing else has to gate them, because every other
          ;; check on a sealed value passed when it was made and only this field has moved.
@@ -2558,15 +2558,15 @@
           :io-limited-keys ~limited
           :field-order ~ks
           :field-set   ~(set ks)
-          ;; `:deps` is what the check named, in arglist order, and is what a failure
-          ;; reports. `:shape` is the field this check is the shape check of, or nil, which
-          ;; is what puts it in the first phase and what makes it gate anything;
-          ;; `:shape-gate` and `:shape-mask` are the shape checks it waits on, as indices
-          ;; and as bits of a draft's verdict mask. `:io` is what it reaches through the
-          ;; names it gave -- the io-deps behind it in fetch order, empty exactly when it is
-          ;; pure; `:gate` and `:gate-mask` the pure checks that must pass before any of
-          ;; them fetches; `:field-closure` every field it reads, its own and its fetches'
-          ;; alike, which is what a write invalidates it by.
+          ;; `:deps` is what the check named, in arglist order, and is what a failure reports.
+          ;; `:shape` is the field this check is the shape validation of, or nil, which is
+          ;; what puts it in the first phase and what makes it gate anything; `:shape-gate`
+          ;; and `:shape-mask` are the shape validations it waits on, as indices and as bits
+          ;; of a draft's verdict mask. `:io` is what it reaches through the names it gave --
+          ;; the io-deps behind it in fetch order, empty exactly when it is pure; `:gate` and
+          ;; `:gate-mask` the pure checks that must pass before any of them fetches;
+          ;; `:field-closure` every field it reads, its own and its fetches' alike, which is
+          ;; what a write invalidates it by.
           :checks      ~(mapv (fn [i]
                                 (let [{:keys [name doc deps shape shape-gate shape-mask
                                               io gate gate-mask field-closure]}
@@ -2668,7 +2668,7 @@
                                      (filter batched? (range nio)))
                            nil))
           ;; From the type, nothing is established and every field is nil -- which is what
-          ;; a `defrecord` none of whose fields were set holds, and what the shape checks
+          ;; a `defrecord` none of whose fields were set holds, and what the shape validations
           ;; will be asked about. From a sealed value everything is established, because
           ;; that is what being sealed means, and the draft inherits exactly that claim.
           :draft-empty      (fn [~ownsym]
@@ -2702,9 +2702,9 @@
 
        (defn ~(symbol (str "map->" tname))
          ~(str "Construct a validated " tname " from a map of its declared keys.\n"
-               "  A key it does not declare is an error; a key it declares and the map omits is\n"
-               "  nil, as it would be on a defrecord, and that field's shape check says whether\n"
-               "  nil is acceptable.\n\n"
+               "  A key it does not declare is an error; a key it declares and the map omits\n"
+               "  is nil, as it would be on a defrecord, and that field's shape validation\n"
+               "  says whether nil is acceptable.\n\n"
                "  Keys may be written qualified or bare: a bare keyword naming a declared field is\n"
                "  qualified into " key-ns ", which is what lets a printed literal -- whose tag\n"
                "  already carries the namespace -- read back through here and be validated.")

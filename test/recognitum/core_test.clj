@@ -62,7 +62,7 @@
   (let [e (err #(assoc job ::heist/take 4000))]
     (is (= ::rec/check-failed (:error e)))
     (is (= [::heist/cuts-sum-to-take] (keys (:failures e)))
-        "the one cross-field check naming ::take; the other two name it not at all")
+        "the one invariant validation naming ::take; the other two name it not at all")
     (let [f (get (:failures e) ::heist/cuts-sum-to-take)]
       (is (= "the cuts add up to the take" (:doc f)))
       (is (= [::heist/take ::heist/cuts] (keys (:values f)))
@@ -110,8 +110,8 @@
       "the forging attempt that used to succeed")
   (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts]
          (vec (keys (:failures (err #(heist/->Heist "" :not-a-set -999 "garbage"))))))
-      "and it is told every shape that is wrong, not the first -- the two cross-field
-       checks wait on those shapes and are not run against them")
+      "and it is told every shape that is wrong, not the first -- the two invariant
+       validations wait on those shapes and are not run against them")
   (is (= [::heist/cuts-sum-to-take ::heist/only-crew-get-cuts]
          (vec (keys (:failures (err #(heist/->Heist "Job" #{:a} 99 {:b 10}))))))
       "and once the shapes hold, both of the checks that waited on them are reported")
@@ -153,7 +153,7 @@
 (deftest a-write-runs-only-the-checks-naming-that-key
   (reset! runs 0)
   (assoc counted-base ::c 99)
-  (is (zero? @runs) "the cross-field check does not name ::c")
+  (is (zero? @runs) "the invariant validation does not name ::c")
   (assoc counted-base ::a 0)
   (is (= 1 @runs) "it does name ::a"))
 

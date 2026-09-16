@@ -67,7 +67,7 @@
 
 ;;; ------------------------------------ sealing one ------------------------------------
 
-(deftest an-unwritten-field-seals-as-nil-where-its-shape-check-admits-nil
+(deftest an-unwritten-field-seals-as-nil-where-its-shape-validation-admits-nil
   (let [n (rec/drafting [x Note] (assoc x ::title "t"))]
     (is (rec/sealed? n))
     (is (= {::title "t" ::body nil ::tags nil} (into {} n)))))
@@ -77,7 +77,7 @@
     (is (rec/sealed? n))
     (is (nil? (::tags n)) "no shape validation, no declared shape, nothing to fail")))
 
-(deftest a-shape-check-that-refuses-nil-is-what-refuses-an-unwritten-field
+(deftest a-shape-validation-that-refuses-nil-is-what-refuses-an-unwritten-field
   (let [e (err #(rec/seal (rec/draft Strict)))]
     (is (= ::rec/check-failed (:error e))
         "the check's verdict about nil, not a report that nobody wrote anything")

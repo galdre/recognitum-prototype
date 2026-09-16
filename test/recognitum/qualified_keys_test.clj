@@ -126,7 +126,10 @@
     (is (= [::heist/cuts] (vec (keys (:failures e)))) "the omitted key is nil, and judged"))
   (is (contains? (:failures (err #(heist/map->Heist {::heist/name "" ::heist/crew #{:a}
                                                      ::heist/take 10 ::heist/cuts {:a 10}})))
-                 ::heist/name)))
+                 ::heist/name))
+  (testing "and its docstring, which the library writes, names the kind of check"
+    (is (re-find #"shape validation"
+                 (:doc (meta #'heist/map->Heist))))))
 
 (deftest the-map-constructor-qualifies-a-bare-field-name
   ;; This is what lets a printed literal, whose keys the tag already qualifies, read back.
@@ -141,7 +144,7 @@
            (keys (:failures (err #(heist/map->Heist {:name "x" :crew #{:a} :take 9 :cuts {:a 1}}))))))
     (is (= [::heist/cuts]
            (keys (:failures (err #(heist/map->Heist {:name "x" :crew #{:a} :take 1})))))
-        "a key the map omits is nil, and the shape check over it judges nil"))
+        "a key the map omits is nil, and the shape validation over it judges nil"))
   (testing "a bare key naming no field is taken as given and reported as written"
     (let [e (err #(heist/map->Heist {:name "x" :crew #{:a} :take 1 :cuts {:a 1}
                                      :getaway-car "mini"}))]

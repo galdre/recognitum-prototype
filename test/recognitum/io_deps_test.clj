@@ -15,18 +15,18 @@
   from \"this is invalid\", and folding one into the other would have the type assert
   something it does not know.
 
-  *When a fetch happens.* Shape gates IO: pure checks run first and ungated, an io-dep
-  fetches once every pure check over the fields it names has passed and every io-dep it
-  names has fetched, and an IO-bound check runs once its io-deps have fetched. The gate is
-  narrow -- a fetch over `crew` waits on the checks covering `crew`, not on the whole type
-  -- because an io-dep declares its own fields. The payload that triggers the query is the
-  one least worth trusting.
+  *When a fetch happens.* Shape gates IO: pure checks run first and ungated, an io-dep fetches
+  once every pure check over the fields it names has passed and every io-dep it names has
+  fetched, and an external validation runs once its io-deps have fetched. The gate is narrow
+  -- a fetch over `crew` waits on the checks covering `crew`, not on the whole type -- because
+  an io-dep declares its own fields. The payload that triggers the query is the one least
+  worth trusting.
 
-  *How often.* Within one validation call an io-dep fetches at most once however many
-  checks name it, and when the call returns the fetched value is gone. A draft therefore
-  carries no IO state: what it carries is which checks passed, which is a fact about the
-  checking rather than about the world. A verdict about an IO-bound check is point-in-time,
-  and the mask says nothing about what was consulted to reach it."
+  *How often.* Within one validation call an io-dep fetches at most once however many checks
+  name it, and when the call returns the fetched value is gone. A draft therefore carries no
+  IO state: what it carries is which checks passed, which is a fact about the checking rather
+  than about the world. A verdict about an external validation is point-in-time, and the mask
+  says nothing about what was consulted to reach it."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
@@ -220,7 +220,7 @@
       (is (= {:down true :for 1} (ex-data (try (rec/seal d) nil
                                                (catch clojure.lang.ExceptionInfo ex ex)))))
       (is (= #{::a} (rec/passed d))
-          "the pure check reached a verdict; the IO-bound one reached none"))))
+          "the pure check reached a verdict; the external validation reached none"))))
 
 ;;; ------------------------------------ how often ------------------------------------
 
@@ -305,7 +305,7 @@
         "and the insisting form throws the gate's failures")
     (testing "and the verdicts of whatever did run are recorded"
       (is (= #{::cuts} (rec/passed d))
-          "::cuts is the shape check ::only-roster-gets-a-cut waits on, and it passed"))))
+          "::cuts is the shape validation ::only-roster-gets-a-cut waits on; it passed"))))
 
 (deftest a-certificate-reports-a-failing-gate-among-its-failures
   (let [d (-> (whole) (assoc ::crew "not a crew"))]
@@ -325,14 +325,14 @@
         "every pure failure, keyed in declaration order")
     (is (= 0 (ran ::roster)))))
 
-(deftest an-io-bound-check-runs-once-its-io-deps-have-fetched
+(deftest an-external-validation-runs-once-its-io-deps-have-fetched
   (let [d (whole)]
     (is (rec/sealed? (rec/seal d)))
     (is (= [::roster ::only-roster-gets-a-cut] (order ::roster ::only-roster-gets-a-cut)))))
 
 (deftest a-field-an-io-dep-names-is-gated-as-nil-like-any-other
   ;; A field nobody wrote holds nil, and the gate over it is what keeps that nil away from
-  ;; the outside: the shape check says no, so the fetch never happens.
+  ;; the outside: the shape validation says no, so the fetch never happens.
   (let [d (assoc (rec/draft Job) ::cuts {:charlie 1})
         r (rec/check d ::only-roster-gets-a-cut)
         e (err #(rec/check! d ::only-roster-gets-a-cut))]

@@ -1,15 +1,15 @@
 (ns recognitum.shape-test
-  "Shape checks: the check named after a field, and what it gates.
+  "Shape validations: the check named after a field, and what it gates.
 
-  A check whose name is a field's key is that field's shape check -- the check that says
+  A check whose name is a field's key is that field's shape validation -- the check that says
   what a well-formed value of that field is. The naming convention is the whole of the
   declaration; nothing else marks it, and nothing else has to.
 
-  Two things follow, and both are here. A shape check names exactly its own field, or the
-  form does not compile: that is what keeps the dependency structure two levels deep --
-  shape checks depend on nothing, every other check depends only on shape checks, and no
+  Two things follow, and both are here. A shape validation names exactly its own field, or the
+  form does not compile: that is what keeps the dependency structure two levels deep -- shape
+  validations depend on nothing, every other check depends only on shape validations, and no
   ordering among checks ever has to be computed. And every other check waits on the shape
-  checks of the fields it names, so it receives well-formed input by construction and
+  validations of the fields it names, so it receives well-formed input by construction and
   restates nothing. A check whose gate has not passed does not run, is not reported, and
   records no verdict: \"cuts is not a map\" is the actionable failure, and \"did not run
   because cuts is not a map\" adds nothing to it."
@@ -29,10 +29,10 @@
 
 ;;; ---------------------------------------- the type ----------------------------------------
 
-;; `item`, `price` and `cuts` each have a shape check -- a check named after the field.
+;; `item`, `price` and `cuts` each have a shape validation -- a check named after the field.
 ;; `tags` has none, so it has no declared shape and `::tagged` has to be total over anything.
 ;; `::cheap` and `::split` are the ones the gate is for: both would throw outright on a
-;; price or a cuts map their shape checks reject.
+;; price or a cuts map their shape validations reject.
 (rec/defrecord Sale
   [item price cuts tags]
   {:checks
@@ -58,7 +58,7 @@
 
 ;;; ------------------------------ what the model says about them ------------------------------
 
-(deftest a-check-named-after-a-field-is-that-fields-shape-check
+(deftest a-check-named-after-a-field-is-that-fields-shape-validation
   (let [by (by-name (sale))]
     (testing "the model marks it structurally, so nothing downstream re-derives it"
       (is (= ::item  (:shape (by ::item))))
@@ -69,27 +69,27 @@
       (is (nil? (:shape (by ::split))))
       (is (nil? (:shape (by ::tagged)))))))
 
-(deftest the-shorthand-and-the-arglist-form-declare-the-same-shape-check
+(deftest the-shorthand-and-the-arglist-form-declare-the-same-shape-validation
   (let [by (by-name (sale))]
     (is (= ::item (:shape (by ::item))) "written as a bare fn")
     (is (= ::price (:shape (by ::price))) "written with an arglist")))
 
-(deftest a-checks-gate-is-the-shape-checks-of-the-fields-it-names
+(deftest a-checks-gate-is-the-shape-validations-of-the-fields-it-names
   (let [by (by-name (sale))]
-    (testing "a shape check waits on nothing -- that is what makes the graph two levels"
+    (testing "a shape validation waits on nothing -- that is what makes the graph two levels"
       (is (= [] (gate-names (sale) ::item)))
       (is (= [] (gate-names (sale) ::price)))
       (is (= [] (gate-names (sale) ::cuts))))
-    (testing "every other check waits on the shape checks of the fields it names"
+    (testing "every other check waits on the shape validations of the fields it names"
       (is (= [::price] (gate-names (sale) ::cheap)))
       (is (= [::price ::cuts] (gate-names (sale) ::split))))
-    (testing "a field with no shape check gates nothing"
+    (testing "a field with no shape validation gates nothing"
       (is (= [] (gate-names (sale) ::tagged))))
     (testing "and the mask is the same fact, for a draft to test in one and"
       (is (zero? (:shape-mask (by ::item))))
       (is (pos? (:shape-mask (by ::split)))))))
 
-;;; ------------------- a shape check names exactly its own field, or else -------------------
+;;; ---------------- a shape validation names exactly its own field, or else -----------------
 
 (def ^:private scratch
   ;; Compile-time rejections are tested by evaluating a whole `defrecord` form, which
@@ -104,10 +104,11 @@
   (binding [*ns* @scratch] (try (eval form) nil (catch Throwable t t))))
 
 (defn- compile-data [form] (some-> (compiles form) root-cause ex-data))
+(defn- compile-message [form] (some-> (compiles form) root-cause ex-message))
 
 (defn- sk
   "A keyword in the scratch namespace -- which is where a field key of a type defined there
-  lands, and therefore how a shape check of that type has to be spelled."
+  lands, and therefore how a shape validation of that type has to be spelled."
   [n]
   (keyword "recognitum.shape-scratch" n))
 
@@ -115,28 +116,33 @@
   [tname fields definition]
   (list 'recognitum.core/defrecord tname fields definition))
 
-(deftest a-shape-check-naming-another-field-does-not-compile
+(deftest a-shape-validation-naming-another-field-does-not-compile
   (let [e (compile-data (defform 'ShapeElsewhere '[a b]
                           {:checks {(sk "a") '([b] (int? b))}}))]
     (is (= ::rec/malformed-shape-check (:error e)))
     (is (= 'ShapeElsewhere (:record e)))
     (is (= (sk "a") (:check e)))
     (is (= (sk "a") (:field e)))
-    (is (= [(sk "b")] (:names e)))))
+    (is (= [(sk "b")] (:names e))))
+  (testing "and the message names the kind of check it had to be"
+    (let [m (compile-message (defform 'ShapeElsewhereSaid '[a b]
+                               {:checks {(sk "a") '([b] (int? b))}}))]
+      (is (re-find #"shape validation" m))
+      (is (re-find #"must name exactly that field" m)))))
 
-(deftest a-shape-check-naming-its-own-field-and-another-does-not-compile
+(deftest a-shape-validation-naming-its-own-field-and-another-does-not-compile
   (let [e (compile-data (defform 'ShapeTooWide '[a b]
                           {:checks {(sk "a") '([a b] (and (int? a) (int? b)))}}))]
     (is (= ::rec/malformed-shape-check (:error e)))
     (is (= [(sk "a") (sk "b")] (:names e)))))
 
-(deftest a-shape-check-naming-nothing-does-not-compile
+(deftest a-shape-validation-naming-nothing-does-not-compile
   (let [e (compile-data (defform 'ShapeGrounded '[a]
                           {:checks {(sk "a") '([] true)}}))]
     (is (= ::rec/malformed-shape-check (:error e)))
     (is (= [] (:names e)))))
 
-(deftest a-shape-check-cannot-be-io-bound
+(deftest a-shape-validation-cannot-be-io-bound
   ;; It would make the two-level graph three, and put a database between a field and the
   ;; statement of what that field is.
   (let [e (compile-data (defform 'ShapeFetching '[a]
@@ -154,7 +160,7 @@
 
 ;;; --------------------------------- the gate at construction ---------------------------------
 
-(deftest a-gated-check-does-not-run-when-its-shape-check-fails
+(deftest a-gated-check-does-not-run-when-its-shape-validation-fails
   (let [e (err #(->Sale "hat" "free" {:a 1} [:x]))]
     (is (= ::rec/check-failed (:error e))
         "and not a ClassCastException out of (< \"free\" 100)")
@@ -164,9 +170,9 @@
 (deftest one-shape-failure-does-not-silence-the-checks-it-does-not-gate
   (let [e (err #(->Sale "hat" "free" {:a 1} ["x"]))]
     (is (= [::price ::tagged] (keys (:failures e)))
-        "::tagged names a field with no shape check, so nothing gates it")))
+        "::tagged names a field with no shape validation, so nothing gates it")))
 
-(deftest a-failing-check-that-is-not-a-shape-check-gates-nothing
+(deftest a-failing-check-that-is-not-a-shape-validation-gates-nothing
   (let [e (err #(->Sale "hat" 500 {:a 1} [:x]))]
     (is (= [::cheap ::split] (keys (:failures e)))
         "::cheap failing does not stop ::split, which names the same field")))
@@ -181,7 +187,7 @@
 
 (deftest failures-come-back-in-phase-order-then-declaration-order
   ;; Shape first is the order you fix them in anyway, and it is not the order they are
-  ;; written in: `::extra-ok` is declared before either shape check here.
+  ;; written in: `::extra-ok` is declared before either shape validation here.
   (let [e (err #(->Phased "not a keyword" 5 "not a vector"))]
     (is (= [::tag ::extra-ok] (keys (:failures e)))
         "the shape failure leads, though ::extra-ok is declared first"))
@@ -272,8 +278,8 @@
   {:checks {::positive ("n is positive" [n] (pos? n))}})
 
 (deftest a-check-over-a-shapeless-field-runs-against-whatever-it-holds
-  ;; The author's choice, made loudly: no shape check means no gate, so the check has to be
-  ;; total over anything -- and a throw out of it stays a bug in the check.
+  ;; The author's choice, made loudly: no shape validation means no gate, so the check has to
+  ;; be total over anything -- and a throw out of it stays a bug in the check.
   (is (rec/sealed? (->Loose 1)))
   (is (thrown? ClassCastException (->Loose "x"))))
 
@@ -299,7 +305,7 @@
     (is (= [::id] (keys (:failures e)))))
   (is (= [] @fetched) "nothing reached the outside"))
 
-(deftest an-io-bound-check-still-runs-once-its-gate-passes
+(deftest an-external-validation-still-runs-once-its-gate-passes
   (reset! fetched [])
   (let [e (err #(->Account 2 "n"))]
     (is (= [::vouched] (keys (:failures e)))))
