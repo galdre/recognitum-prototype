@@ -506,8 +506,12 @@ Both generated constructors validate:
 `map->Heist` rejects an undeclared key. An omitted one is `nil`, as it would be on a `defrecord`,
 and the shape check says whether that is acceptable.
 
-There is no unvalidated constructor. The positional factory `deftype` would intern is replaced,
-and the draft type's is unmapped.
+There is no unvalidated constructor in Clojure. The positional factory `deftype` would intern is
+replaced, and the draft type's is unmapped. The JVM constructor `deftype` emits — reachable
+through interop as `(Heist. …)` with the hidden trailing fields supplied — is public and runs no
+checks; `deftype` offers no constructor hook, and this is the same interop-level standard
+`clojure.core/defrecord` accepts. Anyone constructing one by hand has to work at it. A raw draft
+built that way is simply a draft with nothing established, and seals through every check.
 
 Where the fields are not all in hand at once, build the way you would update:
 
