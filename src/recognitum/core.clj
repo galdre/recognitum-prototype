@@ -349,6 +349,58 @@
                   {:error ::cannot-dissoc :record (:name model) :key k
                    :instead (list 'assoc 'm k nil)})))
 
+(defn- io-checks-on
+  "The IO-bound checks that read `k`, by name and in declaration order."
+  [model k]
+  (into [] (comp (map (:checks model)) (filter (comp seq :io)) (map :name))
+        (get (:index model) k)))
+
+(defn io-limited!
+  "Refuse a direct write of `ks` to a sealed value of an `:io-limited` type.
+
+  A check that queries a database, run on every bare `assoc`, means business logic makes a
+  query per write. `:options {:io-limited true}` says so where the type is written: the
+  fields an IO-bound check reads are written under [[drafting]], where N writes cost one
+  round of checks at the seal rather than N rounds on the way there.
+
+  It refuses rather than defers. The caller asked for a sealed value, and a sealed value is
+  one every check passed on -- there is nothing to defer to -- so nothing is fetched and no
+  check runs. Fields no IO-bound check reaches are unaffected, which is what declaring
+  io-deps buys: the option narrows itself and the author never restates it."
+  [model ks]
+  (let [ks    (vec ks)
+        by    (apply array-map (mapcat (fn [k] [k (io-checks-on model k)]) ks))
+        names (fn [xs] (apply str (interpose ", " (map pr-str xs))))
+        many? (boolean (next ks))]
+    (throw (ex-info (format (str "%s is :io-limited and %s %s read by %s (%s) -- write %s "
+                                 "inside `drafting` rather than by assoc or merge on a "
+                                 "sealed value, so N writes cost one round of checks at "
+                                 "the seal instead of N")
+                            (:name model)
+                            (names ks)
+                            (if many? "are" "is")
+                            (if many? "IO-bound checks" "an IO-bound check")
+                            (names (distinct (apply concat (vals by))))
+                            (if many? "them" "it"))
+                    {:error ::io-limited :record (:name model)
+                     :key (first ks) :keys ks :checks by
+                     :instead (if many?
+                                (list `drafting '[x m] (list 'merge 'x 'other))
+                                (list `drafting '[x m] (list 'assoc 'x (first ks) 'v)))}))))
+
+(defn io-limited-write!
+  "Throw where a merge onto a sealed value writes a field its type keeps for [[drafting]].
+
+  Every offending key at once, in field declaration order, because a merge is one write:
+  refusing it a key at a time would report the order the entries happened to arrive in as
+  though it meant something. Emitted only for a type that declares the option and has a
+  field for it to reach, so a type without one pays nothing."
+  [model ks]
+  (let [lim     (:io-limited-keys model)
+        written (set ks)]
+    (when (some lim written)
+      (io-limited! model (filterv #(and (lim %) (written %)) (:field-order model))))))
+
 (defn qualify-keys
   "Rewrite a bare keyword naming a declared field of `model` into the type's own namespace,
   and leave every other key exactly as it was written.
@@ -1271,8 +1323,11 @@
   [:options :checks :io-deps :certificates])
 
 (def known-options
-  "What `:options` may hold. `:io-limited` is the only one so far -- the section exists so
-  that there can be more."
+  "What `:options` may hold, each taking a literal `true` or `false`. `:io-limited` is the
+  only one so far -- the section exists so that there can be more.
+
+  `:io-limited` makes direct `assoc` and `merge` on a *sealed* value throw for any field an
+  IO-bound check reads, so those writes go through `drafting` instead. See [[io-limited!]]."
   #{:io-limited})
 
 (defn parse-definition
@@ -1285,8 +1340,10 @@
   mistyped `:cheks` would quietly define a type with no checks at all -- a value asserting
   a validation that never ran, which is the one failure this library exists to make
   impossible -- so it is a compile error naming the offender instead. The same goes for a
-  key inside `:options`, and for a bare map of checks written where the definition map now
-  goes, whose check names arrive here as sections nobody declared.
+  key inside `:options` and for what that key holds -- an option is read here, while the
+  macro runs, so one written as anything but a literal boolean would be on whatever it
+  evaluated to -- and for a bare map of checks written where the definition map now goes,
+  whose check names arrive here as sections nobody declared.
 
   Every section now means something, so nothing here is accepted and then ignored. What a
   section holds is resolved further down: an arglist by [[resolve-deps]], a certificate by
@@ -1317,13 +1374,23 @@
                                                 :section s :value v})))
                              (assoc acc s v)))
                          {} definition-sections)]
-    (doseq [o (keys (:options sections))]
+    (doseq [[o v] (:options sections)]
       (when-not (contains? known-options o)
         (throw (ex-info (format (str "%s: :options holds %s, which is not an option -- the "
                                      "options are %s")
                                 tname (pr-str o) (pr-str known-options))
                         {:error ::unknown-option :record tname :option o
-                         :options known-options}))))
+                         :options known-options})))
+      ;; An option is read where the form is written, so anything that is not a literal
+      ;; boolean would be truthy whatever it later evaluated to -- a var, a call, a string.
+      ;; A declaration that means one thing to the macro and another to whoever reads it is
+      ;; the silent mis-declaration everything else here is arranged to prevent.
+      (when-not (or (true? v) (false? v))
+        (throw (ex-info (format (str "%s: :options %s takes true or false, and %s is "
+                                     "neither -- an option is read where it is written, so "
+                                     "anything else would be on whatever it evaluated to")
+                                tname o (pr-str v))
+                        {:error ::malformed-option :record tname :option o :value v}))))
     sections))
 
 (def mask-width
@@ -1705,6 +1772,13 @@
   like the built-in [[every-check]], is a compile error naming the offender. See
   [[parse-certificates]].
 
+  `:options` holds `:io-limited`, and each option takes a literal `true` or `false`.
+  `:io-limited` makes direct `assoc` and `merge` on a sealed value throw for any field an
+  IO-bound check reads -- its own fields and its fetches' alike -- so those writes go
+  through [[drafting]], where N of them cost one round of checks at the seal rather than a
+  query apiece on the way there. Fields no IO-bound check reaches are written as before,
+  and the set is computed from the arglists rather than declared. See [[io-limited!]].
+
   A field becomes a key qualified by the namespace this form is written in -- a `Heist`
   defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
   `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
@@ -1875,6 +1949,17 @@
         ;; it, and one bitwise `and` seeds the new draft. Computed here, so what the write
         ;; costs at run time is the `and` and nothing else.
         survives  (fn [k] (reduce bit-clear all-pass (get index k)))
+        ;; ---- :io-limited ----
+        ;; Which fields a direct write to a sealed value is refused for: exactly those an
+        ;; IO-bound check reads, computed from the same index rather than declared
+        ;; anywhere. A check reads the fields it names and the fields its fetches name, so
+        ;; a field behind a fetch is reached without anyone saying so, and a field only
+        ;; pure checks read -- or no check at all -- is written exactly as before. The
+        ;; option narrows itself; declaring io-deps is what makes that computable.
+        limited   (if (:io-limited options)
+                    (into #{} (filter (fn [k] (seq (io-idxs (get index k))))) ks)
+                    #{})
+        limited?  (fn [k] (contains? limited k))
         ;; ---- the protocol implementations ----
         ;; The draft type runs the body as written; only the `unsealed` marker is unwrapped,
         ;; so a body means the same thing wherever it runs.
@@ -1957,11 +2042,17 @@
          (~'assoc [_# ~ksym ~vsym]
            (case ~ksym
              ~@(mapcat (fn [j k]
-                         [k `(do ~(run-group (get index k)
-                                             (fn [i] (map (fn [d]
-                                                            (if (= d k) vsym (key->sym d)))
-                                                          (deps-of i))))
-                                 ~(with-io (get index k) (ctor-with j vsym)))])
+                         [k (if (limited? k)
+                              ;; Refused before anything runs: the value the caller asked
+                              ;; for is one every check passed on, so there is nothing to
+                              ;; defer and nothing worth fetching for a write that is not
+                              ;; going to happen.
+                              `(io-limited! ~model-sym [~k])
+                              `(do ~(run-group (get index k)
+                                               (fn [i] (map (fn [d]
+                                                              (if (= d k) vsym (key->sym d)))
+                                                            (deps-of i))))
+                                   ~(with-io (get index k) (ctor-with j vsym))))])
                        (range n) ks)
              (unknown-key! ~model-sym ~ksym)))
 
@@ -1985,6 +2076,11 @@
                                   (declared-field! ~model-sym ~ksym)
                                   (assoc ~accsym ~ksym ~vsym))
                                 {} ~essym)
+                 ;; After the reduce, so a key the type does not declare is reported as
+                 ;; one: `drafting` would not take it either. Only where the option
+                 ;; reaches something, so a type without one emits nothing here.
+                 ~@(when (seq limited)
+                     [(gensym "limited") `(io-limited-write! ~model-sym (keys ~ovsym))])
                  ~hsym  (new ~tname
                              ~@(map (fn [k f] `(get ~ovsym ~k ~f)) ks fsyms)
                              ~mtasym)]
@@ -2061,6 +2157,11 @@
          {:name        '~tname
           :key-ns      ~key-ns
           :options     ~options
+          ;; What the option resolves to, rather than what was written: `:io-limited-keys`
+          ;; is the fields a direct write to a sealed value is refused for, and is empty
+          ;; both where the option was not declared and where the type reaches no IO.
+          :io-limited  ~(boolean (:io-limited options))
+          :io-limited-keys ~limited
           :field-order ~ks
           :field-set   ~(set ks)
           ;; `:deps` is what the check named, in arglist order, and is what a failure

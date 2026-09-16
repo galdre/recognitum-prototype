@@ -80,7 +80,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       is not a legal arglist. Returns a map keyed by argument tuple.
 - [x] **E3. `check-all` / `certify-all`.** Over a collection of drafts, results index-aligned.
       Partial success on the non-throwing forms only. Nothing bulk produces sealed values.
-- [ ] **E4. `:io-limited`.** Direct `assoc` and `merge` on a sealed value throw for any field an
+- [x] **E4. `:io-limited`.** Direct `assoc` and `merge` on a sealed value throw for any field an
       IO-bound check depends on; other fields unaffected.
 
 ### F — reconcile
@@ -265,9 +265,11 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       same way. D3 added `:certificates` -- certificate name -> `{:checks :ids :mask}`,
       emitted as `array-map` applied to the pairs so it stays ordered past eight. E1 added
       `:io-deps` (in fetch order), `:io-names`, `:run-io`, and three keys per check --
-      `:io`, `:gate` and `:field-closure`. `:options` is still what nothing reads, which is
-      E4's business. `known-options` is `#{:io-limited}` and an option outside it is a compile
-      error, so a new option is declared there or it does not compile.
+      `:io`, `:gate` and `:field-closure`. `known-options` is `#{:io-limited}` and an
+      option outside it is a compile error, so a new option is declared there or it does
+      not compile. E4 made `:options` read: `:io-limited` resolves at macroexpansion into
+      `:io-limited-keys`, the fields a direct write to a sealed value is refused for, so
+      nothing on the model is now carried and ignored.
 
 - [x] **C1 — the definition map is required, not optional.** `SPEC.md` says three
       positions and every *section* optional, so a type with no checks is written
@@ -454,6 +456,33 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       `=`, and a handler that reads `:failures` without looking at `:bulk` would read a
       position as a check name. `bulk-failed!` and `missing-values!` are the only two places
       this lives.
+
+- [ ] **E4 — the refusal has no row in `SPEC.md`'s error table.** Every other throw here
+      has one; the draft-only write is described in prose ("makes direct `assoc` and
+      `merge` on a sealed value throw") and named nowhere. It is `::io-limited`, after the
+      option that caused it, which is what a handler would want to dispatch on. Its
+      ex-data carries `:key` (the first offender), `:keys` (all of them, in field
+      declaration order, since a merge is one write and the order its entries arrived in
+      means nothing), `:checks` (offending key -> the IO-bound checks reading it) and
+      `:instead` (a `drafting` form). `io-limited!` is the only place this lives.
+
+- [ ] **E4 — an option must be written as a literal boolean, which `SPEC.md` does not
+      say.** `:options` is read while the macro runs, so `{:io-limited some-config}` or
+      `{:io-limited (io-enabled?)}` would be on regardless of what it later evaluated to,
+      `false` included -- a declaration meaning one thing to the macro and another to
+      whoever reads it, which is the silent mis-declaration everything else here is
+      arranged to prevent. `parse-definition` refuses anything but `true` or `false` as
+      `::malformed-option`. If a future option wants a non-boolean value, that check is the
+      thing to widen, not to delete.
+
+- [ ] **E4 — `:io-limited` appears in no example, no demo and no README.** The example
+      model has no io-dep to limit (E1's deferral), so declaring the option there would say
+      nothing; `SPEC.md`'s own `Heist` declares it. F1 owns all three and should declare it
+      on `recognitum.heist` when it gives that type its io-deps, and show the refusal beside
+      the `drafting` form that is the way the write is spelled instead. The README's error
+      table wants a `:io-limited` row (and `::malformed-option` a mention) whenever it is
+      rewritten -- it is still listing `:invalid-field` and `:invariant-violated`, which B1
+      deleted. `recognitum.io-limited-test` is the worked example until then.
 
 - [ ] **E3 — bulk checking appears in no example and in no README.** F1 owns the README and
       the demo, and its entry already says the demo should illustrate an io-dep; a batched
