@@ -87,9 +87,12 @@
 
 (deftest the-example-model-answers-too
   (is (= #{::heist/name ::heist/crew ::heist/take ::heist/cuts
-           ::heist/cuts-sum-to-take ::heist/only-crew-get-cuts}
-         (passed heist/italian-job)))
-  (is (= #{::rec/every-check} (certs heist/italian-job))))
+           ::heist/cuts-sum-to-take ::heist/only-crew-get-cuts
+           ::heist/crew-is-vouched-for}
+         (passed heist/italian-job))
+      "the IO-bound check included: a sealed value is one every check passed on")
+  (is (= #{::heist/shape ::heist/payout ::rec/every-check} (certs heist/italian-job))
+      "and every certificate the type declares follows from that"))
 
 ;;; ---------------------------------- a draft answers ----------------------------------
 

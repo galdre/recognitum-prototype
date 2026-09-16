@@ -15,12 +15,13 @@
 (def table
   "Who the house knows about, and what it knows. The keys are the only people a fetch can
   find; anyone else is a stranger, which is a fact the checks are free to make something
-  of."
+  of -- as is the difference between someone it has on file and has vouched for and
+  someone it has on file and has not."
   {:charlie      {:vetted true}
    :lyle         {:vetted true}
    :left-ear     {:vetted true}
    :handsome-rob {:vetted true}
-   :napster      {:vetted false}
+   :napster      {:vetted true}
    :mole         {:vetted false}})
 
 (def calls

@@ -1,8 +1,17 @@
 (ns recognitum.demo
+  "Everything the library does, run rather than described.
+
+  Print it and read down the left-hand column: each line is a form, and what follows it is
+  either what that form returned or the error it threw. The IO half is the part worth
+  watching -- `recognitum.roster` counts every call made to it, so the lines that print a
+  call count are showing what the library actually did rather than asserting it."
   (:require
    [clojure.edn :as edn]
    [recognitum.heist :as heist]
-   [recognitum.core :as rec :refer [drafting]]))
+   [recognitum.roster :as house]
+   [recognitum.core :as rec :refer [drafting]])
+  (:import
+   (recognitum.heist Heist)))
 
 (defn- show [label f]
   (print (format "%-50s" label))
@@ -13,37 +22,77 @@
     (catch Throwable e
       (println " THREW" (.getSimpleName (class e)) "|" (ex-message e)))))
 
+(defn- section [s] (println (str "\n--- " s " ---")))
+
+(defn- watching
+  "Run `f` with the call log cleared, and answer with what the fake source was asked for."
+  [f]
+  (house/reset-calls!)
+  (try (f) (catch Throwable _ nil))
+  (mapv first @house/calls))
+
+(defn- complete
+  "A draft of a whole job, built from the type rather than from a value."
+  [nm crew cuts]
+  (-> (rec/draft Heist)
+      (assoc ::heist/name nm)
+      (assoc ::heist/crew crew)
+      (assoc ::heist/take (reduce + 0 (vals cuts)))
+      (assoc ::heist/cuts cuts)))
+
 (defn run []
   (let [job heist/italian-job]
-    (println "\n--- the value ---")
+    (section "the value")
     (show "italian-job" (fn [] job))
     (show "(::heist/take job)" (fn [] (::heist/take job)))
     (show "destructuring {::heist/keys [name take]}"
           (fn [] (let [{::heist/keys [name take]} job] [name take])))
 
-    (println "\n--- field keys are qualified by the namespace that defines the type ---")
+    (section "field keys are qualified by the namespace that defines the type")
     (show "(keys job)" (fn [] (keys job)))
     (show "(:take job) -- the bare key" (fn [] (:take job)))
     (show "assoc :take 4000 -- the bare key" (fn [] (assoc job :take 4000)))
 
-    (println "\n--- a check over one field, eager ---")
+    (section "telling the two generated types apart")
+    (show "(rec/of-type? Heist job)"          (fn [] (rec/of-type? Heist job)))
+    (show "(rec/of-type? Heist (draft job))"  (fn [] (rec/of-type? Heist (rec/draft job))))
+    (show "(instance? Heist job)"             (fn [] (instance? Heist job)))
+    (show "(instance? Heist (draft job))"     (fn [] (instance? Heist (rec/draft job))))
+    (show "(rec/draft? (draft job))"          (fn [] (rec/draft? (rec/draft job))))
+    (show "(rec/sealed? job)"                 (fn [] (rec/sealed? job)))
+
+    (section "a check over one field, eager")
     (show "assoc ::heist/take \"lots\"" (fn [] (assoc job ::heist/take "lots")))
     (show "assoc :getaway-car \"mini\"" (fn [] (assoc job :getaway-car "mini")))
 
-    (println "\n--- dissoc refuses declared fields ---")
+    (section "dissoc refuses declared fields")
     (show "dissoc ::heist/cuts" (fn [] (dissoc job ::heist/cuts)))
 
-    (println "\n--- a check over two fields, on a single-key write ---")
+    (section "a check over two fields, on a single-key write")
     (show "assoc ::heist/take 4000 (cuts now stale)" (fn [] (assoc job ::heist/take 4000)))
 
-    (println "\n--- merge is one atomic multi-key write ---")
+    (section "merge is one atomic multi-key write")
     (show "merge {::heist/take 4000 ::heist/cuts {...}}"
           (fn [] (merge job {::heist/take 4000 ::heist/cuts {:charlie 2000 :lyle 1000 :left-ear 1000}})))
     (show "merge that still violates" (fn [] (merge job {::heist/take 4000 ::heist/cuts {:charlie 1 :lyle 1 :left-ear 1}})))
 
-    (println "\n--- drafting: impl fns take and return drafts ---")
-    (show "add-member :napster 500"
-          (fn [] (drafting [h job] (heist/add-member h :napster 500))))
+    (section "protocol implementations: one body, both types")
+    (show "(heist/promote job :lyle 250) -- seals"
+          (fn [] (heist/promote job :lyle 250)))
+    (show "the same call inside drafting -- stays a draft"
+          (fn [] (drafting [h job] (let [inner (heist/promote h :lyle 250)]
+                                     (println "\n    inner is a draft?" (rec/draft? inner))
+                                     inner))))
+    (show "(heist/total-payout job) -- passes through"
+          (fn [] (heist/total-payout job)))
+    (show "add-member on a sealed value, three writes deep"
+          (fn [] (heist/add-member job :handsome-rob 500)))
+    (show "...while its first write alone is refused"
+          (fn [] (assoc job ::heist/crew (conj (::heist/crew job) :handsome-rob))))
+
+    (section "draft writes are unchecked; seal is where it fails")
+    (show "drafting + assoc ::heist/take \"nope\""
+          (fn [] (drafting [h job] (assoc h ::heist/take "nope"))))
     (show "pay someone who is not on the crew"
           (fn [] (drafting [h job] (-> h
                                        (assoc ::heist/cuts (assoc (::heist/cuts h) :stranger 100))
@@ -54,20 +103,7 @@
                                             (assoc ::heist/take 3100)))
                       (catch clojure.lang.ExceptionInfo e (ex-data e)))))
 
-    (println "\n--- draft writes are unchecked; seal is where it fails ---")
-    (show "drafting + assoc ::heist/take \"nope\""
-          (fn [] (drafting [h job] (assoc h ::heist/take "nope"))))
-
-    (println "\n--- re-entrancy ---")
-    (show "promote standalone (seals)" (fn [] (heist/promote job :lyle 250)))
-    (show "promote nested (stays a draft until outer seal)"
-          (fn [] (drafting [h job] (-> h (heist/promote :lyle 250) (heist/rename "The Sequel")))))
-    (show "what the inner call returns when nested"
-          (fn [] (drafting [h job] (let [inner (heist/promote h :lyle 250)]
-                                     (println "\n    inner is a draft?" (rec/draft? inner))
-                                     inner))))
-
-    (println "\n--- reduce over changesets ---")
+    (section "reduce over changesets: 3 writes, one round of checks")
     (show "3 changesets, one seal"
           (fn [] (drafting [h job]
                    (reduce heist/apply-changeset h
@@ -78,16 +114,111 @@
           (fn [] (drafting [h job]
                    (-> h (assoc ::heist/crew (conj (::heist/crew h) :mole))
                          (assoc ::heist/cuts (assoc (::heist/cuts h) :mole 400))))))
-    (println "\n--- constructors, both validating ---")
+
+    (section "what a draft has established, and what it still owes")
+    (show "(rec/passing (draft Heist)) -- from the type"
+          (fn [] (rec/passing (rec/draft Heist))))
+    (show "(rec/passing (draft job)) -- from a sealed value"
+          (fn [] (rec/passing (rec/draft job))))
+    (show "after one write, the checks reading it are cleared"
+          (fn [] (rec/passing (assoc (rec/draft job) ::heist/take 4000))))
+    (show "(meta job) -- passed and certificates, from a constant"
+          (fn [] (meta job)))
+    (show "(meta (assoc (draft job) ::heist/take 4000))"
+          (fn [] (meta (assoc (rec/draft job) ::heist/take 4000))))
+
+    (section "checks and certificates on an incomplete draft")
+    (let [d (-> (rec/draft Heist)
+                (assoc ::heist/name "In Progress")
+                (assoc ::heist/crew #{:charlie :lyle}))]
+      (show "(rec/check d ::heist/name)"     (fn [] (rec/check d ::heist/name)))
+      (show "(rec/check d ::heist/cuts) -- never written"
+            (fn [] (rec/check d ::heist/cuts)))
+      (show "(rec/certify d ::heist/shape) -- take and cuts owed"
+            (fn [] (rec/certify d ::heist/shape)))
+      (show "(rec/holding d)"                (fn [] (rec/holding d)))
+      (show "and now the shape certificate"
+            (fn [] (let [d (-> d (assoc ::heist/take 2) (assoc ::heist/cuts {:charlie 1 :lyle 1}))]
+                     [(rec/certify d ::heist/shape) (rec/holding d)])))
+      (show "a check that fails answers with what it returned"
+            (fn [] (rec/check (assoc d ::heist/name "") ::heist/name)))
+      (show "check! throws the report instead"
+            (fn [] (rec/check! (assoc d ::heist/name "") ::heist/name))))
+
+    (section "io-deps: a fetch resolving, and the check judging what came back")
+    (show "who the house has on file for the crew"
+          (fn [] (house/fetch-roster (::heist/crew job))))
+    (show "adding someone it has vouched for"
+          (fn [] (drafting [h job] (heist/add-member h :handsome-rob 500))))
+    (show "adding someone it has on file and has not"
+          (fn [] (drafting [h job] (heist/add-member h :mole 500))))
+    (show "adding someone it has never heard of"
+          (fn [] (drafting [h job] (heist/add-member h :nobody-in-particular 500))))
+
+    (section "the gate: a malformed crew never reaches the source")
+    (show "fetch-rosters on something that is not a crew"
+          (fn [] (house/fetch-rosters [["not a crew"]])))
+    (show "sealing a draft holding that crew"
+          (fn [] (drafting [h job] (assoc h ::heist/crew "not a crew"))))
+    (show "...and what the source was asked for while that ran"
+          (fn [] (watching #(drafting [h job] (assoc h ::heist/crew "not a crew")))))
+
+    (section "one fetch per validation call, however many things name it")
+    (show "::vetted names ::roster, so a seal is two calls not three"
+          (fn [] (watching #(drafting [h job] (heist/add-member h :handsome-rob 500)))))
+    (show "a write no IO-bound check reads fetches nothing"
+          (fn [] (watching #(drafting [h job] (heist/rename h "The Sequel")))))
+    (show "and nothing is cached across calls"
+          (fn [] (watching #(do (drafting [h job] (heist/add-member h :handsome-rob 500))
+                                (drafting [h job] (heist/add-member h :handsome-rob 500))))))
+
+    (section "bulk: one batched call over a group, with deduplication")
+    (let [ds (fn [] [(complete "one"   #{:charlie :lyle} {:charlie 1 :lyle 1})
+                     (complete "two"   #{:charlie :lyle} {:charlie 2 :lyle 2})
+                     (complete "three" #{:handsome-rob}  {:handsome-rob 3})])]
+      (show "(rec/certify-all ds rec/every-check)"
+            (fn [] (rec/certify-all (ds) rec/every-check)))
+      (show "the batched fetch is one call for the group"
+            (fn [] (watching #(rec/certify-all (ds) rec/every-check))))
+      (show "and the tuples it was handed -- two, not three"
+            (fn [] (do (house/reset-calls!)
+                       (rec/certify-all (ds) rec/every-check)
+                       (second (first (filter (fn [[f]] (= :fetch-rosters f)) @house/calls))))))
+      (show "one of them is not vouched for"
+            (fn [] (rec/check-all [(complete "a" #{:charlie} {:charlie 1})
+                                   (complete "b" #{:mole}    {:mole 1})]
+                                  ::heist/crew-is-vouched-for)))
+      (show "then sealing each costs no IO at all"
+            (fn [] (let [group (ds)]
+                     (rec/certify-all group rec/every-check)
+                     (watching #(mapv rec/seal group))))))
+
+    (section "io-limited: the fields behind a fetch are draft-only")
+    (show "(:io-limited-keys (rec/model-of Heist))"
+          (fn [] (:io-limited-keys (rec/model-of Heist))))
+    (show "assoc ::heist/crew on a sealed value"
+          (fn [] (assoc job ::heist/crew #{:charlie :lyle})))
+    (show "...and what it fetched to tell you that"
+          (fn [] (watching #(assoc job ::heist/crew #{:charlie :lyle}))))
+    (show "the :instead form from its ex-data"
+          (fn [] (try (assoc job ::heist/crew #{:charlie :lyle})
+                      (catch clojure.lang.ExceptionInfo e (:instead (ex-data e))))))
+    (show "which is how the write is spelled"
+          (fn [] (drafting [h job] (assoc h ::heist/crew #{:charlie :lyle :left-ear}))))
+    (show "a field no IO-bound check reads is unaffected"
+          (fn [] (assoc job ::heist/name "The Lavender Hill Mob")))
+
+    (section "constructors, both validating")
     (show "(heist/->Heist \"Job\" #{:a} 10 {:a 10})" (fn [] (heist/->Heist "Job" #{:a} 10 {:a 10})))
     (show "->Heist with a bad field" (fn [] (heist/->Heist "" #{:a} 10 {:a 10})))
+    (show "->Heist with everything wrong at once" (fn [] (heist/->Heist "" :not-a-set -1 "garbage")))
     (show "map->Heist missing a key" (fn [] (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))
 
-    (println "\n--- printing names the reader you need ---")
+    (section "printing names the reader you need")
     (show "(pr-str job)" (fn [] (pr-str job)))
     (show "a draft says it is unreadable" (fn [] (pr-str (rec/draft job))))
 
-    (println "\n--- reading, via clojure.edn and explicit :readers ---")
+    (section "reading, via clojure.edn and explicit :readers")
     (show "a literal written with bare keys, qualified by the tag"
           (fn [] (edn/read-string {:readers (rec/data-readers)}
                                   "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 1 :cuts {:a 1}}")))
@@ -99,7 +230,7 @@
           (fn [] (edn/read-string {:readers (rec/data-readers)}
                                   "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 9 :cuts {:a 1}}")))
 
-    (println "\n--- reading, via dev/data_readers.clj and plain read-string ---")
+    (section "reading, via dev/data_readers.clj and plain read-string")
     (show "tag registered at startup?" (fn [] (contains? *data-readers* 'recognitum.heist/Heist)))
     (show "(read-string (pr-str job))" (fn [] (= job (read-string (pr-str job)))))
     (show "clojure.edn ignores data_readers.clj" (fn [] (edn/read-string (pr-str job))))

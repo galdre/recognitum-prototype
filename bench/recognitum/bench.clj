@@ -3,7 +3,11 @@
   so the validation work is the same on both sides. The cross-field checks are written
   twice -- the hand-rolled side reads them out of a map, the library's are handed the two
   fields they named -- which is the difference being measured rather than a thumb on the
-  scale: the same comparison over the same values either way."
+  scale: the same comparison over the same values either way.
+
+  Both sides run the same six checks and reach the same verdict on the same values, which
+  `recognitum.example-test` asserts rather than leaves to the eye. Nothing here is
+  IO-bound: a fetch would dominate every row and measure the fake rather than the library."
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
@@ -20,8 +24,12 @@
 (defn only-crew?   [h] (every? (:crew h) (keys (:cuts h))))
 
 (def field-preds {:name non-blank-string? :crew crew-set? :take non-neg-int? :cuts cuts-map?})
-(def inv-index   {:take [cuts-add-up?] :cuts [cuts-add-up? only-crew?] :crew [only-crew?]})
-(def all-invs    [cuts-add-up? only-crew?])
+
+(def cross-index
+  "The hand-rolled twin of what the macro derives from the arglists: field -> the
+  cross-field checks reading it. Written out here, and kept in step by hand, which is the
+  labour the library is charging for."
+  {:take [cuts-add-up?] :cuts [cuts-add-up? only-crew?] :crew [only-crew?]})
 
 ;;; ---- library version ----
 
@@ -44,20 +52,23 @@
 (defn m-assoc [r k v]
   (when-not ((field-preds k) v) (bad! k))
   (let [r' (assoc r k v)]
-    (doseq [p (inv-index k)] (when-not (p r') (bad! k)))
+    (doseq [p (cross-index k)] (when-not (p r') (bad! k)))
     r'))
 
 (defn m-merge [r kvs]
   (doseq [[k v] kvs] (when-not ((field-preds k) v) (bad! k)))
   (let [r' (into r kvs)]
-    (doseq [p (distinct (mapcat inv-index (keys kvs)))] (when-not (p r') (bad! nil)))
+    (doseq [p (distinct (mapcat cross-index (keys kvs)))] (when-not (p r') (bad! nil)))
     r'))
 
 (defn m-validate!
-  "The hand-rolled `seal`: check the keys that were written, then their invariants."
+  "The hand-rolled `seal`: check the keys that were written, then the cross-field checks
+  reading them. The library selects by the draft's verdict mask instead, which is the same
+  selection reached from the other end -- a check whose bit is clear is one a write
+  cleared."
   [r dirty]
   (doseq [k dirty] (when-not ((field-preds k) (get r k)) (bad! k)))
-  (doseq [p (distinct (mapcat inv-index dirty))] (when-not (p r) (bad! nil)))
+  (doseq [p (distinct (mapcat cross-index dirty))] (when-not (p r) (bad! nil)))
   r)
 
 ;;; ---- fixtures ----
@@ -99,8 +110,8 @@
 (defn run []
   (println (format "%-34s %10s %10s %8s" "" "manual" "library" "ratio"))
   (line "read :take"            (ns-per-read #(:take r))        (ns-per-read #(::take h)))
-  (line "write :name (0 invs)"  (ns-per #(m-assoc r :name "x")) (ns-per #(assoc h ::name "x")))
-  (line "write :cuts (2 invs)"  (ns-per #(m-assoc r :cuts valid-cuts))
+  (line "write :name (0 cross-checks)" (ns-per #(m-assoc r :name "x")) (ns-per #(assoc h ::name "x")))
+  (line "write :cuts (2 cross-checks)" (ns-per #(m-assoc r :cuts valid-cuts))
                                 (ns-per #(assoc h ::cuts valid-cuts)))
   (line "merge 2 keys"          (ns-per #(m-merge r {:take 3000 :cuts valid-cuts}))
                                 (ns-per #(merge h {::take 3000 ::cuts valid-cuts})))

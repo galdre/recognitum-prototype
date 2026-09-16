@@ -99,9 +99,12 @@
 (defn- error-rows
   "The `:error` values the README's error table lists, in the order it lists them."
   []
-  (let [table (second (str/split @readme #"## Errors"))]
-    (->> (str/split-lines (or table ""))
-         (take-while #(not (str/starts-with? % "## ")))
+  (let [table (second (str/split @readme #"## Errors"))
+        lines (take-while #(not (str/starts-with? % "## ")) (str/split-lines (or table "")))
+        ;; past the header row and its separator, so `:error` -- the column's name -- is
+        ;; not read as one of the errors it heads.
+        rows  (rest (drop-while #(not (re-find #"^\|\s*-" (str/trim %))) lines))]
+    (->> rows
          (keep #(second (re-find #"^\|\s*`:(\S+)`" (str/trim %))))
          (mapv keyword))))
 

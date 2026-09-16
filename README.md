@@ -1,10 +1,11 @@
-# validated-record
+# recognitum
 
 A record-like type that carries proof of its own validation.
 
-If you are holding a `Heist`, the validation ran. Not "someone probably called `validate!`
-upstream" — the type cannot exist otherwise. A bare map that happens to have the right keys is
-not a `Heist`, and `assoc`-ing garbage into a `Heist` does not produce a `Heist`.
+If you are holding a `Heist`, every check declared on `Heist` passed. Not "someone probably
+called `validate!` upstream" — the type cannot exist otherwise. A bare map that happens to have
+the right keys is not a `Heist`, `assoc`-ing garbage into one does not produce one, and there is
+no constructor that skips the checks.
 
 ## Defining a type
 
@@ -13,45 +14,130 @@ referring it — the two then coexist in one namespace without ceremony:
 
 ```clojure
 (ns my.app.heist
-  (:require [recognitum.core :as rec :refer [drafting draft seal clean]]))
+  (:require [clojure.string :as str]
+            [recognitum.core :as rec]))
+
+;; Standing in for the database the io-deps below would really reach. Nothing in this
+;; library needs real infrastructure to be exercised; an io-dep is an ordinary function.
+(def house
+  {:charlie {:vetted true} :lyle {:vetted true} :left-ear {:vetted true}
+   :mole    {:vetted false}})
+
+(defn fetch-rosters [rows]
+  (into {} (map (fn [[crew :as tuple]] [tuple (into #{} (filter house) crew)])) rows))
+
+(defn fetch-vetted [roster]
+  (into #{} (filter #(get-in house [% :vetted])) roster))
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
 (defn non-neg-int?     [x] (and (int? x) (not (neg? x))))
-(defn cuts-map?        [x] (and (map? x) (every? keyword? (keys x)) (every? non-neg-int? (vals x))))
+(defn cuts-map?        [x] (and (map? x) (every? keyword? (keys x))
+                                (every? non-neg-int? (vals x))))
+
+(defprotocol Job
+  (rename       [h nm])
+  (total-payout [h]))
 
 (rec/defrecord Heist
-  [^{:valid non-blank-string?} name
-   ^{:valid crew-set?}         crew
-   ^{:valid non-neg-int?}      take
-   ^{:valid cuts-map?}         cuts]
+  [name crew take cuts]
 
-  [{:doc  "the cuts add up to the take"
-    :keys #{::take ::cuts}
-    :pred (fn [h] (= (::take h) (reduce + 0 (vals (::cuts h)))))}
-   {:doc  "only crew get a cut"
-    :keys #{::crew ::cuts}
-    :pred (fn [h] (every? (::crew h) (keys (::cuts h))))}])
+  {:options {:io-limited true}
+
+   :checks
+   {::name non-blank-string?
+    ::crew crew-set?
+    ::take non-neg-int?
+    ::cuts cuts-map?
+
+    ::cuts-sum-to-take
+    ("the cuts add up to the take"
+     [take cuts] (and (non-neg-int? take) (cuts-map? cuts)
+                      (= take (reduce + 0 (vals cuts)))))
+
+    ::only-crew-get-cuts
+    ("only crew get a cut"
+     [crew cuts] (and (crew-set? crew) (cuts-map? cuts)
+                      (every? crew (keys cuts))))
+
+    ::crew-is-vouched-for
+    ("everyone the house has on file for this crew is vetted"
+     [::roster ::vetted] (= roster vetted))}
+
+   :io-deps
+   {::roster ([[crew] :as rows] (fetch-rosters rows))
+    ::vetted ([::roster] (fetch-vetted roster))}
+
+   :certificates
+   {::shape  #{::name ::crew ::take ::cuts}
+    ::payout #{::cuts-sum-to-take ::only-crew-get-cuts}}}
+
+  Job
+  (rename       [h nm] (assoc h ::name nm))
+  (total-payout [h]    (reduce + 0 (vals (::cuts h)))))
 ```
 
-**Fields become keys qualified by the namespace the type is defined in.** A `Heist` written in
-`my.app.heist` answers to `:my.app.heist/name`, which is what `::name` spells inside that file
-and `::h/name` spells anywhere that aliases it. A bare `:name` is a key the type does not
-declare, so two types that happen to share a field name share nothing else, and a map lifted
-out of one cannot be quietly poured into another.
+Three positions — the type name, the fields, and a definition map — followed by protocol
+implementations. Every section of the definition map is optional; a key that names no section is
+a compile error, because a mistyped `:cheks` would define a type with no checks, and a value
+asserting a validation that never ran is the one thing here that must not be constructible.
 
-Two kinds of check, and the difference matters:
+That is the whole of the form. The rest of this document is what each part of it buys.
 
-- **Field predicates** (`^{:valid …}`) look at one value. They run on every write to that field
-  of a validated value, and at `seal` for every field a draft touched.
-- **Invariants** look at several fields at once. Each declares the keys it depends on, and runs
-  whenever any of them changes.
+## Fields
+
+A plain vector of symbols, as `defrecord` takes. Each becomes a real field on the generated type
+— so reads and writes are field access rather than map lookups — and a key **qualified by the
+namespace the type is defined in**. A `Heist` written in `my.app.heist` answers to
+`:my.app.heist/name`, which is what `::name` spells inside that file and `::h/name` spells
+anywhere that aliases it. A bare `:name` is a key the type does not declare, so two types that
+happen to share a field name share nothing else, and a map lifted out of one cannot be quietly
+poured into another.
+
+## Checks
+
+`:checks` maps a check name — a namespace-qualified keyword, unique within the type, and what
+failures report under — to a check, written in one of three forms:
+
+```clojure
+::name       non-blank-string?                      ; a bare fn over the field it names
+::valid-name ([name] (non-blank-string? name))      ; arglist and body
+::cuts-sum-to-take                                  ; with a docstring, as defn takes one
+("the cuts add up to the take"
+ [take cuts] (= take (reduce + 0 (vals cuts))))
+```
+
+**The arglist is the dependency declaration.** It holds two kinds of entry: a symbol, naming a
+field of this type, and a keyword, naming an io-dep of this type. The body receives exactly
+those, positionally, in that order, and nothing else is in scope — so nothing can depend on
+something it did not name, and the field → checks index the macro derives from the arglists
+cannot disagree with what the bodies actually read. Exactly one arity: the arity *is* the
+dependency set.
+
+Every entry is resolved while the macro runs. A symbol that is not a declared field, a keyword
+that is not a declared io-dep, a name used for both a check and an io-dep, or a cycle among
+io-deps is a compile error naming the offender. There is no second way to declare a dependency
+anywhere in the form.
+
+Checks have no ordering among themselves, and every one of them runs. A check spanning two
+fields therefore sees whatever those fields hold, including shapes the checks over them are
+rejecting in the same pass — which is why the two cross-field checks above restate what they
+need rather than assuming an earlier check stopped anything.
+
+### The contract
+
+- Return `true` — exactly `true` — when valid.
+- Return anything else to fail. What was returned *is* the failure data, and is reported.
+- Exceptions are **not** caught. A throw is a bug in the check rather than a claim about the
+  data, and "we could not determine whether this is valid" is not "this is invalid".
+
+A function whose last expression is truthy but not `true` is read as a failure. Predicates must
+return booleans.
 
 ## Reading
 
-A validated value behaves like a map. The examples below are written from a consumer
-namespace that has done `(:require [my.app.heist :as h])`, so `::h/take` is
-`:my.app.heist/take`.
+A sealed value behaves as a map. The examples below are written from a consumer namespace that
+has done `(:require [my.app.heist :as h])`, so `::h/take` is `:my.app.heist/take`.
 
 ```clojure
 (::h/take heist)                       ;=> 3000
@@ -64,36 +150,37 @@ namespace that has done `(:require [my.app.heist :as h])`, so `::h/take` is
 
 ## Writing
 
-`assoc` validates the field and any invariant that depends on it:
+`assoc` runs the checks that name the field:
 
 ```clojure
 (assoc heist ::h/name "The Sequel")  ;=> #my.app.heist/Heist{…}
-(assoc heist ::h/take "lots")        ;=> throws :invalid-field
+(assoc heist ::h/take "lots")        ;=> throws :check-failed
 (assoc heist :getaway-car "mini")    ;=> throws :unknown-field
 (assoc heist :take 4000)             ;=> throws :unknown-field — bare, so undeclared
 ```
 
-`merge` applies every entry and then checks invariants **once**, so a multi-key update is atomic:
+`merge` applies every entry and then runs the checks naming any of them **once**, so a multi-key
+update is atomic:
 
 ```clojure
 ;; fine — take and cuts change together
 (merge heist {::h/take 4000 ::h/cuts {:charlie 2000 :lyle 1000 :left-ear 1000}})
 
-;; throws :invariant-violated — the cuts no longer add up
+;; throws :check-failed — the cuts no longer add up
 (assoc heist ::h/take 4000)
 ```
 
 `dissoc` of a declared field throws. A `Heist` without `::h/cuts` is not a `Heist`, and silently
 degrading to a plain map is exactly the failure this type exists to prevent. Where a field's
-predicate admits `nil`, `(assoc heist ::h/cuts nil)` is how you spell absence — the error says so.
+checks admit `nil`, `(assoc heist ::h/cuts nil)` is how you spell absence — the error says so.
 
-Undeclared keys are ordinary: `dissoc` removes one from a draft, and on a validated value — which
-cannot be holding one — it is the usual no-op. `clean` is still how you strip them in bulk.
+Undeclared keys are ordinary: `dissoc` removes one from a draft, and on a sealed value — which
+cannot be holding one — it is the usual no-op. `clean` is how you strip them in bulk.
 
 ## Multi-step updates: `drafting`
 
-A single `assoc` can't express a change that breaks an invariant halfway through. `drafting`
-opens a **draft** — an unvalidated working copy — runs your body, and validates once at the end:
+A single `assoc` cannot express a change that breaks a check halfway through. `drafting` opens a
+**draft** — an unvalidated working copy — runs your body, and seals the result:
 
 ```clojure
 (defn update-the-thing [heist]
@@ -101,32 +188,243 @@ opens a **draft** — an unvalidated working copy — runs your body, and valida
     (-> h impl/do-a-thing impl/do-another)))
 ```
 
-Inside the draft, writes are unchecked. Reaching the end of `drafting` seals it: every field you
-touched is validated, and every invariant those fields could break is re-run. If anything fails,
-nothing is returned — you still have your original value, untouched.
-
-Sealing is idempotent, so a body that has already produced a finished value is fine — `seal` is a
-projection, and a sealed value is a fixed point of it.
+Inside the draft, writes check nothing. Reaching the end of `drafting` seals it, and what comes
+back is validated exactly as if every check had been run against it. If anything fails, nothing
+is returned — you still have your original value, untouched.
 
 ```clojure
 (drafting [h heist]
-  (reduce apply-changeset h changesets))   ; 500 writes, one validation
+  (reduce apply-changeset h changesets))   ; 500 writes, one round of checks
 ```
 
-**`drafting` is re-entrant.** Functions that take and return a draft can use `drafting`
-themselves and still be called from inside another one — only the outermost form seals. That
-lets you write impl functions once and call them either way:
+`init` may be a sealed value, a draft, or the type itself, which is how you build from nothing.
+Sealing is idempotent, so a body that has already produced a finished value is fine: `seal` is a
+projection and a sealed value is a fixed point of it.
+
+**`drafting` is re-entrant.** A draft owned by an enclosing form passes through unsealed, so only
+the outermost form seals. That is what lets an impl function taking and returning a draft be
+called standalone or nested without knowing which. The convention that falls out: your public
+API takes and returns sealed values, your impl layer takes and returns drafts, and `drafting`
+marks the boundary.
+
+## Protocol implementations
+
+Trailing forms in the definition are protocol implementations, written once and installed on
+both generated types. On the draft type the body runs as written. On the sealed type it is
+wrapped: the method opens a draft of the receiver, runs the body against that, and seals the
+result. So a method called on a sealed value cannot produce an invalid one whatever it does
+inside, and the same body serves the impl layer unchanged:
 
 ```clojure
-(defn promote [h who bonus]
-  (drafting [x h]                 ; seals when called on a Heist
-    (-> x                         ; passes through when called on a draft
-        (assoc ::cuts (update (::cuts x) who + bonus))
-        (assoc ::take (+ (::take x) bonus)))))
+(h/rename heist "The Sequel")                       ;=> a sealed Heist
+(drafting [x heist] (h/rename x "The Sequel"))      ;   the body ran on the draft, unsealed
+(h/total-payout heist)                              ;=> 3000 — not a Heist, so passed through
 ```
 
-The convention that falls out: your public API takes and returns validated values, your impl
-layer takes and returns drafts, and `drafting` marks the boundary.
+**Only a draft of this type is sealed on the way out.** Most protocol methods return something
+else entirely — a number, a string, a boolean — and those pass through untouched, as does a
+method handing back an already-sealed value.
+
+Inside the body the receiver is a draft in both cases, so a body asking `(instance? Heist h)`
+would surprise itself and wants `(rec/of-type? Heist h)` instead.
+
+**`unsealed` opts out**, as `reduced` opts out of a reduction:
+
+```clojure
+(begin-revision [h] (rec/unsealed (assoc h ::name "draft title")))
+```
+
+The wrapper unwraps it and hands the draft back unsealed — a free draft, owned by nothing,
+adoptable by a later `drafting` or sealable by hand. Both implementations unwrap it, so the body
+means the same thing wherever it runs. `(unsealed x)` where `x` is not a draft of this type
+throws: the marker asserts what is being returned, and a wrong assertion should say so.
+`drafting` does not honour it — the wrapper is implicit, so opting out of it is fair, but a
+`drafting` form is you asking to seal.
+
+## Telling values apart
+
+`defrecord` generates two types, so `instance?` no longer asks the question people usually mean.
+`of-type?` asks it:
+
+| | |
+|---|---|
+| `(rec/of-type? Heist x)` | either form of `Heist` |
+| `(instance? Heist x)` | a sealed `Heist`, specifically |
+| `(rec/draft? x)` | any draft, of any type |
+| `(rec/sealed? x)` | any sealed value, of any type |
+
+"A draft of `Heist`" composes from two of them, which is the right amount of spelling out for
+something that specific. `of-type?` is a function rather than a predicate generated per type, so
+a definition interns nothing into your namespace that could collide with a name you wrote there
+yourself. It is false for anything unregistered, the type object included — a class is not a
+value of its type.
+
+## What a draft has established
+
+A draft records which of its checks currently pass. The record is mutable: the draft's *data* is
+immutable, but which checks have been run against that data is not part of the data.
+
+- Drafting from a sealed value starts with every check passing.
+- Drafting from the type starts with none.
+- Running a check sets its bit when it passes and clears it when it fails.
+- A write clears exactly the checks that read the field written, and nothing else.
+
+The seed is a snapshot, so versions diverge rather than share: checking `x'` says nothing about
+`x`. A draft is single-owner, as a transient is, and this is why that matters rather than merely
+being conventional.
+
+You can run checks against a draft before it is complete:
+
+| | returns |
+|---|---|
+| `(rec/check d ::check-name)` | `true`, or the failing check's data |
+| `(rec/check! d ::check-name)` | `true`, or throws |
+| `(rec/certify d ::cert-name)` | `true`, or `{check-name failure-data}` for those that failed |
+| `(rec/certify! d ::cert-name)` | `true`, or throws |
+| `(rec/passing d)` | the set of check names currently passing |
+| `(rec/holding d)` | the set of certificate names currently held |
+
+None of them return a draft. The verdict goes in the draft's record, which is what frees the
+return value to be the answer to the question asked.
+
+Running a check runs whatever it depends on that is not already passing, so `check` means
+*establish this*, not *run exactly this* — and a prerequisite already passing is free. Failures
+are not retained: the call that finds one returns it, and a later call runs anything not passing
+and produces it again. Every one of these runs everything it was asked to run and reports every
+failure; none stops at the first.
+
+A check naming a field the draft has never been written to reports `:missing-field` rather than
+being handed something no author could recognise. "Never written" and "written to `nil`" are
+different things throughout.
+
+### Metadata
+
+`meta` returns a value's own metadata with the library's keys merged over the top. Drafts and
+sealed values answer the same way, so nothing has to establish which it is holding before asking:
+
+```clojure
+(meta d)
+;=> {:user-key 1
+;    :recognitum.core/passed       #{::name ::crew ::cuts-sum-to-take}
+;    :recognitum.core/certificates #{::shape}}
+```
+
+On a sealed value every check passed and every certificate is held, so those keys are present
+and constant — a compile-time constant for the type, allocated once when it was defined. Merging
+over rather than under is deliberate: `with-meta` is public, so anything a caller could set a
+caller could forge, and keys the library writes last cannot be overridden by anything handed in.
+
+## Certificates
+
+`:certificates` maps a certificate name to the checks it covers — a group you can establish on a
+draft early, before the value is complete:
+
+```clojure
+(rec/certify d ::h/shape)     ;=> true
+(rec/holding d)               ;=> #{:my.app.heist/shape}
+```
+
+**Holding one is derived, not asserted.** A draft holds a certificate when every check in it
+currently passes, which is one bitwise `and` against the draft's record. So overlapping
+certificates need no coordination, running individual checks can complete a certificate
+incidentally, and there is nowhere to record holding one except by having actually passed its
+checks.
+
+A built-in certificate covering every check on the type exists without being declared. It is
+called `:recognitum.core/every-check` (the var `rec/every-check` holds it), and is the one
+certificate name a type may not declare for itself.
+
+Certificates are a draft-level facility, and they change nothing about what a sealed value
+guarantees: `seal` enforces every check on the type, whether or not it belongs to one.
+
+## IO dependencies
+
+`:io-deps` names functions that fetch something from outside the value — a database row, an
+upstream response. They are written exactly as checks are, arglist and all, and follow the same
+rule, so an io-dep may name another and the fetches form a graph that runs in topological order.
+Anything is IO-bound exactly when its arglist holds a keyword, which is visible where it is
+written without consulting anything else.
+
+A fetch does not decide validity. It produces a value, and the checks naming it decide what that
+value means; `nil` is neither a failure nor a success. An exception from a fetch propagates
+rather than becoming a failure — a check that throws is a bug, while a fetch that throws is
+usually the database being unreachable, and folding that into failure would have the type assert
+something it does not know. An author who wants it treated as a failure catches it inside the
+fetch; that direction loses nothing, and the reverse is not recoverable.
+
+A fetch may be written either way, and the reader tells them apart:
+
+```clojure
+::roster ([crew] (fetch-roster crew))               ; singular
+::roster ([[crew] :as rows] (fetch-rosters rows))   ; batched
+```
+
+`[[crew] :as rows]` is not a legal function arglist, so the macro knows at expansion time which
+it has. The inner vector is the dependency declaration either way, so the gate, the fetch order
+and the field → checks index come out the same; what differs is the call. A batched fetch is
+handed the collection of argument tuples and answers a map keyed by them, `{[crew] result}` —
+keying by the tuple rather than aligning positionally is what lets the library do the
+deduplication rather than you. Checks are never batched; a check judges one value.
+
+**Shape gates IO.** Nothing reaches a database until the values it will carry there are
+established as well-formed, because the payload that triggers the query is the one least worth
+trusting:
+
+- Pure checks run first, ungated.
+- An io-dep fetches once every pure check over the fields it names has passed, and every io-dep
+  it names has fetched.
+- An IO-bound check runs once every io-dep it names has fetched.
+
+The rule is recursive, so a fetch transitively waits on the fields of everything beneath it
+without that having to be stated anywhere. And because an io-dep declares its own fields, the
+gate is narrow: a fetch over `crew` waits on the checks covering `crew`, not on the whole type.
+
+**A fetch is shared for the length of one validation call, and no longer.** Within a single
+`check`, `certify` or `seal`, an io-dep is fetched at most once however many checks name it —
+that is what naming it is for — and when the call returns the fetched value is gone. So a draft
+never carries IO state. What it carries is which checks passed, which is a fact about the
+checking rather than about the world.
+
+### Checking many at once
+
+`check-all` and `certify-all` take a collection of drafts of one type and run against all of
+them, so a batched fetch sees every argument tuple in one call and distinct tuples are computed
+once however many values share them:
+
+```clojure
+(rec/certify-all drafts rec/every-check)   ;=> [true true {::h/cuts-sum-to-take false} …]
+```
+
+Results are index-aligned with the input, because two drafts holding identical data are `=` and
+keying by draft would silently collapse them. Partial success is a workspace notion, so only the
+non-throwing forms offer it; `check-all!` and `certify-all!` collect every failure across every
+value and throw once with all of them, keyed by index.
+
+Nothing bulk produces sealed values. A guarantee does not come in partial, and it does not need
+to: bulk checking leaves each draft holding its own verdicts, so sealing them afterwards finds
+their checks already passing and performs no IO.
+
+### Draft-only writes
+
+```clojure
+{:options {:io-limited true}}
+```
+
+makes direct `assoc` and `merge` on a **sealed** value throw for any field an IO-bound check
+reads — its own fields and its fetches' alike. A check that queries a database, run on every
+bare `assoc`, means business logic makes a query per write; under `drafting`, N writes cost one
+round of checks at the seal instead of N.
+
+```clojure
+(assoc heist ::h/crew #{:charlie})              ;=> throws :io-limited
+(drafting [x heist] (assoc x ::h/crew #{:charlie}))   ; how that write is spelled
+(assoc heist ::h/name "The Lavender Hill Mob")  ;=> fine — no fetch reads ::h/name
+```
+
+It refuses rather than defers: you asked for a sealed value, and a sealed value is one every
+check passed on, so there is nothing to defer to — nothing is fetched and no check runs. Fields
+no IO-bound check reaches are unaffected, which is what declaring io-deps buys; the set is
+computed from the arglists rather than restated by you.
 
 ## Building a new value
 
@@ -142,9 +440,9 @@ layer takes and returns drafts, and `drafting` marks the boundary.
              ::h/cuts {:charlie 1000 :lyle 1000 :left-ear 1000}})
 ```
 
-Both run every field predicate and every invariant, because construction touches every field.
-`map->Heist` additionally rejects a key the type does not declare, and reports a key it declares
-and the map omits as `:missing-field`.
+Both run every check, because construction touches every field. `map->Heist` additionally
+rejects a key the type does not declare, and reports a key it declares and the map omits as
+`:missing-field`.
 
 It takes either spelling: a bare keyword naming a declared field is qualified into the type's
 namespace, and anything else is taken as written, so a stray `:getaway-car` is reported as
@@ -156,16 +454,15 @@ There is no unvalidated constructor. The positional factory `deftype` would othe
 replaced, and the draft type's is unmapped — a `Heist` cannot be brought into existence except
 through a check.
 
-When the fields are not all in hand at once, build it the way you would update it. Pass the type
-instead of a value:
+Where the fields are not all in hand at once, build it the way you would update it:
 
 ```clojure
 (drafting [h Heist]
   (reduce apply-fragment h fragments))
 ```
 
-A field you never set is reported at seal as `:missing-field`. Note that `nil` is a legal value
-if your predicate accepts it — "never written" and "written to nil" are different things.
+A field never written is reported at seal as `:missing-field`. `nil` is a legal value where a
+check accepts it; a field no check mentions still has to be written.
 
 ## Undeclared keys
 
@@ -177,12 +474,12 @@ error:
   (assoc h :getaway-car "mini"))   ;=> throws :extraneous-keys
 ```
 
-Call `clean` to strip them instead. It is an ordinary draft→draft step, so it goes wherever you
+Call `clean` to strip them instead. It is an ordinary draft → draft step, so it goes wherever you
 want in the pipeline:
 
 ```clojure
 (drafting [h heist]
-  (-> h (assoc :getaway-car "mini") clean))   ;=> #my.app.heist/Heist{…}
+  (-> h (assoc :getaway-car "mini") rec/clean))   ;=> #my.app.heist/Heist{…}
 ```
 
 That gives you both policies — reject or strip — chosen per call site rather than baked into the
@@ -190,42 +487,52 @@ type. To drop one undeclared key rather than all of them, `dissoc` it.
 
 ## Errors
 
-Everything throws `ex-info` with an `:error` key you can dispatch on:
+Everything throws `ex-info` with an `:error` key you can dispatch on. The keys are qualified —
+`:recognitum.core/check-failed` is what you match on; the table writes them short.
 
 | `:error` | when |
 |---|---|
-| `:invalid-field` | a value failed its field predicate |
-| `:invariant-violated` | a cross-field invariant failed |
+| `:check-failed` | a check returned something other than `true` |
 | `:unknown-field` | `assoc` of a key the type does not declare |
 | `:extraneous-keys` | sealing a draft holding undeclared keys |
-| `:missing-field` | sealing a value with a field never written |
-| `:cannot-dissoc` | `dissoc` of a declared field — use `assoc … nil` if its predicate admits nil |
+| `:missing-field` | a field never written, at seal or where a check reads it |
+| `:cannot-dissoc` | `dissoc` of a declared field — use `assoc … nil` if its checks admit nil |
 | `:cannot-seal` | sealing something that is neither a draft nor an already-sealed value |
+| `:io-limited` | a direct `assoc` or `merge` on a sealed value of an `:io-limited` type |
 
-Invariant failures carry what you need to debug them:
+A `:check-failed` carries every failure, never one — each throwing entry point runs everything it
+was asked to run first. They come back keyed by check name in declaration order, and each carries
+the check's docstring, the dependencies it declared with what it was handed for each, and
+whatever it returned:
 
 ```clojure
-{:error      :invariant-violated
- :record     Heist
- :invariant  "only crew get a cut"
- :depends-on #{:my.app.heist/crew :my.app.heist/cuts}
- :values     #:my.app.heist{:crew #{:charlie :lyle :left-ear}
-                            :cuts {:charlie 1000 :lyle 1000 :left-ear 1000 :stranger 100}}}
+{:error    :recognitum.core/check-failed
+ :record   Heist
+ :failures {:my.app.heist/only-crew-get-cuts
+            {:doc      "only crew get a cut"
+             :values   #:my.app.heist{:crew #{:charlie :lyle :left-ear}
+                                      :cuts {:charlie 1000 :stranger 100}}
+             :returned false}}}
 ```
+
+Mis-declaration is a compile error rather than a run-time one, so there is a second family of
+`ex-info`s thrown while the macro runs — `::unknown-dependency`, `::unknown-section`,
+`::unknown-option`, `::io-dep-cycle`, `::reserved-method` and their neighbours. Each names the
+offender and the alternatives it could have meant.
 
 ## Printing and reading
 
-A validated value prints with a namespace-qualified tag, and the printed map drops the
-namespace that tag already carries:
+A sealed value prints with a namespace-qualified tag, and the printed map drops the namespace
+that tag already carries:
 
 ```clojure
 (pr-str heist)
-;=> "#recognitum.heist/Heist{:crew #{…}, :cuts {…}, :name \"The Italian Job\", :take 3000}"
+;=> "#my.app.heist/Heist{:crew #{…}, :cuts {…}, :name \"The Italian Job\", :take 3000}"
 ```
 
-The reader puts it back. It accepts both spellings — bare keys, which it qualifies from the
-tag, and fully qualified keys, which it takes as given — so a literal written either way
-reads, and both go through the same validating constructor.
+The reader puts it back. It accepts both spellings — bare keys, which it qualifies from the tag,
+and fully qualified keys, which it takes as given — so a literal written either way reads, and
+both go through the same validating constructor.
 
 That tag is exactly the key `clojure.edn` wants, and `data-readers` supplies the map:
 
@@ -233,9 +540,9 @@ That tag is exactly the key `clojure.edn` wants, and `data-readers` supplies the
 (edn/read-string {:readers (rec/data-readers)} s)
 ```
 
-**Reading is validating.** The reader *is* `map->Heist`, so a literal cannot smuggle in
-a value that would have been rejected on construction — a bad one throws at read time rather
-than producing something that lies about itself.
+**Reading is validating.** The reader *is* `map->Heist`, so a literal cannot smuggle in a value
+that would have been rejected on construction — a bad one throws at read time rather than
+producing something that lies about itself.
 
 The library never registers anything globally, deliberately. `clojure.edn` takes `:readers` and
 consults nothing else, and it is the reader you want for anything arriving from outside the
@@ -245,23 +552,23 @@ that loaded it and visible to every other one.
 
 To make a tag available to plain `read` and `read-string`, put a `data_readers.clj` at the root
 of your classpath — `src/data_readers.clj`, or `dev/data_readers.clj` for a fixture. It is a map
-literal of tag to fully-qualified var, and pointing it at the validating constructor is the
-whole trick:
+literal of tag to fully-qualified var, and pointing it at the validating constructor is the whole
+trick:
 
 ```clojure
-{recognitum.heist/Heist recognitum.heist/map->Heist}
+{my.app.heist/Heist my.app.heist/map->Heist}
 ```
 
-Clojure merges every such file into `*data-readers*` at startup. Two things to know: the entry
-is a *placeholder* until the namespace is loaded, so reading the tag before requiring
-`recognitum.heist` throws `Attempting to call unbound fn`; and `clojure.edn` ignores these files
+Clojure merges every such file into `*data-readers*` at startup. Two things to know: the entry is
+a *placeholder* until the namespace is loaded, so reading the tag before requiring
+`my.app.heist` throws `Attempting to call unbound fn`; and `clojure.edn` ignores these files
 entirely, so `:readers` is still how you reach the safe reader.
 
 A draft prints as explicitly unreadable, because it is unvalidated working state and a form
 implying it round-trips would be claiming something untrue:
 
 ```clojure
-(pr-str (draft heist))   ;=> "#<Heist draft {…}>"
+(pr-str (rec/draft heist))   ;=> "#<Heist draft {…}>"
 ```
 
 ## Running it
@@ -272,23 +579,31 @@ clojure -M:dev -e "(require 'recognitum.demo)(recognitum.demo/run)"
 clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"
 ```
 
+The demo is the fastest way in: `dev/recognitum/heist.clj` is the worked example above, and
+`recognitum.demo/run` prints every facility in this document against it, including the fetches
+— `dev/recognitum/roster.clj` is an in-memory table that counts its calls, so the lines about
+one fetch per validation call and about the gate are showing what happened rather than asserting
+it.
+
 ## What it costs
 
-Against a plain `defrecord` carrying the same predicates and invariants written by hand, so the
-validation work is identical on both sides (`bench/recognitum/bench.clj`). Criterium
-`quick-benchmark` on an AMD Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-15:
+Against a plain `defrecord` carrying the same checks written by hand, so the validation work is
+identical on both sides (`bench/recognitum/bench.clj`). Criterium `quick-benchmark` on an AMD
+Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-15:
 
 | | hand-rolled | this library |
 |---|---|---|
 | read a field | 2.1 ns | 1.9 ns |
-| write, no invariants on the key | 19.9 ns | 31.4 ns |
-| write, two invariants on the key | 246 ns | 305 ns |
+| write, no cross-field check on the key | 19.9 ns | 31.4 ns |
+| write, two cross-field checks on the key | 246 ns | 305 ns |
 | `merge` two keys | 933 ns | 604 ns |
 | construct | 1478 ns | 1410 ns |
 | 15 writes in one `drafting` | 862 ns | 1220 ns |
 
-Run-to-run spread is real: the two-invariant row moved between 1.0× and 1.2× across consecutive
-runs on an idle machine. Re-measure rather than trust these to three figures.
+Two caveats. Run-to-run spread is real: the two-cross-check row moved between 1.0× and 1.2×
+across consecutive runs on an idle machine. And these numbers were taken before checks became
+arglist-declared and started being called with direct field access, which is the change most
+likely to have moved them. Re-measure rather than trust either column to three figures:
 
 ```
 clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"

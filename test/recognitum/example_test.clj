@@ -104,18 +104,26 @@
 
 (deftest a-check-runs-early-and-waits-only-on-what-its-fetch-names
   ;; The gate is narrow: ::roster names `crew`, so the fetch waits on the checks covering
-  ;; `crew` and on nothing else -- not on the three fields this draft has never been
-  ;; written to at all.
-  (let [d (assoc (rec/draft Heist) ::heist/crew #{:charlie :lyle})]
+  ;; `crew` -- both of them, ::only-crew-get-cuts included, which is why `cuts` is written
+  ;; here too -- and on nothing else. `name` and `take` have never been written at all,
+  ;; and nothing waits for them.
+  (let [d (-> (rec/draft Heist)
+              (assoc ::heist/crew #{:charlie :lyle})
+              (assoc ::heist/cuts {:charlie 1}))]
     (is (true? (rec/check d ::heist/crew-is-vouched-for)))
     (is (= 1 (roster/call-count :fetch-rosters)))
-    (is (contains? (rec/passing d) ::heist/crew-is-vouched-for)))
+    (is (contains? (rec/passing d) ::heist/crew-is-vouched-for))
+    (is (contains? (rec/passing d) ::heist/only-crew-get-cuts)
+        "and what gated it is established too, since it was actually run"))
   (testing "and a crew the checks over it reject never reaches the fetch"
     (roster/reset-calls!)
-    (let [d (assoc (rec/draft Heist) ::heist/crew "not a crew")
+    (let [d (-> (rec/draft Heist)
+                (assoc ::heist/crew "not a crew")
+                (assoc ::heist/cuts {:charlie 1}))
           e (err #(rec/check d ::heist/crew-is-vouched-for))]
       (is (= ::rec/check-failed (:error e)))
-      (is (= [::heist/crew] (keys (:failures e))))
+      (is (= [::heist/crew ::heist/only-crew-get-cuts] (keys (:failures e)))
+          "the check asked about never ran, so the gate's failures are the answer")
       (is (= 0 (roster/call-count))))))
 
 ;;; ------------------------------ deduplication across values ------------------------------

@@ -3,6 +3,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.heist :as heist]
+   [recognitum.roster :as house]
    [recognitum.core :as rec])
   (:import
    (recognitum.heist Heist)))
@@ -125,18 +126,30 @@
 
 ;;; ------------------------------------ the seal contract ------------------------------------
 
+(defn- dep-value
+  "What a check of `Heist` gets for the dependency `d` against the sealed value `h`.
+
+  A field is read off the value; an io-dep is fetched here, by hand, rather than through
+  the library -- an oracle that reached into the library's own fetching would be asserting
+  that seal agrees with itself."
+  [h d]
+  (case d
+    ::heist/roster (house/fetch-roster (::heist/crew h))
+    ::heist/vetted (house/fetch-vetted (house/fetch-roster (::heist/crew h)))
+    (get h d)))
+
 (deftest whatever-seal-returns-passes-every-check
   ;; The guarantee is not "seal ran the checks it selected" but "the result is valid as if
   ;; every check had run". Assert the second directly: seal's key selection is the thing
   ;; under test, so re-running everything is the only honest oracle. Each check is called
   ;; here the way it declared it wanted to be -- its arglist, read off the model, is the
-  ;; whole of what it depends on.
+  ;; whole of what it depends on, io-deps included.
   (let [model     (rec/model-of job)
-        run       (fn [{:keys [deps pred]} h] (apply pred (map #(get h %) deps)))
+        run       (fn [{:keys [deps pred]} h] (apply pred (map #(dep-value h %) deps)))
         changeset (fn [i] {:op :add-member :who (keyword (str "m" i)) :cut (* 10 (inc i))})
         history   (reductions (fn [h i] (rec/drafting [x h] (heist/apply-changeset x (changeset i))))
                               job (range 25))]
-    (is (= 6 (count (:checks model))) "and every one of them is exercised")
+    (is (= 7 (count (:checks model))) "and every one of them is exercised")
     (doseq [[i h] (map-indexed vector history)]
       (is (instance? Heist h))
       (doseq [c (:checks model)]

@@ -85,7 +85,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### F — reconcile
 
-- [ ] **F1. README, demo, bench** to the new syntax. The demo should illustrate io-deps against
+- [x] **F1. README, demo, bench** to the new syntax. The demo should illustrate io-deps against
       the faked in-memory source from E1: a fetch resolving, the gate refusing to query on a
       malformed value, deduplication, and a check judging the result. The bench's hand-rolled side needs the same
       checks written out by hand again, or the comparison stops being apples-to-apples.
@@ -125,7 +125,8 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       nowhere but its own definition — but it means F1, rewriting the README, cannot use
       "audit" in any sense without the suite failing. If a later document wants the word for
       something unrelated, narrow those two assertions to the token list the file already
-      carries rather than deleting them.
+      carries rather than deleting them. F1 rewrote the README end to end without wanting
+      the word, so nothing was narrowed; the constraint stands for whoever does want it.
 
 - [ ] **D1 — `passing` answers for a draft only, and D4 will want it for both.**
       `SPEC.md`'s uniform `meta` says a sealed value reports the same
@@ -227,13 +228,15 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       merely run twice. Landed in D5: a fully certified draft now seals without running
       anything, and the half of that sentence about IO waits only on E1.
 
-- [ ] **D3 — `README.md` says nothing about certificates.** F1 owns it. The draft-level
+- [x] **D3 — `README.md` says nothing about certificates.** F1 owns it. The draft-level
       half of the library -- `check`, `check!`, `certify`, `certify!`, `passing`, `holding`
-      -- is documented only in docstrings and in `SPEC.md`.
+      -- is documented only in docstrings and in `SPEC.md`. Done in F1: "What a draft has
+      established" and "Certificates" carry all six, and `recognitum.readme-test` names
+      each of them, so the section cannot be dropped again without the suite saying so.
 
-- [ ] **D2 — the README documents neither `check` nor `check!`.** F1 owns the README, and
+- [x] **D2 — the README documents neither `check` nor `check!`.** F1 owns the README, and
       the draft-level facility is the half of the library it says least about. The four-way
-      table C0 left for F1 is in the same position.
+      table C0 left for F1 is in the same position. Both landed in F1.
 
 - [ ] **D1 — a type may declare at most 64 checks, and at most 20 fields.** The verdict
       mask is one long, so a 65th check would alias the first and a value could seal on a
@@ -291,26 +294,31 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       it; a body needing a loop writes `loop` explicitly. Recorded because the error, if
       someone hits it, will not obviously be about this.
 
-- [ ] **C2 — the example model, the demo and the README carry no protocol
+- [x] **C2 — the example model, the demo and the README carry no protocol
       implementation.** `SPEC.md`'s `Heist` implements `some.ns/SomeProtocol`, and
       `recognitum.heist/promote` is exactly the method its "Protocol implementations"
       section writes out — an impl fn that opens its own `drafting` because there is no
       wrapper to do it for it. F1 owns those files; moving `promote`, `rename` and
       `add-member` onto a protocol there would show the wrapper doing the work and the
       same body serving the impl layer, which is the whole claim. `recognitum.protocol-test`
-      carries the coverage in the meantime.
+      carries the coverage in the meantime. Done in F1: `recognitum.heist/Job` carries
+      `rename`, `add-member`, `promote` and `total-payout`, none of which opens a
+      `drafting` of its own any more; `apply-changeset` stays an ordinary fn, because it
+      dispatches on a changeset rather than on a value.
 
-- [ ] **C0 — `README.md` does not mention `of-type?`, `draft?` or `sealed?` at all.** The
+- [x] **C0 — `README.md` does not mention `of-type?`, `draft?` or `sealed?` at all.** The
       four-way table in `SPEC.md` under "Telling values apart" has no counterpart in the
       README, which still leaves a reader with `instance?` and no warning that it is true of
       a sealed value and false of a draft of the same type. F1 owns the README; add the table
-      there rather than growing a section this step would only have to rewrite.
+      there rather than growing a section this step would only have to rewrite. Done in F1,
+      and the demo prints all four against the same two values.
 
-- [ ] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
+- [x] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
       the `:invalid-field` / `:invariant-violated` errors.** None of those exist. F1 owns the
       README; this is a note that it is now wrong rather than merely dated. C1 adds to the
       pile: the third position is now a definition map, so the README's `defrecord` example
-      is wrong in its shape as well as in its contents.
+      is wrong in its shape as well as in its contents. Rewritten in F1, and
+      `recognitum.readme-test` forbids every one of those spellings by name.
 
 - [ ] **B3 — `SPEC.md` says failures come back "in declaration order", which is true only
       up to eight checks.** Ruled acceptable rather than fixed: the reader hands the macro a
@@ -338,7 +346,12 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 - [ ] **A1 — the README performance table was not re-measured.** The bench runs and its
       numbers sit inside the run-to-run spread the table already warns about, but qualified
       keys are exactly the kind of change F2 exists to re-record. Left to F2, which owns the
-      table.
+      table. F1 relabelled its rows -- they said "invs" -- and said in the text that the
+      numbers predate the check redesign, but touched no figure. It also ran the bench once
+      without recording it, and the drafting rows have moved a long way in the wrong
+      direction: N=1 renames read 2992ns against 260ns hand-rolled where the table says
+      1220 against 862 for N=15. F2 should find out where that went rather than simply
+      writing the new number down; nothing in F1 touched `src/`.
 - [ ] **A1 — `CONSIDERATIONS.md` still shows bare field keys throughout.** It is scratch,
       kept but not maintained, and TODOs already says not to trust it.
 
@@ -364,14 +377,20 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       `establish-group` runs the pure phase, throws with everything it found if anything
       failed, and only then fetches and runs the IO-bound half. The selection is unchanged.
 
-- [ ] **E1 — the example model, the demo and the README have no io-dep in them.** F1 owns
+- [x] **E1 — the example model, the demo and the README have no io-dep in them.** F1 owns
       all three and its entry already says the demo should illustrate one. E1 left
       `recognitum.heist` exactly as it was and put the fake source beside it, in
       `dev/recognitum/roster.clj`: an in-memory table, a log of every call made to it, and
       a `fetch-roster` that throws on anything that is not a crew -- which is what makes a
       leaking gate show up as an exception rather than as a quietly wrong report.
       `recognitum.io-deps-test` uses it. Wiring it into `Heist` would have changed what
-      every other suite's `Heist` does at the seal, which is not E1's to do.
+      every other suite's `Heist` does at the seal, which is not E1's to do. Done in F1:
+      `Heist` declares `::roster` (batched) and `::vetted` (singular, naming the first),
+      and one IO-bound check over the pair. It was arranged to cost the other suites as
+      little as it could -- the check reads no field directly, so `::crew` is the only
+      `:io-limited` key, and no test wrote that field on a sealed value -- and `:napster`
+      was flipped to vetted in the table, so the three places using him as the happy-path
+      new member stay happy-path. `:mole` is the unvetted one now.
 
 - [ ] **E1 — `check` throws where a check it is gated behind fails.** `SPEC.md` says
       `check` returns `true` or the failing check's data, and says separately that running
@@ -416,10 +435,12 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       one left out is not, and reading it as `nil` would have a check judge a fetch that
       never happened. If that reading is wrong, `batch-answer!` is the only place it lives.
 
-- [ ] **E2 — the batched form appears in no example.** The demo, the README and the example
+- [x] **E2 — the batched form appears in no example.** The demo, the README and the example
       model still have no io-dep in them at all (E1's deferral above), let alone a batched
       one. F1 owns all three; `recognitum.roster/fetch-rosters` is the batched twin of the
-      fake E1 left beside them, and is there to be wired in when it does.
+      fake E1 left beside them, and is there to be wired in when it does. Done in F1:
+      `Heist`'s `::roster` is the batched one and `::vetted` the singular, so both
+      spellings appear on one type and the demo shows what each is handed.
 
 - [x] **E1 — nothing is deduplicated across values yet.** Within one validation call an
       io-dep is fetched once however many checks name it. Across values it is fetched once
@@ -475,19 +496,47 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       `::malformed-option`. If a future option wants a non-boolean value, that check is the
       thing to widen, not to delete.
 
-- [ ] **E4 — `:io-limited` appears in no example, no demo and no README.** The example
+- [x] **E4 — `:io-limited` appears in no example, no demo and no README.** The example
       model has no io-dep to limit (E1's deferral), so declaring the option there would say
       nothing; `SPEC.md`'s own `Heist` declares it. F1 owns all three and should declare it
       on `recognitum.heist` when it gives that type its io-deps, and show the refusal beside
       the `drafting` form that is the way the write is spelled instead. The README's error
       table wants a `:io-limited` row (and `::malformed-option` a mention) whenever it is
       rewritten -- it is still listing `:invalid-field` and `:invariant-violated`, which B1
-      deleted. `recognitum.io-limited-test` is the worked example until then.
+      deleted. `recognitum.io-limited-test` is the worked example until then. Done in F1:
+      `Heist` declares the option, the demo shows the refusal beside the `drafting` form
+      its `:instead` proposes, and the README's error table has the row, with the
+      compile-time family of errors named in the paragraph under it.
 
-- [ ] **E3 — bulk checking appears in no example and in no README.** F1 owns the README and
+- [x] **E3 — bulk checking appears in no example and in no README.** F1 owns the README and
       the demo, and its entry already says the demo should illustrate an io-dep; a batched
       fetch over a group is the only place the batched form pays for itself, so that is what
       it should illustrate with. `recognitum.bulk-test` is the worked example until then.
+      Done in F1: the demo runs `certify-all` over three drafts sharing two crews, prints
+      what the fake source was handed -- one call, two tuples -- and then shows that
+      sealing each of them afterwards fetches nothing at all.
+
+- [ ] **F1 — the README's worked example and `dev/recognitum/heist.clj` are the same type
+      written twice.** `recognitum.readme-test` evaluates every `defrecord` block in the
+      README, so the example cannot rot into something that does not compile, and that is
+      why it is self-contained: it carries its own four-name in-memory table rather than
+      requiring `recognitum.roster`, because a README block requiring a dev-only namespace
+      is not a thing a reader can type. Nothing keeps the two in step beyond both
+      compiling, so if they diverge in substance the suite will not notice.
+
+- [ ] **F1 — `unsealed` is documented but demonstrated nowhere.** The README's "Protocol
+      implementations" section writes it out and `recognitum.protocol-test` covers it, but
+      no method on `Heist` opts out of the seal, so the demo has nothing to print. A method
+      handing back a free draft would be the example -- `begin-revision`, in the shape the
+      README already gives.
+
+- [ ] **F1 — the `:test` alias now carries `bench` and criterium.**
+      `recognitum.example-test` runs the hand-rolled side of the benchmark against the
+      library's and insists the two agree on the same values, throws included, which is the
+      only mechanical statement of "apples to apples" available. That means loading
+      `recognitum.bench`, which requires criterium. Nothing in the suite calls
+      `quick-benchmark`, so the cost is one dependency on the test classpath and nothing at
+      run time.
 
 ## Blocking
 
@@ -641,9 +690,11 @@ validates, so a literal routed through it is a validating entry point, not a byp
       state cold could not tell spec from accident, and reconstructed a rationale rather than
       admit it did not know. That is how the invented performance rationale got written.
 
-- [ ] **D4 — the metadata keys are documented only in docstrings.** `README.md` says
+- [x] **D4 — the metadata keys are documented only in docstrings.** `README.md` says
       nothing about `:recognitum.core/passed` or `:recognitum.core/certificates`, or about
       `meta` answering the same way from a draft and from a sealed value. F1 rewrites the
       README and should give them a section; `dev/recognitum/demo.clj` shows drafts and
       sealing without ever printing what a draft has established, which is the one place
-      the uniformity is visible at a glance.
+      the uniformity is visible at a glance. Done in F1: "Metadata", under "What a draft
+      has established", and the demo prints `meta` of a sealed value and of a draft one
+      write old, one after the other.
