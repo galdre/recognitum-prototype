@@ -203,7 +203,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       `pr-str` away; the override is gone from the template and `SPEC.md`, "Printing and
       reading", records it.
 
-- [ ] **G1 — a check whose shape gate fails throws from `check`, where `SPEC.md` gives
+- [x] **G1 — a check whose shape gate fails throws from `check`, where `SPEC.md` gives
       two outcomes.** The same position E1 took for a failing IO gate, and for the same
       reason: `SPEC.md` says `check` returns `true` or the failing check's data, and says
       separately that a check whose gate has not passed does not run. Where both apply the
@@ -212,9 +212,9 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       `certify` needs no such rule -- it is shaped for several failures, so a failing gate
       simply appears among them -- and `check-all` answers that value with the gate's
       failures keyed by check name, as E3 already ruled for the IO gate. If the reading is
-      wrong, `establish` is the only place it lives.
+      wrong, `establish` is the only place it lives. Confirmed by galdre 2026-09-16: one rule for both gates.
 
-- [ ] **G1 — an IO-bound check gets a shape gate too, which buys nothing observable
+- [x] **G1 — an IO-bound check gets a shape gate too, which buys nothing observable
       yet.** `TODOs` scoped the gate to "every other pure check"; `SPEC.md`'s "Shape
       checks" says "every other check waits on the shape checks of the fields it names",
       and that is what was implemented -- every check not named after a field carries a
@@ -223,7 +223,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       already unreachable whenever its shape gate is unsatisfied. It was done this way so
       that the rule is one rule; if the coarse pure-phase gate is ever narrowed to the
       fetches a failure actually touches, this is already correct rather than a hole that
-      opens at that moment.
+      opens at that moment. Acknowledged 2026-09-16. Verified: on a draft, `check` fetches for an IO-bound check even while an unrelated field is garbage (narrow, per spec); at seal no fetch runs if any pure check failed (coarse, per the spec's two-phase seal). No deviation.
 
 - [ ] **G1 — `::malformed-shape-check` has no row in `SPEC.md`'s error table.** Nor do
       `::unknown-dependency`, `::malformed-check` or any of the other compile-time
