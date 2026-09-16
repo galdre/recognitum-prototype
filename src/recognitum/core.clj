@@ -24,9 +24,12 @@
   An io-dep is a fetch declared the same way a check is, and named the same way: a keyword
   in an arglist. Shape gates it -- nothing reaches the outside until the fields it will
   carry there have passed the checks over them -- and it is fetched once per validation
-  call however many checks name it, then forgotten. What it returned is nobody's business
-  but the checks naming it: `nil` is neither a failure nor a success, and a throw is the
-  database being unreachable rather than a verdict about the data.
+  call however many checks name it, then forgotten. It may be written singular, `[crew]`, or
+  batched, `[[crew] :as rows]`, which is handed the argument tuples and answers a map keyed
+  by them; the declaration is the same either way and only the call differs. What it
+  returned is nobody's business but the checks naming it: `nil` is neither a failure nor a
+  success, and a throw is the database being unreachable rather than a verdict about the
+  data.
 
   A protocol implementation is written once and installed on both generated types. The
   draft runs the body as written; the sealed value wraps it, so the body works on a draft
@@ -154,6 +157,55 @@
 (defn io-of "Those of `idxs` that reach one." [model idxs]
   (filterv #(io-bound? model %) idxs))
 
+(defn- batch-answer!
+  "What a batched fetch returned, insisted on: a map holding an entry for every tuple it was
+  handed, which is the one thing the batched form contracts to do.
+
+  The singular form has no return contract, because its only consumers are the checks naming
+  it. The batched form has one, because the library is the consumer first: it has to hand
+  each value to the checks about the value it was fetched for, and the key is how it knows
+  which is which. A result it cannot distribute is not a fetch that returned something odd;
+  it is a fetch nobody can read.
+
+  A missing tuple is refused rather than read as `nil` for the same reason. A tuple answered
+  `nil` is an answer -- `nil` is whatever the checks naming it say it is -- and a tuple left
+  out is not one. Passing the second off as the first would have a check judge a fetch that
+  never happened."
+  [model d res tuples]
+  (when-not (or (map? res) (instance? java.util.Map res))
+    (throw (ex-info (format (str "%s io-dep %s is batched, so it answers a map keyed by "
+                                 "argument tuple -- it returned %s")
+                            (:name model) (pr-str (:name d)) (pr-str res))
+                    {:error ::malformed-batch :record (:name model) :io-dep (:name d)
+                     :tuples tuples :returned res})))
+  (let [missing (into [] (remove #(contains? res %)) tuples)]
+    (when (seq missing)
+      (throw (ex-info (format (str "%s io-dep %s answered nothing about %s -- a batched fetch "
+                                   "answers every tuple it is handed, and a tuple answered nil "
+                                   "is not a tuple left out")
+                              (:name model) (pr-str (:name d))
+                              (apply str (interpose ", " (map pr-str missing))))
+                      {:error ::incomplete-batch :record (:name model) :io-dep (:name d)
+                       :missing missing :tuples tuples :returned res}))))
+  res)
+
+(defn- fetch-one
+  "Fetch the io-dep at `j` for `x`, with `cache` holding whatever has been fetched already.
+
+  Which form it was written in is settled here and nowhere else. A singular fetch is called
+  with its dependencies positionally and answers the value. A batched one is called with the
+  collection of argument tuples -- one tuple here, since one value is being validated -- and
+  answers a map keyed by them, out of which the entry for this value's own tuple is what the
+  checks naming it see. Everything downstream holds a value either way, so nothing past this
+  point has to know which was written."
+  [model x cache j]
+  (let [d (nth (:io-deps model) j)]
+    (if (:batched d)
+      (let [tuple ((:io-args model) j x cache)
+            tuples [tuple]]
+        (get (batch-answer! model d ((:run-batch model) j tuples) tuples) tuple))
+      ((:run-io model) j x cache))))
+
 (defn fetch-io
   "Fetch every io-dep the checks at `idxs` name, transitively, and answer with io-dep name
   -> what it returned.
@@ -172,9 +224,8 @@
   invalid\" -- folding one into the other would have the type assert what it does not know."
   [model x idxs]
   (let [ds  (:io-deps model)
-        run (:run-io model)
         cs  (:checks model)]
-    (reduce (fn [cache j] (assoc cache (:name (nth ds j)) (run j x cache)))
+    (reduce (fn [cache j] (assoc cache (:name (nth ds j)) (fetch-one model x cache j)))
             {}
             (sort (into #{} (mapcat #(:io (nth cs %))) idxs)))))
 
@@ -1121,6 +1172,38 @@
                     {:error ::duplicate-dependency :record tname what dname
                      :dependency dup}))))
 
+(defn- reaching-for-a-batch?
+  "Is this arglist reaching for the batched form?
+
+  `[[crew] :as rows]` is not a legal function arglist, which is how the reader tells the two
+  forms apart -- but a form that reaches and misses is not a legal one either, and reporting
+  it as an entry that resolves to nothing would answer a question nobody asked. A leading
+  tuple or a stray `:as` is the reach; whether it landed is settled next."
+  [args]
+  (boolean (or (vector? (first args)) (some #{:as} args))))
+
+(defn- batched-shape
+  "`[[crew] :as rows]` -> `[[crew] rows]`: the tuple, which is the dependency declaration,
+  and the name the collection of tuples is bound to. `nil` where the arglist is not exactly
+  that.
+
+  The `:as` is required because `[[crew]]` alone *is* a legal arglist -- a singular fetch
+  over a destructured argument -- so without it there would be nothing to tell the two forms
+  apart by. `:as` is unqualified and io-dep names are namespaced, so it cannot be mistaken
+  for a dependency."
+  [args]
+  (let [[inner as sym] args]
+    (when (and (= 3 (count args)) (vector? inner) (= :as as) (simple-symbol? sym))
+      [inner sym])))
+
+(defn- batched-check!
+  "A check judges one value, so there is no batched form for one to be written in."
+  [tname dname args]
+  (throw (ex-info (format (str "%s check %s is written in the batched form -- a check judges "
+                               "one value, so only an io-dep may be written [[crew] :as rows]")
+                          tname (pr-str dname))
+                  {:error ::batched-check :record tname :check dname :args args})))
+
 (defn- parse-dep
   "One entry of the `:checks` or `:io-deps` map -> `{:name :doc :args :fn}`. The two are
   written the same way, so they are read the same way; `what` is `:check` or `:io-dep` and
@@ -1136,9 +1219,34 @@
                                 {:error (if (= what :check) ::malformed-check ::malformed-io-dep)
                                  :record tname what dname :form form})))
         made  (fn [doc args body]
-                (let [params (binding-syms args)]
-                  (reject-duplicate-bindings! tname what dname params)
-                  {:name dname :doc doc :args args :fn `(fn ~params ~@body)}))]
+                (cond
+                  ;; A check judges one value, so a tuple bound with `:as` is a form it has
+                  ;; nothing to mean. An arglist that merely destructures is left alone --
+                  ;; there is no batched form for it to have been reaching for, so it is
+                  ;; refused where every other unresolvable entry is.
+                  (and (= what :check) (vector? (first args)) (some #{:as} args))
+                  (batched-check! tname dname args)
+
+                  (and (= what :io-dep) (reaching-for-a-batch? args))
+                  (let [[inner as]
+                        (or (batched-shape args)
+                            (bad! (str "is neither a legal arglist nor the batched form -- a "
+                                       "batched fetch is written [[crew] :as rows]: one tuple "
+                                       "of dependencies, bound as a collection with :as, and "
+                                       "nothing else")))]
+                    (reject-duplicate-bindings! tname what dname (binding-syms inner))
+                    ;; `:args` is the tuple, so everything downstream resolves a batched
+                    ;; arglist exactly as it resolves a singular one. What differs is what
+                    ;; the body is handed: there are many tuples, so there is nothing for
+                    ;; the names inside one to be bound to, and the collection is all the
+                    ;; body sees.
+                    {:name dname :doc doc :args inner :batched true
+                     :fn `(fn [~as] ~@body)})
+
+                  :else
+                  (let [params (binding-syms args)]
+                    (reject-duplicate-bindings! tname what dname params)
+                    {:name dname :doc doc :args args :fn `(fn ~params ~@body)})))]
     (cond
       (and (seq? form) (string? (first form)))
       (let [[doc args & body] form]
@@ -1302,6 +1410,19 @@
   the ring. Anything is IO-bound exactly when its arglist holds a keyword, which is visible
   where it is written without consulting anything else.
 
+  A fetch may be written singular or batched, and the reader tells them apart:
+
+      ::roster ([crew] (fetch-roster crew))               ; singular
+      ::roster ([[crew] :as rows] (fetch-rosters rows))   ; batched
+
+  `[[crew] :as rows]` is not a legal function arglist, so the macro knows at expansion time
+  which it has. The tuple is the dependency declaration, exactly as a singular arglist is,
+  and everything derived from it -- the gate, the fetch order, the field -> checks index --
+  comes out the same. What differs is the call: a batched fetch is handed the collection of
+  argument tuples, bound by the `:as`, and answers a map keyed by them, `{[crew] result}`.
+  Keying by the tuple rather than aligning positionally is what lets the library do the
+  deduplication rather than the author. Checks are never batched; a check judges one value.
+
   A fetch does not decide validity. It produces a value, and the checks naming it decide
   what that value means -- `nil` is neither a failure nor a success. An exception from a
   fetch propagates rather than becoming a failure: a fetch that throws is usually the
@@ -1358,9 +1479,9 @@
         key->sym  (zipmap ks fsyms)
         ;; every local is gensymed: a field could be named k, v, o, acc ...
         [ksym vsym dsym osym hsym essym ovsym accsym mtasym mta2sym msym thunksym tgtsym isym
-         cachesym xsym newsym]
+         cachesym xsym newsym tuplessym]
         (map gensym ["k" "v" "d" "o" "h" "es" "ov" "acc" "mta" "mta2" "m" "thunk" "target" "i"
-                     "cache" "x" "new"])
+                     "cache" "x" "new" "tuples"])
         tgthint   (with-meta tgtsym {:tag tname})
         dname     (symbol (str tname "Draft"))
         [extsym vdsym ownsym tokensym bitsym passym]
@@ -1404,6 +1525,11 @@
         io-parsed (order-io-deps! tname io-parsed io-names)
         nio       (count io-parsed)
         io?       (fn [d] (contains? io-names d))
+        batched?  (fn [j] (boolean (:batched (nth io-parsed j))))
+        ;; What a fetch reads for one dependency, whichever form it was written in: a field
+        ;; out of the value, an io-dep out of what this call has already fetched.
+        io-arg    (fn [x cache]
+                    (fn [d] (if (io? d) `(get ~cache ~d) `(get ~x ~d))))
         ;; io-dep name -> what reaching it costs: `:fields` are the fields it names itself,
         ;; which is what gates it; `:io` are the io-dep indices needed to fetch it, itself
         ;; included, in fetch order; `:field-closure` is every field it reads, directly or
@@ -1698,9 +1824,13 @@
           ;; The io-deps in fetch order, so that ascending index is an order they can run
           ;; in, and the names of them, so that a resolved dependency can be told from a
           ;; field key without asking the value.
+          ;; `:batched` is how it was written, and the only thing anything at run time has
+          ;; to know about that: a batched fetch is handed the tuples and answers a map
+          ;; keyed by them, a singular one is handed its dependencies and answers the
+          ;; value. What it names is `:deps` either way.
           :io-deps     ~(mapv (fn [j]
-                                (let [{:keys [name doc deps]} (nth io-parsed j)]
-                                  {:name name :doc doc :deps deps
+                                (let [{:keys [name doc deps batched]} (nth io-parsed j)]
+                                  {:name name :doc doc :deps deps :batched (boolean batched)
                                    :fields (:fields (io-info name))
                                    :fetch (ivar j)}))
                               (range nio))
@@ -1742,19 +1872,31 @@
                                                    (deps-of i)))])
                                      (range nchecks))
                            nil))
-          ;; The fetches, reached the same way. A field is read through `get` rather than
-          ;; directly, because one runner serves both forms of the value and a fetch is
-          ;; about to do IO -- what a lookup costs here is not what anything waits on.
+          ;; The singular fetches, reached the same way. A field is read through `get`
+          ;; rather than directly, because one runner serves both forms of the value and a
+          ;; fetch is about to do IO -- what a lookup costs here is not what anything waits
+          ;; on.
           :run-io      (fn [~isym ~xsym ~cachesym]
                          (case (int ~isym)
                            ~@(mapcat (fn [j]
-                                       [j `(~(ivar j)
-                                            ~@(map (fn [d]
-                                                     (if (io? d)
-                                                       `(get ~cachesym ~d)
-                                                       `(get ~xsym ~d)))
-                                                   (:deps (nth io-parsed j))))])
-                                     (range nio))
+                                       [j `(~(ivar j) ~@(map (io-arg xsym cachesym)
+                                                             (:deps (nth io-parsed j))))])
+                                     (remove batched? (range nio)))
+                           nil))
+          ;; A batched fetch is keyed by its argument tuple rather than called with it, so
+          ;; the tuple is built here -- out of the same reads the singular form would have
+          ;; passed positionally -- and the call takes the collection of them.
+          :io-args     (fn [~isym ~xsym ~cachesym]
+                         (case (int ~isym)
+                           ~@(mapcat (fn [j]
+                                       [j (vec (map (io-arg xsym cachesym)
+                                                    (:deps (nth io-parsed j))))])
+                                     (filter batched? (range nio)))
+                           nil))
+          :run-batch   (fn [~isym ~tuplessym]
+                         (case (int ~isym)
+                           ~@(mapcat (fn [j] [j `(~(ivar j) ~tuplessym)])
+                                     (filter batched? (range nio)))
                            nil))
           ;; From the type, nothing is established; from a sealed value, everything is --
           ;; that is what being sealed means, and the draft inherits exactly that claim.

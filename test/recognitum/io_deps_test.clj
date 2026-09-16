@@ -524,15 +524,21 @@
                                [a]
                                {:io-deps {:scratch/x ("doc" [a])}}))))))
 
-(deftest the-batched-form-is-not-accepted-yet
-  ;; `[[crew] :as rows]` is E2. Until then it is an arglist entry that names nothing, and
-  ;; is refused as one rather than quietly read as a singular fetch over a destructured
-  ;; argument.
-  (let [e (compile-data '(recognitum.core/defrecord Batched
-                           [a]
-                           {:io-deps {:scratch/x ([[a] :as rows] rows)}}))]
-    (is (= ::rec/unknown-dependency (:error e)))
-    (is (= '[a] (:dependency e)))))
+(deftest the-batched-form-is-an-io-dep-arglist-too
+  ;; `[[crew] :as rows]` is not a legal function arglist, which is how the reader tells it
+  ;; from the singular form. Here it is enough that an io-dep may be written that way and
+  ;; resolves to the same dependency either way; what it then means is
+  ;; `recognitum.batched-test`.
+  (is (nil? (compiles '(recognitum.core/defrecord Batched
+                         [a]
+                         {:checks  {:scratch/c ([:scratch/x] (some? x))}
+                          :io-deps {:scratch/x ([[a] :as rows] (zipmap rows (repeat :v)))}}))))
+  (let [model (binding [*ns* @scratch]
+                (eval '(recognitum.core/model-of (->Batched 1))))
+        d     (first (:io-deps model))]
+    (is (= [:recognitum.io-deps-scratch/a] (:deps d))
+        "the inner vector is the dependency declaration, resolved as any arglist is")
+    (is (true? (:batched d)))))
 
 (deftest an-arglist-may-not-bind-one-name-twice
   ;; What the body sees of `::roster` is `roster`, so an io-dep whose name spells a field's

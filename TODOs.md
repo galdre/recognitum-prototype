@@ -76,7 +76,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       fetches once the pure checks over the fields it names have passed and every io-dep it names
       has fetched. Fetched values cached for one validation call and no longer. Argument tuples
       deduplicated.
-- [ ] **E2. Batched fetches.** `[[crew] :as rows]`, told from `[crew]` by the reader because it
+- [x] **E2. Batched fetches.** `[[crew] :as rows]`, told from `[crew]` by the reader because it
       is not a legal arglist. Returns a map keyed by argument tuple.
 - [ ] **E3. `check-all` / `certify-all`.** Over a collection of drafts, results index-aligned.
       Partial success on the non-throwing forms only. Nothing bulk produces sealed values.
@@ -392,6 +392,30 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       rows]` is E2. Until then `[crew]` is an entry naming neither a field nor an io-dep and
       is reported as `::unknown-dependency`, which is true but says nothing about the form
       being a batched fetch written too early. E2 owns the message either way.
+
+- [ ] **E2 — a batch of one is the only batch there is yet.** A validation call spans one
+      value, so a batched fetch is handed exactly one tuple and the deduplication the form
+      exists for -- a hundred values referencing five crews arriving as five tuples in one
+      call -- has nothing to deduplicate. `fetch-one` is where E3 lands it: it builds the
+      tuple out of the value, calls `:run-batch` with `[tuple]`, and reads the answer back
+      out of the returned map by that key. E3 replaces that one-element vector with the
+      distinct tuples of the whole group and distributes from the same map; nothing past
+      `fetch-io` has to change, since everything downstream holds a value either way.
+
+- [ ] **E2 — a batched fetch's return shape is policed and a singular one's is not.**
+      `SPEC.md` gives the batched form a return contract ("a map keyed by the argument
+      tuple") and gives the singular form none, on the grounds that a singular fetch's only
+      consumers are the checks naming it. The library is the batched form's first consumer,
+      because it has to distribute the result, so E2 refuses what it cannot distribute:
+      `::malformed-batch` for a result that is not a map, `::incomplete-batch` for one that
+      omits a tuple it was handed. A tuple answered `nil` is an answer and passes through;
+      one left out is not, and reading it as `nil` would have a check judge a fetch that
+      never happened. If that reading is wrong, `batch-answer!` is the only place it lives.
+
+- [ ] **E2 — the batched form appears in no example.** The demo, the README and the example
+      model still have no io-dep in them at all (E1's deferral above), let alone a batched
+      one. F1 owns all three; `recognitum.roster/fetch-rosters` is the batched twin of the
+      fake E1 left beside them, and is there to be wired in when it does.
 
 - [ ] **E1 — nothing is deduplicated across values yet.** Within one validation call an
       io-dep is fetched once however many checks name it. Across values it is fetched once
