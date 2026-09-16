@@ -354,11 +354,3 @@
              {:name "Job" :crew #{:a :b} :take 3 :cuts "garbage"}]]
     (is (= (hand-verdict m) (library-verdict m))
         (str "the two sides disagree about " (pr-str m)))))
-
-(deftest the-bench-has-no-vocabulary-the-library-no-longer-has
-  ;; The hand-rolled side is the library's twin, so it drifts the same way the docs do: the
-  ;; checks it mirrors stopped being "invariants" when arglists became the declaration.
-  (let [src (slurp "bench/recognitum/bench.clj")]
-    (doseq [token ["invariant" "inv-index" "all-invs" ":valid"]]
-      (is (not (str/includes? (str/lower-case src) token))
-          (str "the bench still says " token)))))

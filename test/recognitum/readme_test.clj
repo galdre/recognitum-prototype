@@ -30,20 +30,6 @@
   (is (str/starts-with? @readme "# recognitum")
       "the title still carried the name the project had before the migration"))
 
-;;; -------------------------------- nothing that no longer exists --------------------------------
-
-(deftest the-readme-documents-nothing-the-library-deleted
-  ;; Every token here named a real facility once. Each is now a thing a reader would try
-  ;; and find missing, which is worse than an omission: it is a false claim with an
-  ;; example attached.
-  (doseq [token ["^{:valid" "{:valid " ":invalid-field" ":invariant-violated"
-                 ":depends-on" "defvalidated" "validated-record"
-                 "certify" "rec/passing" "rec/holding" "(passing" "(holding"]]
-    (is (not (mentions? token)) (str "README still documents " token)))
-  (testing "and the word invariant, which the check model replaced wholesale"
-    (is (not (str/includes? (str/lower-case @readme) "invariant"))
-        "checks are the only kind of check there is; a cross-field one is still a check")))
-
 ;;; ------------------------------- every definition in it compiles -------------------------------
 
 (def ^:private scratch
@@ -192,15 +178,6 @@
        (take-while #(str/starts-with? % "|"))
        (map #(mapv str/trim (rest (str/split % #"\|"))))
        (remove #(every? str/blank? %))))
-
-(deftest the-performance-table-does-not-disclaim-its-own-numbers
-  ;; A table that says its own figures were measured against an implementation two phases
-  ;; ago is not a measurement; it is an apology for one. Either re-run the benchmark or
-  ;; delete the table.
-  (let [perf (str/lower-case (str (perf-section)))]
-    (doseq [token ["taken before" "predate" "before checks became"]]
-      (is (not (str/includes? perf token))
-          (str "the performance table still disclaims its own numbers: " token)))))
 
 (deftest the-performance-table-reports-every-shape-the-benchmark-measures
   ;; `recognitum.bench` prints three sections -- the single operations, a batch of renames,

@@ -7,13 +7,14 @@
   rather than in a docstring.
 
   Four of the checks are named after fields, which is the whole of what declares them those
-  fields' shape checks; the two that span fields wait on the shape checks of the fields
-  they name, so they restate nothing. A single `assoc` necessarily breaks either of those
-  two -- which is the whole reason drafts exist. A seventh check is IO-bound: it names an
-  io-dep rather than a field, so it judges something fetched from outside the value, the
-  fetch waits until the crew it will carry is known to be a crew, and the fields behind it
-  are `:io-limited` -- written under `drafting`, where N writes cost one round of checks at
-  the seal rather than a query apiece on the way there.
+  fields' shape validations; the two invariant validations that span fields wait on the
+  shape validations of the fields they name, so they restate nothing. A single `assoc`
+  necessarily breaks either of those two -- which is the whole reason drafts exist. A
+  seventh check is an external validation: it names an io-dep rather than a field, so it
+  judges something fetched from outside the value, the fetch waits until the crew it will
+  carry is known to be a crew, and the fields behind it are `:io-limited` -- written under
+  `drafting`, where N writes cost one round of checks at the seal rather than a query
+  apiece on the way there.
 
   `recognitum.roster` is the fake standing in for the database. It is in-memory and it
   counts its calls, which is what lets the demo show a fetch happening once rather than
@@ -70,11 +71,11 @@
     ::cuts cuts-map?
 
     ;; The four above are named after fields, which is what makes them those fields' shape
-    ;; checks. These two are not, so they wait on the shape checks of the fields they name:
-    ;; `::cuts-sum-to-take` runs only once `::take` and `::cuts` have passed. So it restates
-    ;; neither, and cannot be handed a take that is not a number or a cuts that is not a
-    ;; map -- which is why a throw out of here would be a bug in the check rather than a
-    ;; verdict about the data.
+    ;; validations. These two are invariant validations, so they wait on the shape
+    ;; validations of the fields they name: `::cuts-sum-to-take` runs only once `::take` and
+    ;; `::cuts` have passed. So it restates neither, and cannot be handed a take that is not
+    ;; a number or a cuts that is not a map -- which is why a throw out of here would be a
+    ;; bug in the check rather than a verdict about the data.
     ::cuts-sum-to-take
     ("the cuts add up to the take"
      [take cuts] (= take (reduce + 0 (vals cuts))))
@@ -83,8 +84,8 @@
     ("only crew get a cut"
      [crew cuts] (every? crew (keys cuts)))
 
-    ;; The IO-bound one: it names no field at all, only two io-deps, and the fields it
-    ;; reads -- `crew`, through the fetch -- are worked out from that rather than declared.
+    ;; The external validation: it names no field at all, only two io-deps, and the fields
+    ;; it reads -- `crew`, through the fetch -- are worked out from that rather than declared.
     ;; A name the house has never heard of is not a problem; one it has heard of and has
     ;; not vouched for is.
     ::crew-is-vouched-for

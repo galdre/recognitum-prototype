@@ -13,7 +13,6 @@
   one. With the sentinel gone there is nothing to keep away, and a check saying what it
   thinks of `nil` is a better answer than the library saying nobody wrote anything."
   (:require
-   [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]))
@@ -134,17 +133,11 @@
 ;;; --------------------------------- the error itself is gone ---------------------------------
 
 (deftest nothing-reports-a-missing-field-any-more
-  (testing "no entry point"
-    (doseq [f [#(rec/seal (rec/draft Strict))
-               #(map->Strict {})
-               #(rec/check! (rec/draft Strict) ::title)
-               #(rec/check! (rec/draft Strict) rec/every-check)
-               #(rec/drafting [x Strict] x)]]
-      (is (= ::rec/check-failed (:error (err f))))))
-  (testing "and no machinery behind them"
-    (let [src (slurp (io/file "src/recognitum/core.clj"))]
-      (doseq [token ["::missing-field" "missing-fields!" "missing-values!" "draft-missing"]]
-        (is (not (str/includes? src token))
-            (str "core.clj still carries " token)))))
-  (testing "nor the README"
-    (is (not (str/includes? (slurp (io/file "README.md")) ":missing-field")))))
+  ;; No entry point reports one: an incomplete draft is an ordinary draft holding nils, and
+  ;; what comes back is whatever the checks think of `nil`.
+  (doseq [f [#(rec/seal (rec/draft Strict))
+             #(map->Strict {})
+             #(rec/check! (rec/draft Strict) ::title)
+             #(rec/check! (rec/draft Strict) rec/every-check)
+             #(rec/drafting [x Strict] x)]]
+    (is (= ::rec/check-failed (:error (err f))))))

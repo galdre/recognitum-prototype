@@ -7,6 +7,25 @@ called `validate!` upstream" — the type cannot exist otherwise. A bare map tha
 the right keys is not a `Heist`, `assoc`-ing garbage into one does not produce one, and there is
 no constructor that skips the checks.
 
+## The baseline is `defrecord`
+
+This is `clojure.core/defrecord` with a set of deliberate changes. What is not listed below is
+what `defrecord` does: the generated types are records rather than maps wearing a record's
+shape, so `record?` is true of them, they carry `java.io.Serializable`, equality compares the
+class before it compares an entry, `empty` refuses as a record's does, and `clojure.walk` finds
+an `IRecord` rather than reaching for `empty`.
+
+The deliberate changes:
+
+- Two types are generated rather than one: a sealed value and a draft.
+- Checks run on every write.
+- `dissoc` of a declared field is refused.
+- An undeclared key is refused on a sealed value.
+- Field keys are qualified by the namespace the type is defined in.
+- The print tag is namespace-qualified.
+- The library's keys are merged over `meta`.
+- A value is callable as a function of its keys, as a map is.
+
 ## Defining a type
 
 `defrecord` shadows `clojure.core/defrecord`, so require the library under an alias rather than
@@ -50,8 +69,8 @@ referring it — the two then coexist in one namespace without ceremony:
     ::take non-neg-int?
     ::cuts cuts-map?
 
-    ;; Neither of these is named after a field, so each waits on the shape checks of the
-    ;; fields it names -- and restates neither of them.
+    ;; Neither of these is named after a field, so each is an invariant validation: it waits
+    ;; on the shape validations of the fields it names, and restates neither of them.
     ::cuts-sum-to-take
     ("the cuts add up to the take"
      [take cuts] (= take (reduce + 0 (vals cuts))))
@@ -119,25 +138,34 @@ that is not a declared io-dep, a name used for both a check and an io-dep, or a 
 io-deps is a compile error naming the offender. There is no second way to declare a dependency
 anywhere in the form.
 
-### Shape checks
+There are three kinds of check, and an arglist is what says which kind one is. A **shape
+validation** is pure and names one field: `::cuts` is what a well-formed `cuts` is, and it takes
+its name from the field it answers for. An **invariant validation** is pure and names more than
+one: `::cuts-sum-to-take` is a relationship between `take` and `cuts` that holds of every valid
+`Heist`. An **external validation** names an io-dep, so it reaches outside the value:
+`::crew-is-vouched-for` is a relationship between this `Heist` and what the house has on file,
+true as of when it ran rather than for good. (Refinement, invariant, effectful, in the
+functional vocabulary.)
 
-**A check named after a field is that field's shape check.** `::name`, whether written as the
-shorthand or as `::name ([name] …)`, is the check that says what a well-formed `name` is. The
-naming convention is the declaration; nothing else marks it, and a shape check names exactly its
-own field or the form does not compile.
+### Shape validations
 
-**Every other check waits on the shape checks of the fields it names.** `::cuts-sum-to-take
+**A check named after a field is that field's shape validation.** `::name`, whether written as
+the shorthand or as `::name ([name] …)`, is the check that says what a well-formed `name` is. The
+naming convention is the declaration; nothing else marks it, and a shape validation names exactly
+its own field or the form does not compile.
+
+**Every other check waits on the shape validations of the fields it names.** `::cuts-sum-to-take
 [take cuts]` runs only once `::take` and `::cuts` have passed, so it receives well-formed input
 by construction and restates nothing — which is why a throw out of it is a genuine bug in the
 check, exactly as the contract below says a throw is.
 
 A check whose gate has not passed does not run and is not reported. The shape failure is the
 actionable one; "did not run because `cuts` is not a map" adds nothing to "`cuts` is not a map".
-So failures come back in three phases — shape checks, then the other pure checks, then the
-IO-bound ones — and in declaration order within a phase.
+So failures come back in three phases — shape validations, then invariant validations, then
+external validations — and in declaration order within a phase.
 
-A field with no shape check has no declared shape. The checks naming it run against whatever it
-holds and have to be total over anything. That is the author's choice, made loudly.
+A field with no shape validation has no declared shape. The checks naming it run against
+whatever it holds and have to be total over anything. That is the author's choice, made loudly.
 
 ### The contract
 
@@ -416,7 +444,7 @@ trusting:
 - Pure checks run first, ungated.
 - An io-dep fetches once every pure check over the fields it names has passed, and every io-dep
   it names has fetched.
-- An IO-bound check runs once every io-dep it names has fetched.
+- An external validation runs once every io-dep it names has fetched.
 
 The rule is recursive, so a fetch transitively waits on the fields of everything beneath it
 without that having to be stated anywhere. And because an io-dep declares its own fields, the
@@ -463,10 +491,10 @@ their checks already passing and performs no IO.
 {:options {:io-limited true}}
 ```
 
-makes direct `assoc` and `merge` on a **sealed** value throw for any field an IO-bound check
-reads — its own fields and its fetches' alike. A check that queries a database, run on every
-bare `assoc`, means business logic makes a query per write; under `drafting`, N writes cost one
-round of checks at the seal instead of N.
+makes direct `assoc` and `merge` on a **sealed** value throw for any field an external
+validation reads — its own fields and its fetches' alike. A check that queries a database, run
+on every bare `assoc`, means business logic makes a query per write; under `drafting`, N writes
+cost one round of checks at the seal instead of N.
 
 ```clojure
 (assoc heist ::h/crew #{:charlie})              ;=> throws :io-limited
@@ -476,7 +504,7 @@ round of checks at the seal instead of N.
 
 It refuses rather than defers: you asked for a sealed value, and a sealed value is one every
 check passed on, so there is nothing to defer to — nothing is fetched and no check runs. Fields
-no IO-bound check reaches are unaffected, which is what declaring io-deps buys; the set is
+no external validation reaches are unaffected, which is what declaring io-deps buys; the set is
 computed from the arglists rather than restated by you.
 
 The option takes `true`, `false`, or a symbol naming a var holding one, read when the type is
@@ -499,7 +527,7 @@ types already compiled against it alone.
 
 Both run every check, because construction touches every field. `map->Heist` additionally
 rejects a key the type does not declare; a key it declares and the map omits is `nil`, as it
-would be on a `defrecord`, and that field's shape check says whether `nil` is acceptable.
+would be on a `defrecord`, and that field's shape validation says whether `nil` is acceptable.
 
 It takes either spelling: a bare keyword naming a declared field is qualified into the type's
 namespace, and anything else is taken as written, so a stray `:getaway-car` is reported as
@@ -518,9 +546,9 @@ Where the fields are not all in hand at once, build it the way you would update 
   (reduce apply-fragment h fragments))
 ```
 
-A field never written is `nil` at the seal, and its shape check is what decides whether that is
-acceptable. There is no separate notion of a missing field: absence is `nil`, as on a
-`defrecord`, and a field with no shape check seals holding it.
+A field never written is `nil` at the seal, and its shape validation is what decides whether
+that is acceptable. There is no separate notion of a missing field: absence is `nil`, as on a
+`defrecord`, and a field with no shape validation seals holding it.
 
 ## Undeclared keys
 
