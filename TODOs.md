@@ -99,7 +99,7 @@ as deliberate.
 - [x] `README.md` performance table regenerated on this machine, with CPU, JVM, OS, date, and
       the command recorded, plus a note that run-to-run spread is real.
 - [x] Dropped README's closing advice to hold a draft open across a tight loop. Measured, it is
-      backwards: `revising` does not break even against direct `assoc` on a bare field until
+      backwards: `drafting` does not break even against direct `assoc` on a bare field until
       ~N=40 (N=5: 297 vs 625 ns; N=50: 2897 vs 2629 ns). And for a field carrying invariants the
       comparison does not exist — direct `assoc` throws, which is the whole reason drafts exist.
 
@@ -113,14 +113,14 @@ as deliberate.
 
 - [x] `clean` and `:extraneous-keys` are now covered by `prototype.draft-test`, along with the
       `dissoc` rules and the unset-vs-nil distinction.
-- [x] A `revising` body returning a sealed value threw a bare `NullPointerException`. Ruled: it
+- [x] A `drafting` body returning a sealed value threw a bare `NullPointerException`. Ruled: it
       is not a mistake. `seal` is now idempotent — an already-sealed value passes through, so
       `seal` is a projection and a sealed value is a fixed point of it. Anything that is neither
       a draft nor sealed throws `:cannot-seal` with a real message. Added `sealed?` alongside
       `draft?`.
   - [ ] Open: whether there should also be a throwing variant of `seal` that refuses an
         already-sealed value. Argument for one: a body that ignored its draft binding and
-        operated on the original — `(revising [x job] (promote job ...))` — now returns a
+        operated on the original — `(drafting [x job] (promote job ...))` — now returns a
         plausible-looking result with the draft's work silently discarded, and nothing says so.
         A dev-time warning was floated as an alternative. Undecided.
 

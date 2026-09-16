@@ -5,7 +5,7 @@
   which is the whole reason drafts exist."
   (:require
    [clojure.string :as str]
-   [prototype.validated-record :refer [defvalidated revising]]))
+   [prototype.validated-record :refer [defvalidated drafting]]))
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
@@ -25,7 +25,7 @@
     :pred (fn [h] (every? (:crew h) (keys (:cuts h))))}])
 
 (def italian-job
-  (revising [h Heist]
+  (drafting [h Heist]
     (merge h {:name "The Italian Job"
               :crew #{:charlie :lyle :left-ear}
               :take 3000
@@ -51,10 +51,10 @@
     :rename     (rename h (:name cs))))
 
 (defn promote
-  "Uses `revising` internally, so it seals when called standalone and passes the draft
-  straight through when called inside another `revising`."
+  "Uses `drafting` internally, so it seals when called standalone and passes the draft
+  straight through when called inside another `drafting`."
   [h who bonus]
-  (revising [x h]
+  (drafting [x h]
     (-> x
         (assoc :cuts (update (:cuts x) who + bonus))
         (assoc :take (+ (:take x) bonus)))))

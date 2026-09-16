@@ -158,8 +158,8 @@
   (swap! draft-registry assoc cls model))
 
 (def ^:dynamic *owner*
-  "Token identifying the outermost `revising` currently on the stack, or nil outside one.
-  A draft records the token in force when it was created, which is how a nested `revising`
+  "Token identifying the outermost `drafting` currently on the stack, or nil outside one.
+  A draft records the token in force when it was created, which is how a nested `drafting`
   tells a draft an enclosing form owns from a free one it must adopt and seal itself."
   nil)
 
@@ -179,12 +179,12 @@
 (defn owner-of [d] ((:draft-owner (draft-model d)) d))
 
 (defn adopt
-  "Stamp `d` as owned by `token`, so nested `revising` forms recognise it."
+  "Stamp `d` as owned by `token`, so nested `drafting` forms recognise it."
   ([d token] (adopt (draft-model d) d token))
   ([model d token] ((:draft-with-owner model) d token)))
 
 (defn open
-  "The draft a `revising` works from, already stamped with `token`. A free draft is adopted; a
+  "The draft a `drafting` works from, already stamped with `token`. A free draft is adopted; a
   validated value or a bare type is opened directly, which skips the extra allocation `adopt`
   would cost."
   [model x token already-draft?]
@@ -195,7 +195,7 @@
 
 (defn draft
   "A draft of `x`: a validated value, a registered type (construction from empty), or a draft.
-  A draft created inside a `revising` records that form as its owner."
+  A draft created inside a `drafting` records that form as its owner."
   [x]
   (if (draft? x)
     x
@@ -212,7 +212,7 @@
 
 (defn clean
   "Drop the keys the type does not declare, so `d` can seal. A draft -> draft step: put it at
-  the end of a `revising` body to strip rather than reject."
+  the end of a `drafting` body to strip rather than reject."
   [d]
   (when-not (draft? d)
     (throw (ex-info "clean expects a draft" {:value d})))
@@ -240,7 +240,7 @@
   every field predicate and every invariant had been rerun.
 
   Idempotent: an already-sealed value passes straight through, so `seal` is a projection and a
-  sealed value is a fixed point of it. That is what lets a `revising` body end in a call that
+  sealed value is a fixed point of it. That is what lets a `drafting` body end in a call that
   may or may not have sealed already, without the caller having to know which."
   ([d]
    (cond
@@ -258,18 +258,18 @@
      (seal-draft model d))))
 
 (defn owned-here?
-  "Is `x` a draft belonging to a `revising` form already on the stack?"
+  "Is `x` a draft belonging to a `drafting` form already on the stack?"
   [x]
   (and (draft? x) (some? *owner*) (= *owner* (owner-of x))))
 
-(defmacro revising
+(defmacro drafting
   "Bind `sym` to a draft of `init`, evaluate `body`, and seal the result.
 
   `init` may be a validated value, a registered type (to build one from nothing), or a
-  draft. A draft an enclosing `revising` owns passes straight through unsealed, so only
+  draft. A draft an enclosing `drafting` owns passes straight through unsealed, so only
   the outermost form validates — that is what lets an impl fn taking and returning a
   draft be called standalone or nested without knowing which. A draft made outside any
-  `revising` is adopted and sealed here."
+  `drafting` is adopted and sealed here."
   [[sym init] & body]
   `(let [init# ~init
          dm#   (draft-model init#)]

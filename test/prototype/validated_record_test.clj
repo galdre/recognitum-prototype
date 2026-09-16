@@ -131,7 +131,7 @@
   [^{:valid int?} a ^{:valid int?} b ^{:valid int?} c]
   [{:doc "a is below b" :keys #{:a :b} :pred (counted (fn [m] (< (:a m) (:b m))))}])
 
-(def ^:private counted-base (v/revising [x Counted] (merge x {:a 1 :b 2 :c 3})))
+(def ^:private counted-base (v/drafting [x Counted] (merge x {:a 1 :b 2 :c 3})))
 
 (deftest a-write-runs-only-the-invariants-declaring-that-key
   (reset! runs 0)

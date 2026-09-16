@@ -9,7 +9,7 @@ not a `Heist`, and `assoc`-ing garbage into a `Heist` does not produce a `Heist`
 ## Defining a type
 
 ```clojure
-(require '[prototype.validated-record :refer [defvalidated revising draft seal clean]])
+(require '[prototype.validated-record :refer [defvalidated drafting draft seal clean]])
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
@@ -80,18 +80,18 @@ predicate admits `nil`, `(assoc heist :cuts nil)` is how you spell absence — t
 Undeclared keys are ordinary: `dissoc` removes one from a draft, and on a validated value — which
 cannot be holding one — it is the usual no-op. `clean` is still how you strip them in bulk.
 
-## Multi-step updates: `revising`
+## Multi-step updates: `drafting`
 
-A single `assoc` can't express a change that breaks an invariant halfway through. `revising`
+A single `assoc` can't express a change that breaks an invariant halfway through. `drafting`
 opens a **draft** — an unvalidated working copy — runs your body, and validates once at the end:
 
 ```clojure
 (defn update-the-thing [heist]
-  (revising [h heist]
+  (drafting [h heist]
     (-> h impl/do-a-thing impl/do-another)))
 ```
 
-Inside the draft, writes are unchecked. Reaching the end of `revising` seals it: every field you
+Inside the draft, writes are unchecked. Reaching the end of `drafting` seals it: every field you
 touched is validated, and every invariant those fields could break is re-run. If anything fails,
 nothing is returned — you still have your original value, untouched.
 
@@ -99,24 +99,24 @@ Sealing is idempotent, so a body that has already produced a finished value is f
 projection, and a sealed value is a fixed point of it.
 
 ```clojure
-(revising [h heist]
+(drafting [h heist]
   (reduce apply-changeset h changesets))   ; 500 writes, one validation
 ```
 
-**`revising` is re-entrant.** Functions that take and return a draft can use `revising`
+**`drafting` is re-entrant.** Functions that take and return a draft can use `drafting`
 themselves and still be called from inside another one — only the outermost form seals. That
 lets you write impl functions once and call them either way:
 
 ```clojure
 (defn promote [h who bonus]
-  (revising [x h]                 ; seals when called on a Heist
+  (drafting [x h]                 ; seals when called on a Heist
     (-> x                         ; passes through when called on a draft
         (assoc :cuts (update (:cuts x) who + bonus))
         (assoc :take (+ (:take x) bonus)))))
 ```
 
 The convention that falls out: your public API takes and returns validated values, your impl
-layer takes and returns drafts, and `revising` marks the boundary.
+layer takes and returns drafts, and `drafting` marks the boundary.
 
 ## Building a new value
 
@@ -144,7 +144,7 @@ When the fields are not all in hand at once, build it the way you would update i
 instead of a value:
 
 ```clojure
-(revising [h Heist]
+(drafting [h Heist]
   (reduce apply-fragment h fragments))
 ```
 
@@ -157,7 +157,7 @@ A draft accepts any key; sealing is where it is decided. By default an undeclare
 error:
 
 ```clojure
-(revising [h heist]
+(drafting [h heist]
   (assoc h :getaway-car "mini"))   ;=> throws :extraneous-keys
 ```
 
@@ -165,7 +165,7 @@ Call `clean` to strip them instead. It is an ordinary draft→draft step, so it 
 want in the pipeline:
 
 ```clojure
-(revising [h heist]
+(drafting [h heist]
   (-> h (assoc :getaway-car "mini") clean))   ;=> #Heist{…}
 ```
 
@@ -216,7 +216,7 @@ against a proxy that records its reads:
 
 ```clojure
 (binding [v/*audit-invariant-keys* true]
-  (revising [x Bad] (merge x {:name "n" :a 1 :b 1})))
+  (drafting [x Bad] (merge x {:name "n" :a 1 :b 1})))
 ;=> throws :undeclared-invariant-key
 ;   {:invariant "a matches b" :declared #{:a} :also-read #{:b}}
 ```
@@ -257,7 +257,7 @@ validation work is identical on both sides (`bench/prototype/bench.clj`). Criter
 | write, two invariants on the key | 246 ns | 305 ns |
 | `merge` two keys | 933 ns | 604 ns |
 | construct | 1478 ns | 1410 ns |
-| 15 writes in one `revising` | 862 ns | 1220 ns |
+| 15 writes in one `drafting` | 862 ns | 1220 ns |
 
 Run-to-run spread is real: the two-invariant row moved between 1.0× and 1.2× across consecutive
 runs on an idle machine. Re-measure rather than trust these to three figures.

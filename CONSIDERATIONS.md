@@ -135,13 +135,13 @@ times.
 
 ## 10. Concurrency and the dynamic binding
 
-`revising` publishes its ownership token through a dynamic var.
+`drafting` publishes its ownership token through a dynamic var.
 
 - 321 `future` occurrences, 49 `core.async` references, 25 `bound-fn` uses. Binding conveyance
   covers `future` and agents; `core.async` `go` blocks and thread pools generally do not convey.
-- A draft created on one thread and sealed on another sees no owner, and a nested `revising` on a
+- A draft created on one thread and sealed on another sees no owner, and a nested `drafting` on a
   different thread will seal early.
-- Lazy sequences realized outside the `revising` extent have the same problem.
+- Lazy sequences realized outside the `drafting` extent have the same problem.
 - The QP is streaming and reducible-based; where the extent ends is not obvious.
 
 ## 11. Build, lint, and module integration

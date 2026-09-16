@@ -24,7 +24,7 @@
   [^{:valid int?} a ^{:valid int?} b]
   [{:doc "every value is positive" :keys #{:a} :pred (fn [m] (every? pos? (vals m)))}])
 
-(defn- build [t m] (v/revising [x t] (merge x m)))
+(defn- build [t m] (v/drafting [x t] (merge x m)))
 
 (deftest off-by-default
   ;; the root value, not the current binding -- the suite may be running under the fixture
@@ -34,7 +34,7 @@
   ;; No invariant declares :b, so writing :b runs nothing at all -- and the result seals.
   (binding [v/*audit-invariant-keys* false]
     (let [ok  (build Liar {:a 1 :b 1})
-          bad (v/revising [x ok] (assoc x :b 999))]
+          bad (v/drafting [x ok] (assoc x :b 999))]
       (is (= 1 (:a bad)))
       (is (= 999 (:b bad)))
       (is (instance? Liar bad) "sealed, reporting itself validated, and wrong"))))
@@ -51,7 +51,7 @@
 (deftest an-honest-type-passes
   (binding [v/*audit-invariant-keys* true]
     (is (instance? Honest (build Honest {:a 1 :b 1})))
-    (is (instance? Honest (v/revising [x (build Honest {:a 1 :b 1})] (merge x {:a 2 :b 2}))))))
+    (is (instance? Honest (v/drafting [x (build Honest {:a 1 :b 1})] (merge x {:a 2 :b 2}))))))
 
 (deftest the-audit-does-not-change-what-is-produced
   (let [plain   (binding [v/*audit-invariant-keys* false] (build Honest {:a 1 :b 1}))

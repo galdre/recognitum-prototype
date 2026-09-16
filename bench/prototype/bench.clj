@@ -4,7 +4,7 @@
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
-   [prototype.validated-record :refer [defvalidated revising]]))
+   [prototype.validated-record :refer [defvalidated drafting]]))
 
 ;;; ---- the validation code, used by BOTH implementations ----
 
@@ -60,7 +60,7 @@
 (def base {:name "The Italian Job" :crew #{:charlie :lyle :left-ear}
            :take 3000 :cuts {:charlie 1000 :lyle 1000 :left-ear 1000}})
 (def r (map->PlainHeist base))
-(def h (revising [x BenchHeist] (into x base)))
+(def h (drafting [x BenchHeist] (into x base)))
 (def valid-cuts {:charlie 1000 :lyle 1000 :left-ear 1000})
 
 (defn- ns-per [f] (* 1e9 (first (:mean (c/quick-benchmark (f) {:verbose false})))))
@@ -92,19 +92,19 @@
   (line "merge 2 keys"          (ns-per #(m-merge r {:take 3000 :cuts valid-cuts}))
                                 (ns-per #(merge h {:take 3000 :cuts valid-cuts})))
   (line "construct"             (ns-per #(m-validate! (map->PlainHeist base) [:name :crew :take :cuts]))
-                                (ns-per #(revising [x BenchHeist] (into x base))))
+                                (ns-per #(drafting [x BenchHeist] (into x base))))
   (println)
   (println (format "%-34s %10s %10s %8s" "batch: N renames" "manual" "library" "ratio"))
   (doseq [n [1 3 5 10 15]]
     (let [is (vec (range n))]
       (line (str "  N=" n)
             (ns-per #(m-validate! (reduce (fn [x i] (assoc x :name (str "n" i))) r is) [:name]))
-            (ns-per #(revising [x h] (reduce (fn [x i] (assoc x :name (str "n" i))) x is))))))
+            (ns-per #(drafting [x h] (reduce (fn [x i] (assoc x :name (str "n" i))) x is))))))
   (println)
   (println (format "%-34s %10s %10s %8s" "batch: N add-members" "manual" "library" "ratio"))
   (doseq [n [1 3 5 10 15]]
     (let [is (vec (range n))]
       (line (str "  N=" n)
             (ns-per #(m-validate! (reduce m-add r is) [:crew :cuts :take]))
-            (ns-per #(revising [x h] (reduce m-add x is))))))
+            (ns-per #(drafting [x h] (reduce m-add x is))))))
   (println))

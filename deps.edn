@@ -15,7 +15,7 @@
 
   ;;   clojure -X:test
   ;; prototype.validated-record-test  reads, writes, merge, dissoc
-  ;; prototype.draft-test             drafts, revising, and what seal guarantees
+  ;; prototype.draft-test             drafts, drafting, and what seal guarantees
   ;; prototype.audit-test             the invariant :keys audit
   :test {:extra-paths ["dev" "test"]
          :extra-deps {io.github.cognitect-labs/test-runner
