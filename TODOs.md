@@ -240,13 +240,13 @@ so far, or the options if it is still open. None is implemented.
       type can be rebuilt at all without the caller writing the `drafting` form by hand.
       Nothing needs it yet; `clojure.walk` over the draft works today.
 
-- [ ] **G2 — `equiv`, `equals` and `hashCode` build a map per call.** `AbstractRecord`
+- [x] **G2 — `equiv`, `equals` and `hashCode` build a map per call.** `AbstractRecord`
       is a template, so it cannot name the fields the way `emit-defrecord` does; it
       compares and hashes through `(into {} this)`, which allocates. `AbstractMap` did
       the same, so nothing regressed, and equality is on no benchmarked path. The fix,
       if one is ever wanted, is not in the template at all: the macro knows the fields
       and could emit a field-by-field `equiv`/`equals`/`hasheq` into each generated type,
-      where it would override the template's the way `cons` already does.
+      where it would override the template's the way `cons` already does. Folded into the perf item in "For discussion" 2026-09-16; galdre: perf later.
 
 - [x] **G2 — `toString` is neither `defrecord`'s nor the print form.** potemkin's
       template answered with the entries, `str` of a `defrecord` is `Object`'s identity
@@ -281,12 +281,12 @@ so far, or the options if it is still open. None is implemented.
       fetches a failure actually touches, this is already correct rather than a hole that
       opens at that moment. Acknowledged 2026-09-16. Verified: on a draft, `check` fetches for an IO-bound check even while an unrelated field is garbage (narrow, per spec); at seal no fetch runs if any pure check failed (coarse, per the spec's two-phase seal). No deviation.
 
-- [ ] **G1 — `::malformed-shape-check` has no row in `SPEC.md`'s error table.** Nor do
+- [x] **G1 — `::malformed-shape-check` has no row in `SPEC.md`'s error table.** Nor do
       `::unknown-dependency`, `::malformed-check` or any of the other compile-time
       refusals, so this is the existing shape of that table rather than a new gap: it
       lists what a caller can dispatch on at run time. Recorded because the table now
       omits one more thing, and because whoever gives the compile-time family a home --
-      E4's deferral wants the same for `::io-limited` -- should take this with it.
+      E4's deferral wants the same for `::io-limited` -- should take this with it. 2026-09-16: galdre ruled compile-time refusals are not worth a table row.
 
 - [x] **G1 — the plan is computed in masks, and `cost-test` is why.** `plan-for` folds a
       check's prerequisites in with `bit-or` against the masks the macro computed, takes
@@ -316,7 +316,7 @@ so far, or the options if it is still open. None is implemented.
       most of a doubling -- with a 1.4x bound in `cost-test` so the next one fails rather than
       waits to be noticed. `checks-for` had one caller left by now, not two: the sealed `cons`.
 
-- [ ] **F2 — `recognitum.cost-test`'s bounds are loose, and one of them is very loose.**
+- [x] **F2 — `recognitum.cost-test`'s bounds are loose, and one of them is very loose.**
       The rename row is held to 12x where the benchmark reads 3.5x, because the suite is a
       bad place to measure the library: by the time forty-odd types have been defined across
       the other files every call site into `recognitum.core` is megamorphic, which roughly
@@ -325,7 +325,7 @@ so far, or the options if it is still open. None is implemented.
       catch read 15-17x. So it catches a fixed cost per call and nothing subtler. A tighter
       guard would have to run in its own JVM -- a `-X:cost` alias running only that
       namespace would read the benchmark's numbers and could be held to 5x -- which is a
-      test-runner question rather than a library one.
+      test-runner question rather than a library one. Folded into the perf item in "For discussion" 2026-09-16.
 
 - [x] **B1 — the audit is inert but not yet gone.** `*audit-invariant-keys*`,
       `recognitum.audit-fixture`, the `:test-audit` alias and the README section all survive
@@ -401,7 +401,7 @@ so far, or the options if it is still open. None is implemented.
       all of them stay narrow. `meta` is where a sealed value answers, and it answers
       from a constant rather than by running anything. Folded into "For discussion" 2026-09-16: galdre ruled the `:not-a-draft` refusal wrong and `passing`/`holding` misnamed; see the check/certify and passing/holding items there.
 
-- [ ] **D2 — a check naming a field never written throws `::missing-field`, which
+- [x] **D2 — a check naming a field never written throws `::missing-field`, which
       `SPEC.md` does not say.** The spec's table gives `check` two outcomes, `true` or the
       failure data, and says nothing about an incomplete draft -- but running checks early
       on an incomplete value is the whole point of the facility, so the case is reachable
@@ -415,7 +415,7 @@ so far, or the options if it is still open. None is implemented.
       to run and throws one `:missing-field` carrying `:waiting`, a map of check name ->
       the fields that check is waiting on, because nothing else here stops at the first
       anything either. `:check`, `:key` and `:keys` still describe the first, which is the
-      whole of it wherever one check was asked about.
+      whole of it wherever one check was asked about. Moot as of 2026-09-16: unset reads as nil and `:missing-field` no longer exists.
 
 - [ ] **D2 — `check` returns the check's own return value, not the failure report.**
       `SPEC.md` says "the failing check's data", and the check contract says what a check
@@ -553,7 +553,7 @@ so far, or the options if it is still open. None is implemented.
       is wrong in its shape as well as in its contents. Rewritten in F1, and
       `recognitum.readme-test` forbids every one of those spellings by name.
 
-- [ ] **B3 — `SPEC.md` says failures come back "in declaration order", which is true only
+- [x] **B3 — `SPEC.md` says failures come back "in declaration order", which is true only
       up to eight checks.** Ruled acceptable rather than fixed: the reader hands the macro a
       `PersistentHashMap` once a map literal passes eight pairs, so past that the order the
       macro sees is hash order. What B3 guarantees, and what `contract_test` pins, is the
@@ -562,7 +562,7 @@ so far, or the options if it is still open. None is implemented.
       them, and that order is the written one up to eight. Fixing it properly means `:checks`
       taking a shape the reader preserves (a vector of pairs, say), which changes the
       definition form and belongs to whoever revisits C1, not here. Until then `SPEC.md`'s
-      sentence overclaims by one clause.
+      sentence overclaims by one clause. 2026-09-16: galdre — "not a big problem right now."
 
 - [x] **B2 — the io-dep half of the resolution has no end-to-end path yet.** `resolve-deps`
       takes the set of declared io-deps and `reject-duplicate-names!` takes their names, but
@@ -593,8 +593,8 @@ so far, or the options if it is still open. None is implemented.
       A seal of an unwritten draft went 2286ns -> 279ns, N=1 renames 3060 -> 838 against 237
       hand-rolled, construct 5138 -> 1532 against 1358. Table re-recorded on the same
       machine, with every shape the bench measures now carrying a row.
-- [ ] **A1 — `CONSIDERATIONS.md` still shows bare field keys throughout.** It is scratch,
-      kept but not maintained, and TODOs already says not to trust it.
+- [x] **A1 — `CONSIDERATIONS.md` still shows bare field keys throughout.** It is scratch,
+      kept but not maintained, and TODOs already says not to trust it. 2026-09-16: CONSIDERATIONS.md is unmaintained scratch by ruling; not fixing.
 
 - [x] **D5 — `seal` believes the mask, so `record-verdict!` is a way past the checks.**
       The `Verdicts` protocol is public, because the draft type is generated in the
@@ -645,7 +645,7 @@ so far, or the options if it is still open. None is implemented.
       was flipped to vetted in the table, so the three places using him as the happy-path
       new member stay happy-path. `:mole` is the unvetted one now.
 
-- [ ] **E1 — `check` throws where a check it is gated behind fails.** `SPEC.md` says
+- [x] **E1 — `check` throws where a check it is gated behind fails.** `SPEC.md` says
       `check` returns `true` or the failing check's data, and says separately that running
       a check runs whatever it depends on that is not already passing. Where a pure check
       gating an IO-bound check's fetch fails, the check asked about is never run, so there
@@ -654,7 +654,7 @@ so far, or the options if it is still open. None is implemented.
       the non-throwing form for the same reason. `certify` needs no such rule -- it is
       already shaped for several failures, so a failing gate simply appears among them,
       even where the certificate does not name it. If the reading is wrong, the place to
-      change it is `establish`.
+      change it is `establish`. Confirmed by galdre 2026-09-16, same ruling as the shape-gate twin.
 
 - [ ] **E1 — an io-dep nothing names compiles, and never fetches.** Every other declaration
       that would mean nothing is a compile error here, and a dead io-dep is arguably one of
@@ -713,15 +713,15 @@ so far, or the options if it is still open. None is implemented.
       check names is indistinguishable from it. Nothing in `SPEC.md` decides this; if the
       reading is wrong, `check-all` is the only place it lives.
 
-- [ ] **E3 — a group is refused where a single draft would be accepted.** `check-all` takes
+- [x] **E3 — a group is refused where a single draft would be accepted.** `check-all` takes
       drafts of one type: one fetch spans the group, the check name resolves against one
       model, and the tuples are built by one type's runner, so a mixed collection is
       `::mixed-types` and a sealed value in it is `::not-a-draft`. Both name the offender by
       index. `SPEC.md` says only "a collection of drafts", so neither error appears in its
       table; whether a mixed group should instead be partitioned by type and run per type is
-      a question it does not ask.
+      a question it does not ask. Folded into "For discussion" 2026-09-16: galdre ruled mixed-type groups are allowed.
 
-- [ ] **E3 — a group's throw is keyed by index, which `SPEC.md`'s error table does not
+- [x] **E3 — a group's throw is keyed by index, which `SPEC.md`'s error table does not
       describe.** `:check-failed` carries `:failures` keyed by check name everywhere else;
       from `check-all!` / `certify-all!` it is keyed by the value's index and holds the
       ordinary check-name map under each, with `:bulk true` saying which shape it is. The
@@ -729,16 +729,16 @@ so far, or the options if it is still open. None is implemented.
       index -> check -> fields. Keyed by index because two drafts holding identical data are
       `=`, and a handler that reads `:failures` without looking at `:bulk` would read a
       position as a check name. `bulk-failed!` and `missing-values!` are the only two places
-      this lives.
+      this lives. Folded into the exceptions-documentation discussion 2026-09-16.
 
-- [ ] **E4 — the refusal has no row in `SPEC.md`'s error table.** Every other throw here
+- [x] **E4 — the refusal has no row in `SPEC.md`'s error table.** Every other throw here
       has one; the draft-only write is described in prose ("makes direct `assoc` and
       `merge` on a sealed value throw") and named nowhere. It is `::io-limited`, after the
       option that caused it, which is what a handler would want to dispatch on. Its
       ex-data carries `:key` (the first offender), `:keys` (all of them, in field
       declaration order, since a merge is one write and the order its entries arrived in
       means nothing), `:checks` (offending key -> the IO-bound checks reading it) and
-      `:instead` (a `drafting` form). `io-limited!` is the only place this lives.
+      `:instead` (a `drafting` form). `io-limited!` is the only place this lives. 2026-09-16: `:io-limited` is in the README table; the spec table's future is in the exceptions-documentation discussion.
 
 - [ ] **E4 — an option must be written as a literal boolean, which `SPEC.md` does not
       say.** `:options` is read while the macro runs, so `{:io-limited some-config}` or
