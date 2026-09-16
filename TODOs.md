@@ -706,11 +706,11 @@ so far, or the options if it is still open. None is implemented.
       Superseded by I1 alongside its shape-gate twin: `check` answers with the gate's
       failures keyed by check name instead of throwing them.
 
-- [ ] **E1 — an io-dep nothing names compiles, and never fetches.** Every other declaration
+- [x] **E1 — an io-dep nothing names compiles, and never fetches.** Every other declaration
       that would mean nothing is a compile error here, and a dead io-dep is arguably one of
       those. It is not refused, because unlike a certificate covering nothing it asserts
       nothing while it sits there: it is unreachable code rather than a false claim.
-      `io-deps-test/an-io-dep-nothing-names-never-fetches` pins the behaviour either way.
+      `io-deps-test/an-io-dep-nothing-names-never-fetches` pins the behaviour either way. Ruled by galdre 2026-09-16: allowed. A valid declaration of an unused thing is not refused; a warning may be logged if wanted.
 
 - [x] **E1 — the batched form is refused as an unresolvable arglist entry.** `[[crew] :as
       rows]` is E2. Until then `[crew]` is an entry naming neither a field nor an io-dep and
