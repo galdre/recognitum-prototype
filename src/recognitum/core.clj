@@ -1551,12 +1551,74 @@
   [:options :checks :io-deps :certificates])
 
 (def ^:private known-options
-  "What `:options` may hold, each taking a literal `true` or `false`. `:io-limited` is the
-  only one so far -- the section exists so that there can be more.
+  "What `:options` may hold. `:io-limited` is the only one so far -- the section exists so
+  that there can be more.
+
+  The set is the whole of what is general about an option: a key written here means
+  something, and a key written anywhere else means nothing. What an option's *value* may be
+  is the option's own business, decided by [[option-value]], because a rule covering options
+  in general could only be the rule of whichever one happened to be written first.
 
   `:io-limited` makes direct `assoc` and `merge` on a *sealed* value throw for any field an
   IO-bound check reads, so those writes go through `drafting` instead. See [[io-limited!]]."
   #{:io-limited})
+
+(defn- io-limited-option
+  "What `:options {:io-limited v}` declares: `v` where it is a boolean, or the boolean held
+  by the var `v` names.
+
+  The option is read while the macro runs, so it has to mean something then. A literal says
+  what it says. A symbol is resolved here, in the namespace the form is being compiled in
+  and honouring a qualified name, and the var's value is read on the spot -- which is what
+  lets one flag decide a family of types without being retyped at each of them. What is
+  read is what the type is compiled with: a later `alter-var-root` moves the var and leaves
+  every type already compiled against it alone, exactly as a rebound `def` leaves a compiled
+  call site alone.
+
+  Everything else is refused where it is written, and the refusal says which case it was --
+  a symbol naming nothing, a symbol naming something that is not a var, a var holding
+  something that is not a boolean, or a form that is neither. A call like `(io-enabled?)` is
+  the tempting one: nothing here would evaluate it, so it would be read as the list it is
+  and the type would be limited because a non-empty list is truthy. Refusing it is the
+  difference between a declaration and a decoration."
+  [tname v]
+  (let [refuse! (fn [why extra]
+                  (throw (ex-info (format (str "%s: :options :io-limited takes true, false, "
+                                               "or a symbol naming a var that holds one -- %s")
+                                          tname why)
+                                  (merge {:error ::malformed-option :record tname
+                                          :option :io-limited :value v}
+                                         extra))))]
+    (cond
+      (boolean? v) v
+
+      (symbol? v)
+      (let [r (try (resolve v) (catch Exception _ nil))]
+        (cond
+          (nil? r)
+          (refuse! (format "%s does not resolve in %s" v (ns-name *ns*)) {:symbol v})
+
+          (not (var? r))
+          (refuse! (format "%s resolves to %s, which is not a var" v (pr-str r))
+                   {:symbol v :resolved r})
+
+          (not (boolean? @r))
+          (refuse! (format "%s holds %s, which is not a boolean" v (pr-str @r))
+                   {:symbol v :var r :var-value @r})
+
+          :else @r))
+
+      :else (refuse! (format "%s is neither a boolean nor a symbol" (pr-str v)) {}))))
+
+(defn- option-value
+  "What the option `o` written as `v` declares, decided by `o` itself.
+
+  One option, one rule, and no rule above them: an option is a name for a decision, and two
+  decisions need not be spelled alike. `o` is known by the time this is called, so the
+  `case` covers everything that can reach it."
+  [tname o v]
+  (case o
+    :io-limited (io-limited-option tname v)))
 
 (defn- parse-definition
   "`defrecord`'s third position -> `{:options :checks :io-deps :certificates}`, with every
@@ -1569,9 +1631,10 @@
   a validation that never ran, which is the one failure this library exists to make
   impossible -- so it is a compile error naming the offender instead. The same goes for a
   key inside `:options` and for what that key holds -- an option is read here, while the
-  macro runs, so one written as anything but a literal boolean would be on whatever it
-  evaluated to -- and for a bare map of checks written where the definition map now goes,
-  whose check names arrive here as sections nobody declared.
+  macro runs, so a form that means nothing then is refused rather than taken for whatever
+  it happened to evaluate to; see [[option-value]] -- and for a bare map of checks written
+  where the definition map now goes, whose check names arrive here as sections nobody
+  declared.
 
   Every section now means something, so nothing here is accepted and then ignored. What a
   section holds is resolved further down: an arglist by [[resolve-deps]], a certificate by
@@ -1602,24 +1665,20 @@
                                                 :section s :value v})))
                              (assoc acc s v)))
                          {} definition-sections)]
-    (doseq [[o v] (:options sections)]
-      (when-not (contains? known-options o)
-        (throw (ex-info (format (str "%s: :options holds %s, which is not an option -- the "
-                                     "options are %s")
-                                tname (pr-str o) (pr-str known-options))
-                        {:error ::unknown-option :record tname :option o
-                         :options known-options})))
-      ;; An option is read where the form is written, so anything that is not a literal
-      ;; boolean would be truthy whatever it later evaluated to -- a var, a call, a string.
-      ;; A declaration that means one thing to the macro and another to whoever reads it is
-      ;; the silent mis-declaration everything else here is arranged to prevent.
-      (when-not (or (true? v) (false? v))
-        (throw (ex-info (format (str "%s: :options %s takes true or false, and %s is "
-                                     "neither -- an option is read where it is written, so "
-                                     "anything else would be on whatever it evaluated to")
-                                tname o (pr-str v))
-                        {:error ::malformed-option :record tname :option o :value v}))))
-    sections))
+    ;; An option key means something or it means nothing, and a key nobody declared is the
+    ;; second -- so it is refused here rather than ignored. What the key holds is read here
+    ;; too, by the option itself, and what the sections carry onward is what it read: the
+    ;; model records the option's value, not the form somebody wrote it as.
+    (assoc sections :options
+           (reduce-kv (fn [acc o v]
+                        (when-not (contains? known-options o)
+                          (throw (ex-info (format (str "%s: :options holds %s, which is not "
+                                                       "an option -- the options are %s")
+                                                  tname (pr-str o) (pr-str known-options))
+                                          {:error ::unknown-option :record tname :option o
+                                           :options known-options})))
+                        (assoc acc o (option-value tname o v)))
+                      {} (:options sections)))))
 
 (def ^:private mask-width
   "How many checks a type may declare. A draft's verdict mask is one `long`, so a 65th check
@@ -2021,7 +2080,9 @@
   like the built-in [[every-check]], is a compile error naming the offender. See
   [[parse-certificates]].
 
-  `:options` holds `:io-limited`, and each option takes a literal `true` or `false`.
+  `:options` holds `:io-limited`, which takes `true`, `false`, or a symbol naming a var
+  holding one -- read where the form is written, so the type is compiled with what the var
+  held then and a later `alter-var-root` leaves it alone.
   `:io-limited` makes direct `assoc` and `merge` on a sealed value throw for any field an
   IO-bound check reads -- its own fields and its fetches' alike -- so those writes go
   through [[drafting]], where N of them cost one round of checks at the seal rather than a

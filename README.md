@@ -479,6 +479,10 @@ check passed on, so there is nothing to defer to — nothing is fetched and no c
 no IO-bound check reaches are unaffected, which is what declaring io-deps buys; the set is
 computed from the arglists rather than restated by you.
 
+The option takes `true`, `false`, or a symbol naming a var holding one, read when the type is
+compiled — so one flag can decide a family of types, and moving the var afterwards leaves the
+types already compiled against it alone.
+
 ## Building a new value
 
 `defrecord` generates the two constructors `defrecord` does, both validating:
