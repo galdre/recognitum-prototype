@@ -210,6 +210,46 @@ they name a subset of checks you can run early, before the value is complete.
 They do not change what a sealed value guarantees. `seal` enforces every check on the type,
 whether or not it belongs to a certificate.
 
+## Protocol implementations
+
+Trailing forms in the definition are protocol implementations, written once and installed on both
+generated types.
+
+```clojure
+(rec/defrecord Heist [name crew take cuts] {...}
+  some.ns/SomeProtocol
+  (promote      [h who bonus] (-> h (assoc ...) (assoc ...)))
+  (total-payout [h]           (reduce + 0 (vals (::cuts h)))))
+```
+
+On the draft type the body runs as written. On the sealed type it is wrapped: the method opens a
+draft of the value, runs the body, and seals the result. So a method called on a sealed value
+cannot produce an invalid one whatever it does inside, and the same body serves the impl layer
+unchanged — the re-entrancy that `drafting` already provides, applied without anyone asking for
+it.
+
+Inside the body, the receiver is a draft in both cases.
+
+**Only a draft of this type is sealed on the way out.** Most protocol methods return something
+else entirely — a number, a string, a boolean — and those pass through untouched. A method
+handing back an already-sealed value passes through as well.
+
+**`unsealed` opts out**, as `reduced` opts out of a reduction:
+
+```clojure
+(begin-revision [h] (unsealed (assoc h ::name "draft title")))
+```
+
+The wrapper unwraps it and returns the draft unsealed. Both implementations unwrap it, so the
+body means the same thing wherever it runs; on the draft type it is simply a no-op. What the
+caller receives is a free draft, owned by nothing, adoptable by a later `drafting` or sealable by
+hand. `(unsealed x)` where `x` is not a draft of this type throws — the marker asserts what is
+being returned, and a wrong assertion should say so.
+
+`drafting` does not honour `unsealed`. The wrapper is implicit, so opting out of it is fair; a
+`drafting` form is the author asking to seal, and a marker that quietly defeated that would be a
+hole rather than an escape hatch.
+
 ## Drafts
 
 A draft is an unvalidated working copy. Writes into it check nothing. It exists so a multi-step
