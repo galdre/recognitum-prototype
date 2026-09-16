@@ -211,8 +211,8 @@
   (let [ds [(crew-draft "one" #{:charlie} {:charlie 1})
             (crew-draft "two" #{:lyle} {:lyle 1})]]
     (is (= [true true] (rec/check-all ds ::known-get-cuts)))
-    (is (= 1 (ran ::roster)))
-    (is (= 1 (ran ::known-get-cuts)))
+    (is (= 1 (ran ::roster)) "one fetch for the group")
+    (is (= 2 (ran ::known-get-cuts)) "and a check per value -- a check judges one value")
     (reset-log!)
     (is (= [true true] (rec/check-all ds ::known-get-cuts)))
     (is (= 0 (ran ::roster)) "nothing was pending, so nothing was fetched")
@@ -398,8 +398,8 @@
             (assoc (rec/draft Crew) ::cuts {:lyle 1})]
         e  (err #(rec/check-all ds ::known-get-cuts))]
     (is (= ::rec/missing-field (:error e)))
-    (is (= {1 {::known-get-cuts [::crew]}} (:waiting e))
-        "named through the fetch that names it")
+    (is (= {1 {::known-get-cuts [::crew] ::crew [::crew]}} (:waiting e))
+        "the check, named through the fetch that names it, and the gate in front of it")
     (is (= 0 (ran ::roster)) "and nothing reached the outside")))
 
 ;;; --------------------------------- what is refused ---------------------------------

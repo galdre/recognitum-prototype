@@ -78,7 +78,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       deduplicated.
 - [x] **E2. Batched fetches.** `[[crew] :as rows]`, told from `[crew]` by the reader because it
       is not a legal arglist. Returns a map keyed by argument tuple.
-- [ ] **E3. `check-all` / `certify-all`.** Over a collection of drafts, results index-aligned.
+- [x] **E3. `check-all` / `certify-all`.** Over a collection of drafts, results index-aligned.
       Partial success on the non-throwing forms only. Nothing bulk produces sealed values.
 - [ ] **E4. `:io-limited`.** Direct `assoc` and `merge` on a sealed value throw for any field an
       IO-bound check depends on; other fields unaffected.
@@ -393,7 +393,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       is reported as `::unknown-dependency`, which is true but says nothing about the form
       being a batched fetch written too early. E2 owns the message either way.
 
-- [ ] **E2 — a batch of one is the only batch there is yet.** A validation call spans one
+- [x] **E2 — a batch of one is the only batch there is yet.** A validation call spans one
       value, so a batched fetch is handed exactly one tuple and the deduplication the form
       exists for -- a hundred values referencing five crews arriving as five tuples in one
       call -- has nothing to deduplicate. `fetch-one` is where E3 lands it: it builds the
@@ -401,6 +401,8 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       out of the returned map by that key. E3 replaces that one-element vector with the
       distinct tuples of the whole group and distributes from the same map; nothing past
       `fetch-io` has to change, since everything downstream holds a value either way.
+      Landed in E3: `fetch-one` is gone and `fetch-io-all` fetches a group in one pass per
+      io-dep, with `fetch-io` a group of one through the same code.
 
 - [ ] **E2 — a batched fetch's return shape is policed and a singular one's is not.**
       `SPEC.md` gives the batched form a return contract ("a map keyed by the argument
@@ -417,11 +419,46 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       one. F1 owns all three; `recognitum.roster/fetch-rosters` is the batched twin of the
       fake E1 left beside them, and is there to be wired in when it does.
 
-- [ ] **E1 — nothing is deduplicated across values yet.** Within one validation call an
+- [x] **E1 — nothing is deduplicated across values yet.** Within one validation call an
       io-dep is fetched once however many checks name it. Across values it is fetched once
       each, because there is no call that spans values until `check-all` / `certify-all`.
       E3 owns that, and `fetch-io` is where the argument tuple would become the cache key
-      rather than the io-dep name.
+      rather than the io-dep name. Landed in E3: the tuple is the cache key in
+      `fetch-io-all`, so a singular fetch is called once per distinct tuple across the
+      group and a batched one is handed all of them at once.
+
+- [ ] **E3 — what a group answers about a check it could not run is a map, and a check may
+      return a map.** Where a pure check gating a fetch fails, `check` throws (E1's ruling,
+      on the precedent of `:missing-field`): the check asked about never ran, so there is no
+      verdict to answer with. A group call cannot throw for that -- the other values have
+      answers of their own and a throw would discard every one of them -- so `check-all`
+      answers that value with the gate's failures keyed by check name, which is the shape
+      `certify` answers with. A check whose own failure data happens to be a map keyed by
+      check names is indistinguishable from it. Nothing in `SPEC.md` decides this; if the
+      reading is wrong, `check-all` is the only place it lives.
+
+- [ ] **E3 — a group is refused where a single draft would be accepted.** `check-all` takes
+      drafts of one type: one fetch spans the group, the check name resolves against one
+      model, and the tuples are built by one type's runner, so a mixed collection is
+      `::mixed-types` and a sealed value in it is `::not-a-draft`. Both name the offender by
+      index. `SPEC.md` says only "a collection of drafts", so neither error appears in its
+      table; whether a mixed group should instead be partitioned by type and run per type is
+      a question it does not ask.
+
+- [ ] **E3 — a group's throw is keyed by index, which `SPEC.md`'s error table does not
+      describe.** `:check-failed` carries `:failures` keyed by check name everywhere else;
+      from `check-all!` / `certify-all!` it is keyed by the value's index and holds the
+      ordinary check-name map under each, with `:bulk true` saying which shape it is. The
+      same goes for the `:missing-field` a group pre-flight throws, whose `:waiting` is
+      index -> check -> fields. Keyed by index because two drafts holding identical data are
+      `=`, and a handler that reads `:failures` without looking at `:bulk` would read a
+      position as a check name. `bulk-failed!` and `missing-values!` are the only two places
+      this lives.
+
+- [ ] **E3 — bulk checking appears in no example and in no README.** F1 owns the README and
+      the demo, and its entry already says the demo should illustrate an io-dep; a batched
+      fetch over a group is the only place the batched form pays for itself, so that is what
+      it should illustrate with. `recognitum.bulk-test` is the worked example until then.
 
 ## Blocking
 

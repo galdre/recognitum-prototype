@@ -140,6 +140,36 @@
                      :record (:name model)
                      :failures (apply array-map (into [] cat fs))}))))
 
+(defn- bulk-failed!
+  "Throw one `:check-failed` carrying every failure of every value in a group call, keyed by
+  the value's index in the collection the caller handed over and, under that, by check name
+  in declaration order. `fs` is `[index [[check-name report] ...]]` pairs, in index order.
+
+  Keyed by index because two drafts holding identical data are `=`, so keying the report by
+  the draft would collapse it exactly as keying the results would. `:bulk` says which of the
+  two shapes this is, so nothing has to work out whether a key is a check name or a
+  position.
+
+  `array-map` applied to the pairs at both levels, for the reason [[checks-failed!]] builds
+  its map that way: conj past the eighth entry would promote it and lose the order it is
+  reporting in."
+  [model fs]
+  (let [fs (apply array-map
+                  (into [] (mapcat (fn [[n es]] [n (apply array-map (into [] cat es))])) fs))
+        n  (reduce + (map count (vals fs)))]
+    (throw (ex-info (format "%s failed %d %s across %d of the values it was given -- %s"
+                            (:name model) n (if (= 1 n) "check" "checks") (count fs)
+                            (apply str
+                                   (interpose "; "
+                                              (mapcat (fn [[i m]]
+                                                        (map #(str i ": " (failure-str %)) m))
+                                                      fs))))
+                    {:error ::check-failed
+                     :record (:name model)
+                     :bulk true
+                     :indexes (vec (keys fs))
+                     :failures fs}))))
+
 (defn checks-for
   "The indices of the checks naming any of `ks`, in declaration order."
   [model ks]
@@ -189,45 +219,70 @@
                        :missing missing :tuples tuples :returned res}))))
   res)
 
-(defn- fetch-one
-  "Fetch the io-dep at `j` for `x`, with `cache` holding whatever has been fetched already.
+(defn- answers-for
+  "What the io-dep at `j` answers for `tuples`, keyed by tuple.
 
   Which form it was written in is settled here and nowhere else. A singular fetch is called
-  with its dependencies positionally and answers the value. A batched one is called with the
-  collection of argument tuples -- one tuple here, since one value is being validated -- and
-  answers a map keyed by them, out of which the entry for this value's own tuple is what the
-  checks naming it see. Everything downstream holds a value either way, so nothing past this
-  point has to know which was written."
-  [model x cache j]
+  with the elements of one tuple positionally and answers the value, so a group of tuples is
+  a call each; a batched one is called with the whole collection and answers a map keyed by
+  them. Everything downstream holds a value keyed by tuple either way, so nothing past this
+  point has to know which was written.
+
+  `tuples` is already distinct, and that is the deduplication: a hundred values referencing
+  five crews are five tuples here, and each of them is fetched once whichever form was
+  written. What the batched form adds is that those five arrive in one call."
+  [model j tuples]
   (let [d (nth (:io-deps model) j)]
     (if (:batched d)
-      (let [tuple ((:io-args model) j x cache)
-            tuples [tuple]]
-        (get (batch-answer! model d ((:run-batch model) j tuples) tuples) tuple))
-      ((:run-io model) j x cache))))
+      (batch-answer! model d ((:run-batch model) j tuples) tuples)
+      (into {} (map (fn [t] [t ((:call-io model) j t)])) tuples))))
 
-(defn fetch-io
-  "Fetch every io-dep the checks at `idxs` name, transitively, and answer with io-dep name
-  -> what it returned.
+(defn fetch-io-all
+  "Fetch, for every value in `xs`, every io-dep the checks at its own entry of `idxss` name,
+  and answer with a vector of caches index-aligned with `xs` -- each one io-dep name -> what
+  that io-dep returned for that value.
+
+  One pass per io-dep rather than one pass per value, which is what lets a group share a
+  fetch: the argument tuples of every value that needs it are built together, the distinct
+  ones are fetched once, and the answer is distributed back to each value by the tuple it
+  was asked about. Keying by the tuple rather than aligning positionally is what lets the
+  library do that rather than the author.
 
   The order is the graph's: an io-dep may name another, and the model holds them already
   sorted so that a fetch is reached only after everything it names, which is why ascending
-  index order is fetch order.
+  index order is fetch order -- and why a tuple built out of what another fetch answered
+  finds it in the cache by the time it is built.
 
-  This map is the whole of the sharing. Within one validation call an io-dep is fetched at
-  most once however many checks name it -- that is what naming them is for -- and when the
-  call returns the map is garbage. Nothing carries it: a draft records which checks passed,
-  never what they consulted to decide.
+  These maps are the whole of the sharing. Within one validation call an io-dep is fetched
+  at most once per distinct tuple however many checks or values name it, and when the call
+  returns they are garbage. Nothing carries them: a draft records which checks passed, never
+  what they consulted to decide.
 
   An exception propagates. A fetch that throws is usually the database being unreachable,
   and \"we could not determine whether this is valid\" is a different claim from \"this is
   invalid\" -- folding one into the other would have the type assert what it does not know."
+  [model xs idxss]
+  (let [cs    (:checks model)
+        xs    (vec xs)
+        needs (mapv (fn [idxs] (into #{} (mapcat #(:io (nth cs %))) idxs)) idxss)]
+    (reduce
+     (fn [caches j]
+       (let [nm (:name (nth (:io-deps model) j))
+             vs (into [] (filter #(contains? (nth needs %) j)) (range (count xs)))
+             ts (mapv (fn [n] ((:io-args model) j (nth xs n) (nth caches n))) vs)
+             as (answers-for model j (into [] (distinct) ts))]
+         (reduce (fn [caches [n t]] (update caches n assoc nm (get as t)))
+                 caches
+                 (map vector vs ts))))
+     (vec (repeat (count xs) {}))
+     (sort (reduce into #{} needs)))))
+
+(defn fetch-io
+  "[[fetch-io-all]] for one value: the io-deps the checks at `idxs` name, fetched in the
+  graph's order and answered as one cache. A group of one, so that a call spanning values
+  and a call spanning one go through the same fetches."
   [model x idxs]
-  (let [ds  (:io-deps model)
-        cs  (:checks model)]
-    (reduce (fn [cache j] (assoc cache (:name (nth ds j)) (fetch-one model x cache j)))
-            {}
-            (sort (into #{} (mapcat #(:io (nth cs %))) idxs)))))
+  (first (fetch-io-all model [x] [idxs])))
 
 (defn- failures-of
   "[[failure-entry]] pairs for those of `idxs` that did not return `true`, run through the
@@ -462,6 +517,35 @@
                     {:error ::missing-field :record (:name model) :check cname
                      :key (first ks) :keys ks :waiting waiting}))))
 
+(defn- missing-values!
+  "[[missing-fields!]] for a group call: one `:missing-field` naming every value that could
+  not be judged and, under each, every check waiting and every field it is waiting on.
+
+  `waiting` is index -> [[waiting-on]]'s answer, never empty. Keyed by index for the reason
+  a group's results are: two drafts holding identical data are `=`. Thrown rather than
+  reported per value because nothing has run yet -- the pre-flight happens before the first
+  check of the first value, so there is no partial success to preserve, and a caller told
+  about one incomplete value at a time would fix it and be told about the next."
+  [model waiting]
+  (throw (ex-info (format "%s cannot run checks against %d of the values it was given -- %s"
+                          (:name model) (count waiting)
+                          (apply str
+                                 (interpose
+                                  "; "
+                                  (map (fn [[n w]]
+                                         (format "%d: %s" n
+                                                 (apply str
+                                                        (interpose
+                                                         ", "
+                                                         (map (fn [[c cks]]
+                                                                (format "%s names %s, which %s never written"
+                                                                        (pr-str c) (pr-str cks)
+                                                                        (if (next cks) "were" "was")))
+                                                              w)))))
+                                       waiting))))
+                  {:error ::missing-field :record (:name model) :bulk true
+                   :indexes (vec (keys waiting)) :waiting waiting})))
+
 (defn- not-established
   "Those of `idxs` that `d`'s mask does not already say are passing, in the order given.
 
@@ -515,36 +599,66 @@
            (failure-entry c ret (dep-values model c d cache))))
        fs))
 
+(defn- establish-all
+  "Establish, against each draft in `ds`, the checks at its own entry of `idxss`, and answer
+  with `{:failures [[i ret] ...] :cache {io-dep-name value}}` for each of them, index-aligned
+  with `ds`.
+
+  What is actually run for a draft is whatever its own mask does not already say is passing,
+  together with the pure checks gating any fetch that involves -- so `check` and `certify`
+  mean *establish this*, not *run exactly this*, and a satisfied prerequisite is free,
+  value by value.
+
+  Two phases, because shape gates IO. Everything pure runs first and ungated; a draft any of
+  it failed for fetches nothing, and its failures -- the ones asked for and the ones gating
+  them alike -- are its answer. Only the drafts whose pure phase came back clean reach the
+  fetch, and they reach it together: one pass per io-dep over the whole group, so a batched
+  fetch sees every argument tuple in one call and distinct tuples are computed once however
+  many values share them. The gate is per value, so one malformed draft holds up nothing but
+  its own fetch.
+
+  The fields are pre-flighted over every check of every draft first, io-deps included, so a
+  group too incomplete to judge says so about all of it at once rather than one at a time.
+  `missing!` is handed what is waiting, keyed by the draft's index: what an incomplete draft
+  means is the caller's to phrase, and one draft's answer is not the shape a group's is."
+  [model ds idxss missing!]
+  (let [plans (mapv (fn [d idxs]
+                      (let [pending (not-established d idxs)
+                            pure    (pure-of model pending)
+                            io      (io-of model pending)
+                            gate    (if (seq io)
+                                      (not-established d (remove (set pure) (gate-of model io)))
+                                      [])]
+                        {:pure    (vec (sort (distinct (concat pure gate))))
+                         :io      io
+                         :waiting (waiting-on model d (distinct (concat pending gate)))}))
+                    ds idxss)
+        w     (apply array-map
+                     (into [] (comp (map-indexed (fn [n p]
+                                                   (when (seq (:waiting p)) [n (:waiting p)])))
+                                    (remove nil?)
+                                    cat)
+                           plans))]
+    (when (seq w) (missing! w))
+    (let [pure-fs (mapv (fn [d p] (record-run model d (:pure p) {})) ds plans)
+          ;; A draft whose shape failed carries nothing to the fetch, and one that owes no
+          ;; IO-bound check asks for none.
+          io-idxss (mapv (fn [fs p] (if (seq fs) [] (:io p))) pure-fs plans)
+          caches   (if (some seq io-idxss)
+                     (fetch-io-all model ds io-idxss)
+                     (vec (repeat (count ds) {})))]
+      (mapv (fn [d fs io cache]
+              (if (or (seq fs) (empty? io))
+                {:failures fs :cache {}}
+                {:failures (record-run model d io cache) :cache cache}))
+            ds pure-fs io-idxss caches))))
+
 (defn- establish-group
-  "Establish the checks at `idxs` against the draft `d`, and answer with
-  `{:failures [[i ret] ...] :cache {io-dep-name value}}`.
-
-  What is actually run is whatever `d`'s mask does not already say is passing, together
-  with the pure checks gating any fetch that involves -- so `check` and `certify` mean
-  *establish this*, not *run exactly this*, and a satisfied prerequisite is free.
-
-  Two phases, because shape gates IO. Everything pure runs first and ungated; if any of it
-  failed nothing is fetched, and the failures -- the ones asked for and the ones gating
-  them alike -- are the answer. Only when the pure phase is clean is anything fetched, once
-  per io-dep however many checks name it, and the IO-bound checks run against what came
-  back.
-
-  The fields are pre-flighted over the whole group first, io-deps included, so a draft too
-  incomplete to judge says so about everything that is waiting rather than one at a time."
+  "[[establish-all]] against one draft: a group of one, so that a call spanning values and a
+  call about one go through the same phases and the same fetches. What an incomplete draft
+  answers with is the singular report, since there is only the one value to be waiting."
   [model d idxs]
-  (let [pending (not-established d idxs)
-        pure    (pure-of model pending)
-        io      (io-of model pending)
-        gate    (if (seq io)
-                  (not-established d (remove (set pure) (gate-of model io)))
-                  [])
-        w       (waiting-on model d (distinct (concat pending gate)))]
-    (when (seq w) (missing-fields! model w))
-    (let [fs (record-run model d (vec (sort (distinct (concat pure gate)))) {})]
-      (if (or (seq fs) (empty? io))
-        {:failures fs :cache {}}
-        (let [cache (fetch-io model d io)]
-          {:failures (record-run model d io cache) :cache cache})))))
+  (first (establish-all model [d] [idxs] (fn [w] (missing-fields! model (val (first w)))))))
 
 (defn run-draft-checks!
   "Establish the checks at `idxs` against the draft `d` and throw once with every failure,
@@ -672,6 +786,20 @@
   (merged-meta mta (array-map ::passed       (passed-in model mask)
                               ::certificates (held-in model mask))))
 
+(defn- returned-by-name
+  "[[record-run]]'s answer as check name -> what that check returned, in the type's own
+  check declaration order.
+
+  What a failing check returned *is* the failure data, so that is the whole of what the
+  answering forms hand back. The richer report -- the docstring, the fields the check
+  declared and their values -- is what the insisting ones throw.
+
+  `array-map` applied to the pairs, so the order survives past the size at which a map
+  literal would lose it."
+  [model fs]
+  (apply array-map
+         (into [] (mapcat (fn [[i ret]] [(:name (nth (:checks model) i)) ret])) fs)))
+
 (defn certify
   "Run the certificate `cname` against the draft `d`: `true` if every check in it passes,
   and otherwise a map of check name -> what that check returned, for those that did not.
@@ -696,10 +824,7 @@
   [d cname]
   (let [model (draft-model! "certify" d)
         fs    (:failures (establish-group model d (:ids (certificate model cname))))]
-    (if (seq fs)
-      (apply array-map
-             (into [] (mapcat (fn [[i ret]] [(:name (nth (:checks model) i)) ret])) fs))
-      true)))
+    (if (seq fs) (returned-by-name model fs) true)))
 
 (defn certify!
   "[[certify]], insisting on the answer: `true`, or one `:check-failed` carrying every
@@ -713,6 +838,135 @@
     (if (seq failures)
       (checks-failed! model (failure-entries model d failures cache))
       true)))
+
+;;; --------------------------- Checking many drafts at once ---------------------------
+
+(defn- group-model!
+  "The model every draft in `ds` shares; `nil` where `ds` is empty; a throw where something
+  in it is not a draft, or is a draft of another type.
+
+  A group is checked together because one fetch spans it, and a fetch belongs to a type: the
+  check name resolves against one model, the argument tuples are built by one type's runner,
+  and a collection of two types has no single answer to either. The offender is named by
+  position, because position is what a group call answers by."
+  [what ds]
+  (reduce (fn [model [n d]]
+            (let [m (or (draft-model d)
+                        (throw (ex-info (format "%s expects drafts, and the value at index %d is not one: %s"
+                                                what n (pr-str d))
+                                        {:error ::not-a-draft :index n :value d})))]
+              (cond
+                (nil? model)         m
+                (identical? m model) model
+                :else
+                (throw (ex-info (format (str "%s expects drafts of one type: the value at index "
+                                             "%d is a %s, where the group is %s")
+                                        what n (:name m) (:name model))
+                                {:error ::mixed-types :record (:name model)
+                                 :index n :found (:name m) :value d})))))
+          nil
+          (map-indexed vector ds)))
+
+(defn- group-run
+  "Establish `idxs` -- whatever `idxs-of` makes of the group's model -- against every draft
+  in `ds`, and answer `[model ds idxs results]`, or `nil` where there is nothing to check.
+
+  The one place a group call is assembled, so the answering and the insisting forms run
+  exactly the same work and differ only in what they make of it.
+
+  An empty collection is answered rather than refused: nothing to check is a thing that
+  happens to a bulk caller, and there is no value to resolve a name against, so the name is
+  not resolved. A collection of one is a group of one and goes through all of this."
+  [what ds idxs-of]
+  (let [ds (vec ds)]
+    (when-let [model (group-model! what ds)]
+      (let [idxs (idxs-of model)]
+        [model ds idxs
+         (establish-all model ds (repeat (count ds) idxs) #(missing-values! model %))]))))
+
+(defn- insisted
+  "`true`, or one throw carrying every failure of every value in `rs`. What the bang forms
+  make of a group run: partial success is a workspace notion, and a form that throws is not
+  offering one."
+  [model ds rs]
+  (let [fs (into [] (keep-indexed (fn [n {:keys [failures cache]}]
+                                    (when (seq failures)
+                                      [n (failure-entries model (nth ds n) failures cache)])))
+                 rs)]
+    (if (seq fs) (bulk-failed! model fs) true)))
+
+(defn check-all
+  "Run the check `cname` against every draft in `ds`, and answer with a vector of what each
+  of them says, index-aligned with `ds`: `true` where it passed, and whatever the check
+  returned where it did not.
+
+  One call spanning values, which is what a batched fetch is written for: an io-dep behind
+  the check is fetched once per distinct argument tuple across the whole group, and a
+  batched one sees every tuple in a single call. Results are index-aligned rather than keyed
+  by the draft because two drafts holding identical data are `=`, and a map would collapse
+  them into one.
+
+  Per value, this is [[check]]: whatever the draft's own mask already says is passing costs
+  nothing, the checks gating a fetch run first, and a draft whose gate failed carries
+  nothing to the outside while the rest of the group still fetches. Where the gate is what
+  failed, the check asked about never ran and has no verdict of its own to answer with, so
+  that value's answer is the gate's failures, keyed by check name as [[certify]] answers --
+  a group call reports rather than throws, because the other values have answers of their
+  own and a throw would discard them.
+
+  Each draft is left with its own verdicts recorded, which is what makes sealing afterwards
+  free. Nothing here produces a sealed value: a guarantee does not come in partial."
+  [ds cname]
+  (if-let [[model _ idxs rs] (group-run "check-all" ds #(vector (check-id % cname)))]
+    (let [i (first idxs)]
+      (mapv (fn [{:keys [failures]}]
+              (if-let [own (first (filter (fn [[j]] (= j i)) failures))]
+                (second own)
+                (if (seq failures) (returned-by-name model failures) true)))
+            rs))
+    []))
+
+(defn check-all!
+  "[[check-all]], insisting on the answer: `true`, or one `:check-failed` carrying every
+  failure across every value, keyed by the value's index and, under that, by check name.
+
+  The work is the same work -- one fetch pass for the group, nothing re-established -- and
+  what differs is only that there is no partial success to report. Every value is run before
+  anything is thrown, and each draft keeps the verdicts it earned."
+  [ds cname]
+  (if-let [[model ds _ rs] (group-run "check-all!" ds #(vector (check-id % cname)))]
+    (insisted model ds rs)
+    true))
+
+(defn certify-all
+  "Run the certificate `cname` against every draft in `ds`, and answer with a vector
+  index-aligned with `ds`: `true` where every check in it passed, and otherwise a map of
+  check name -> what that check returned, for those that did not.
+
+  Per value this is [[certify]], and across values it is [[check-all]]: one fetch pass for
+  the whole group, distinct argument tuples fetched once however many values share them, and
+  each draft left holding whatever its own checks established. A certificate is held when
+  its checks pass, so a group that comes back `true` is a group of drafts [[holding]] it."
+  [ds cname]
+  (if-let [[model _ _ rs] (group-run "certify-all" ds #(:ids (certificate % cname)))]
+    (mapv (fn [{:keys [failures]}]
+            (if (seq failures) (returned-by-name model failures) true))
+          rs)
+    []))
+
+(defn certify-all!
+  "[[certify-all]], insisting on the answer: `true`, or one `:check-failed` carrying every
+  failure of every check of every value, keyed by the value's index and, under that, by
+  check name in declaration order.
+
+  `(certify-all! ds every-check)` is the bulk shape of sealing a group -- it establishes
+  everything every value owes, in one fetch pass, and leaves each draft's mask saying so.
+  It still does not seal anything: what comes back is an answer, and the values are sealed
+  one at a time afterwards, which by then costs no IO."
+  [ds cname]
+  (if-let [[model ds _ rs] (group-run "certify-all!" ds #(:ids (certificate % cname)))]
+    (insisted model ds rs)
+    true))
 
 (defn model-of
   "The model for `x`, whether `x` is a validated instance or the type itself."
@@ -1479,9 +1733,9 @@
         key->sym  (zipmap ks fsyms)
         ;; every local is gensymed: a field could be named k, v, o, acc ...
         [ksym vsym dsym osym hsym essym ovsym accsym mtasym mta2sym msym thunksym tgtsym isym
-         cachesym xsym newsym tuplessym]
+         cachesym xsym newsym tuplessym tupsym]
         (map gensym ["k" "v" "d" "o" "h" "es" "ov" "acc" "mta" "mta2" "m" "thunk" "target" "i"
-                     "cache" "x" "new" "tuples"])
+                     "cache" "x" "new" "tuples" "tuple"])
         tgthint   (with-meta tgtsym {:tag tname})
         dname     (symbol (str tname "Draft"))
         [extsym vdsym ownsym tokensym bitsym passym]
@@ -1872,26 +2126,31 @@
                                                    (deps-of i)))])
                                      (range nchecks))
                            nil))
-          ;; The singular fetches, reached the same way. A field is read through `get`
-          ;; rather than directly, because one runner serves both forms of the value and a
-          ;; fetch is about to do IO -- what a lookup costs here is not what anything waits
-          ;; on.
-          :run-io      (fn [~isym ~xsym ~cachesym]
-                         (case (int ~isym)
-                           ~@(mapcat (fn [j]
-                                       [j `(~(ivar j) ~@(map (io-arg xsym cachesym)
-                                                             (:deps (nth io-parsed j))))])
-                                     (remove batched? (range nio)))
-                           nil))
-          ;; A batched fetch is keyed by its argument tuple rather than called with it, so
-          ;; the tuple is built here -- out of the same reads the singular form would have
-          ;; passed positionally -- and the call takes the collection of them.
+          ;; Every fetch is keyed by its argument tuple, whichever form it was written in:
+          ;; the tuple is what tells one value's fetch from another's, so it is what a
+          ;; result is distributed by and what two values sharing a fetch share. It is
+          ;; built here, out of the same reads a singular fetch once took positionally. A
+          ;; field is read through `get` rather than directly, because one runner serves
+          ;; both forms of the value and a fetch is about to do IO -- what a lookup costs
+          ;; here is not what anything waits on.
           :io-args     (fn [~isym ~xsym ~cachesym]
                          (case (int ~isym)
                            ~@(mapcat (fn [j]
                                        [j (vec (map (io-arg xsym cachesym)
                                                     (:deps (nth io-parsed j))))])
-                                     (filter batched? (range nio)))
+                                     (range nio))
+                           nil))
+          ;; The singular fetches: called with the elements of one tuple, positionally, as
+          ;; the arglist they were written with says. A batched one is handed the whole
+          ;; collection of tuples instead, which is the only difference between the two
+          ;; once the tuples are built.
+          :call-io     (fn [~isym ~tupsym]
+                         (case (int ~isym)
+                           ~@(mapcat (fn [j]
+                                       [j `(~(ivar j)
+                                            ~@(map-indexed (fn [p _] `(nth ~tupsym ~p))
+                                                           (:deps (nth io-parsed j))))])
+                                     (remove batched? (range nio)))
                            nil))
           :run-batch   (fn [~isym ~tuplessym]
                          (case (int ~isym)
