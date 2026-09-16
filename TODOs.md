@@ -201,6 +201,18 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       sealed value, and the outer's result reflects the inner's change. Do not edit TODOs.md
       or SPEC.md; report. Done d194652: `begin-revision` (inner, returns `unsealed`) and `revise` (outer, seals).
 
+- [ ] **I5. Three README additions, ruled 2026-09-16.** (a) Near the top, a brief statement —
+      descriptive, not an instruction, few words — that this is intended to behave like
+      `clojure.core/defrecord` with deliberate changes, followed by the short list of those
+      changes (two types; checks on every write; `dissoc` of a declared field refused;
+      undeclared keys refused on a sealed value; field keys namespaced; the print tag; library
+      keys merged over `meta`; callable as a function of its keys). (b) `Serializable` added to
+      the sentence listing record behaviours. (c) A brief explanation of the three kinds of
+      check — pure and structural (a shape check over one field), pure and cross-field (an
+      invariant over several), and impure (one that reaches outside the value through an
+      io-dep) — with the industry terms galdre approves, placed where the checks are introduced.
+      Do not edit TODOs.md or SPEC.md; report.
+
 ### H — later, low priority
 
 - [ ] **H2. Raise or name the limits.** The verdict mask is one `long`, so a type may declare
@@ -287,10 +299,11 @@ so far, or the options if it is still open. None is implemented.
       documented. `:unknown-certificate` no longer exists — one verb, one refusal
       (`:unknown-check`). `:io-limited` is already in README.
 
-- [ ] **SPEC.md's future.** It began as the target for the rewrite and drifted into a design
-      rationale document without that being decided. Galdre: make a list of what it holds that
-      could move to README, and walk that list one item at a time — some of the rationale is
-      not important in the grand scheme. Until then, no new rulings are written into it.
+- [x] **SPEC.md's future.** Walked 2026-09-16. What it holds that README lacks: the
+      defrecord baseline and deviations, and the word `Serializable`. Everything else is either
+      already in README or implementation reasoning not worth moving. Queued as I5. After I5
+      the spec has no content README lacks. CONSIDERATIONS.md is **not** retired — galdre:
+      "just holding."
 
 - [ ] **`run-checks!` per-call overhead** (perf, later). Reported by the merge-fix agent: per
       validation it builds three phase vectors, a failure set, a lazy `remove` over the pure
