@@ -309,7 +309,7 @@ so far, or the options if it is still open. None is implemented.
       `certify` needs no such rule -- it is shaped for several failures, so a failing gate
       simply appears among them -- and `check-all` answers that value with the gate's
       failures keyed by check name, as E3 already ruled for the IO gate. If the reading is
-      wrong, `establish` is the only place it lives. Confirmed by galdre 2026-09-16: one rule for both gates.
+      wrong, `establish` is the only place it lives. Correction 2026-09-16: galdre did not confirm this — the "twin ruling" I cited was his ruling that an IO fetch *throwing* propagates, misread by me as the gate failing. Galdre never ruled on gate behaviour. As of step I1 a gated check answers with the blocking check's entry in the keyed map and does not throw, which follows from "check returns data, check! throws."
       Superseded by I1: the answer is keyed now, so a failing gate is reported rather than
       thrown, from `check` as from `check-all`. `establish` is gone with it. The rule is
       still one rule for both gates, and it is still that a check the gate stopped has no
