@@ -1,13 +1,13 @@
 (ns recognitum.cost-test
   "What the library costs, and what it must not start costing again.
 
-  The README publishes a table of the library against the same validation written by hand,
-  and a published number rots the way published prose does: nothing fails when a change
-  makes a row three times what it says. This suite is the part of that table a test can
-  hold -- not the figures, which belong to the machine they were taken on, but the multiple
-  of the hand-rolled twin each shape stays within. The twin is `recognitum.bench`'s, which
-  is the one the table was measured against, so a row here and a row there are the same
-  comparison.
+  The library's cost is published as a table of it against the same validation written by
+  hand, and a published number rots the way published prose does: nothing fails when a
+  change makes a row three times what it says. This suite is the part of that table a test
+  can hold -- not the figures, which belong to the machine they were taken on, but the
+  multiple of the hand-rolled twin each shape stays within. The twin is the one
+  `recognitum.bench` uses, which is the one the table was measured against, so a row here
+  and a row there are the same comparison.
 
   The bounds are deliberately loose -- several times the measured ratio -- because a bound
   tight enough to catch a 20% regression is tight enough to fail on a busy machine, and a
@@ -60,7 +60,7 @@
 (defn- within?
   [label bound [r m l]]
   (is (<= r bound)
-      (format "%s: %.0f ns hand-rolled, %.0f ns library -- %.1fx, and the README table is written on the claim that it is under %.1fx"
+      (format "%s: %.0f ns hand-rolled, %.0f ns library -- %.1fx, and the published figure for this row claims it stays under %.1fx"
               label m l r bound)))
 
 ;;; ----------------------------- the multiples the table publishes -----------------------------
@@ -109,7 +109,7 @@
                          (assoc ::b/take (+ (::b/take x) 10)))))))
 
 (deftest a-merge-onto-a-sealed-value-stays-within-its-multiple
-  ;; The row the README table has the library losing, and the one where the comparison is
+  ;; The row the published table has the library losing, and the one where the comparison is
   ;; closest to being about bookkeeping rather than work: both sides run each applicable
   ;; check once at the end, over the same values, so whatever separates them is what the
   ;; library does around the checks. What it was doing was building a sorted set per write

@@ -3,10 +3,10 @@
   docstrings, and the three the library has been quietly outgrowing.
 
   Everything the library can do is covered somewhere under `test/`; what is covered here is
-  that the worked example *shows* it. `recognitum.heist` is the type the README prints and
-  the demo drives, so an io-dep that appears in no example is a facility a reader has no
-  path to. These tests pin the example model's own behaviour -- the fetch, the gate that
-  stands in front of it, the deduplication, the check judging what came back, the
+  that the worked example *shows* it. `recognitum.heist` is the type a reader is shown
+  first and the demo drives, so an io-dep that appears in no example is a facility a reader
+  has no path to. These tests pin the example model's own behaviour -- the fetch, the gate
+  that stands in front of it, the deduplication, the check judging what came back, the
   certificates, the draft-only writes and the protocol implementations -- rather than
   re-deriving the library's rules, which the other suites do against types of their own.
 
