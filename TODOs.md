@@ -47,7 +47,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       receives a draft and `instance?` stops meaning what an author expects.
 - [x] **C1. The definition map.** Wrap the checks in `{:options … :checks … :io-deps …
       :certificates …}`, all sections optional. Only `:checks` is populated at this point.
-- [ ] **C2. Protocol implementations.** One body installed on both types. The draft impl runs it
+- [x] **C2. Protocol implementations.** One body installed on both types. The draft impl runs it
       as written; the sealed impl opens a draft, runs it, and seals the result only if the body
       returned a draft of this type — anything else passes through, which is most protocol
       methods. `unsealed` opts a return out of sealing, is unwrapped by both impls, and throws on
@@ -143,12 +143,34 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       same way. `known-options` is `#{:io-limited}` and an option outside it is a compile
       error, so a new option is declared there or it does not compile.
 
-- [ ] **C1 — the definition map is required, not optional.** `SPEC.md` says three
+- [x] **C1 — the definition map is required, not optional.** `SPEC.md` says three
       positions and every *section* optional, so a type with no checks is written
       `(rec/defrecord T [a b] {})` rather than with the third position dropped. C2 adds
       trailing protocol implementations to the form and so has to touch the arity anyway;
       if an omitted definition map is wanted, that is where to decide it, since a map
-      literal and a protocol name are trivially told apart.
+      literal and a protocol name are trivially told apart. Ruled in C2: it stays
+      required. `SPEC.md` says three positions, and a form that drops one of them puts a
+      protocol name where a declaration goes — which `parse-definition` already reports as
+      `::malformed-definition`, pinned by
+      `protocol-test/the-definition-map-is-still-required-before-the-implementations`.
+      Nothing is gained by letting a type be written two ways.
+
+- [ ] **C2 — `recur` to a method head does not work in either implementation.** Both
+      wrap the body: the draft type in a call to `draft-impl-return`, the sealed type in
+      a `let`/`binding` inside a call to `sealed-impl-return`. So a protocol method body
+      written with a tail `recur` back to its own arglist is a compile error that a plain
+      `deftype` would have accepted. Nothing in `SPEC.md` asks for it and no test wants
+      it; a body needing a loop writes `loop` explicitly. Recorded because the error, if
+      someone hits it, will not obviously be about this.
+
+- [ ] **C2 — the example model, the demo and the README carry no protocol
+      implementation.** `SPEC.md`'s `Heist` implements `some.ns/SomeProtocol`, and
+      `recognitum.heist/promote` is exactly the method its "Protocol implementations"
+      section writes out — an impl fn that opens its own `drafting` because there is no
+      wrapper to do it for it. F1 owns those files; moving `promote`, `rename` and
+      `add-member` onto a protocol there would show the wrapper doing the work and the
+      same body serving the impl layer, which is the whole claim. `recognitum.protocol-test`
+      carries the coverage in the meantime.
 
 - [ ] **C0 — `README.md` does not mention `of-type?`, `draft?` or `sealed?` at all.** The
       four-way table in `SPEC.md` under "Telling values apart" has no counterpart in the

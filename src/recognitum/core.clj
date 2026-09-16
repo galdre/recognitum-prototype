@@ -19,7 +19,12 @@
   if every check had been rerun.
 
   Fields become keys qualified by the namespace defining the type, so a bare keyword of
-  the same name is a key the type does not declare."
+  the same name is a key the type does not declare.
+
+  A protocol implementation is written once and installed on both generated types. The
+  draft runs the body as written; the sealed value wraps it, so the body works on a draft
+  and what it produces is sealed on the way out -- which is the same re-entrancy
+  [[drafting]] provides, applied without anyone asking for it."
   (:refer-clojure :exclude [defrecord])
   (:require
    [potemkin :as p]))
@@ -258,6 +263,40 @@
     (throw (ex-info "clean expects a draft" {:value d})))
   (if (extraneous d) ((:draft-clean (draft-model d)) d) d))
 
+;;; ------------------------------ Opting out of the seal ------------------------------
+
+(deftype Unsealed [wrapped])
+
+(defn unsealed
+  "Mark the draft `d` as a return value that should *not* be sealed, the way `reduced`
+  marks a return value that should end a reduction.
+
+  A protocol implementation written on a validated type is installed on both generated
+  types, and on the sealed one it is wrapped: the body runs against a draft, and a draft
+  of this type handed back is sealed on the way out. `unsealed` opts that return out. What
+  the caller receives is a free draft, owned by nothing -- adoptable by a later [[drafting]]
+  or sealable by hand.
+
+  Both implementations unwrap it, so a body means the same thing wherever it runs; on the
+  draft type, where nothing was going to be sealed, it is simply a no-op.
+
+  [[drafting]] does not honour it, and neither does [[seal]]. The wrapper is implicit, so
+  opting out of it is fair; a `drafting` form is the author asking to seal, and a marker
+  that quietly defeated that would be a hole rather than an escape hatch.
+
+  Anything that is not a draft throws: the marker asserts what is being returned, and a
+  wrong assertion should say so where it is written rather than travel."
+  [d]
+  (if (draft? d)
+    (Unsealed. d)
+    (throw (ex-info (format "unsealed expects a draft, and %s is not one" (pr-str d))
+                    {:error ::not-a-draft :value d}))))
+
+(defn- unmark
+  "The draft an [[unsealed]] marker holds, or `x` exactly as it came."
+  [x]
+  (if (instance? Unsealed x) (.-wrapped ^Unsealed x) x))
+
 (defn- seal-draft [model d]
   ;; Only the checks naming a key the draft wrote are actually run, which is equivalent to
   ;; running all of them: an untouched field still holds the value it had in the validated
@@ -282,21 +321,64 @@
 
   Idempotent: an already-sealed value passes straight through, so `seal` is a projection and a
   sealed value is a fixed point of it. That is what lets a `drafting` body end in a call that
-  may or may not have sealed already, without the caller having to know which."
+  may or may not have sealed already, without the caller having to know which.
+
+  An [[unsealed]] marker is unwrapped and the draft inside it sealed anyway. That marker
+  opts out of the *implicit* seal a protocol method performs; asking to seal and being
+  refused by a marker would be a hole rather than an escape hatch."
   ([d]
-   (cond
-     (draft? d)  (seal (draft-model d) d)
-     (sealed? d) d
-     :else (throw (ex-info "seal expects a draft or an already-sealed value"
-                           {:error ::cannot-seal :value d}))))
+   (let [d (unmark d)]
+     (cond
+       (draft? d)  (seal (draft-model d) d)
+       (sealed? d) d
+       :else (throw (ex-info "seal expects a draft or an already-sealed value"
+                             {:error ::cannot-seal :value d})))))
   ([model d]
-   (if-not (identical? model (draft-model d))
-     (if (identical? model (model-of d))
-       d
-       (throw (ex-info (format "%s: expected a draft or an already-sealed %s, got %s"
-                               (:name model) (:name model) (pr-str (class d)))
-                       {:error ::cannot-seal :record (:name model) :value d})))
-     (seal-draft model d))))
+   (let [d (unmark d)]
+     (if-not (identical? model (draft-model d))
+       (if (identical? model (model-of d))
+         d
+         (throw (ex-info (format "%s: expected a draft or an already-sealed %s, got %s"
+                                 (:name model) (:name model) (pr-str (class d)))
+                         {:error ::cannot-seal :record (:name model) :value d})))
+       (seal-draft model d)))))
+
+(defn- not-of-this-type!
+  [model d]
+  (throw (ex-info (format "%s: unsealed expects a draft of %s, and %s is a draft of %s"
+                          (:name model) (:name model) (pr-str d) (:name (draft-model d)))
+                  {:error ::not-a-draft :record (:name model) :value d})))
+
+(defn- opted-out
+  "The draft an [[unsealed]] marker holds, checked against the type whose method returned
+  it. A method of one type cannot assert what a draft of another is."
+  [model x]
+  (let [d (.-wrapped ^Unsealed x)]
+    (when-not (identical? model (draft-model d)) (not-of-this-type! model d))
+    d))
+
+(defn sealed-impl-return
+  "What a protocol method installed on the *sealed* type hands back.
+
+  The body ran against a draft, so a draft of this type is the value the method produced
+  and is sealed here -- which is what makes a method on a sealed value unable to produce
+  an invalid one whatever it did inside. Anything else is something else entirely -- a
+  number, a string, an already-sealed value, a draft of some other type -- and passes
+  through untouched. An [[unsealed]] marker is the opt-out: the draft comes back free,
+  owned by nothing, so a later `drafting` adopts it rather than mistaking it for its own."
+  [model ret]
+  (cond
+    (instance? Unsealed ret)             (adopt model (opted-out model ret) nil)
+    (identical? model (draft-model ret)) (seal model ret)
+    :else                                ret))
+
+(defn draft-impl-return
+  "What a protocol method installed on the *draft* type hands back: the body's value as
+  written. Only the [[unsealed]] marker is unwrapped, so a body means the same thing
+  wherever it runs; there was nothing to opt out of here, and the draft keeps whatever
+  owner it had, since freeing one an enclosing `drafting` owns would break re-entrancy."
+  [model ret]
+  (if (instance? Unsealed ret) (opted-out model ret) ret))
 
 (defn owned-here?
   "Is `x` a draft belonging to a `drafting` form already on the stack?"
@@ -486,6 +568,59 @@
       :else
       {:name cname :doc nil :args [(symbol (name cname))] :fn form})))
 
+(def reserved-methods
+  "The method names the generated types already carry, and must keep. A protocol method
+  spelled one of these would replace the implementation that makes a value behave as a map:
+  the form would still compile, and the type would quietly stop being one."
+  '#{get assoc dissoc keys meta with-meta empty cons getLookupThunk})
+
+(defn parse-impls
+  "`defrecord`'s trailing forms -> `[:type sym]` and `[:method form]` pairs, in the order
+  they were written.
+
+  One body is installed on two types, so what each form is has to be settled here, while
+  the macro runs. A form that is neither a protocol or interface name nor a method
+  implementation names nothing either type could carry; a method written before any such
+  name belongs to nothing; and an arglist with no receiver leaves the sealed implementation
+  nothing to open a draft of. Each is refused with the offender named, rather than handed
+  to `deftype` to fail somewhere further down with the shape of the original form gone."
+  [tname impls]
+  (let [bad! (fn [form why]
+               (throw (ex-info (format "%s: %s %s" tname (pr-str form) why)
+                               {:error ::malformed-impl :record tname :form form})))]
+    (first
+     (reduce
+      (fn [[acc named?] form]
+        (cond
+          (symbol? form) [(conj acc [:type form]) true]
+
+          (seq? form)
+          (do
+            (when-not named?
+              (bad! form (str "is a method implementation written before any protocol or "
+                              "interface name, so there is nothing for it to implement")))
+            (when-not (symbol? (first form))
+              (bad! form "does not begin with a method name"))
+            (when-not (vector? (second form))
+              (bad! form (str "has no arglist -- a method implementation is a name, an "
+                              "arglist and a body")))
+            (when (empty? (second form))
+              (bad! form (str "has an arglist with no receiver, and the receiver is what "
+                              "the sealed implementation opens a draft of")))
+            (when (contains? reserved-methods (first form))
+              (throw (ex-info (format (str "%s implements %s, which is one of the methods "
+                                           "that make a %s behave as a map -- a protocol "
+                                           "method of that name would replace it")
+                                      tname (first form) tname)
+                              {:error ::reserved-method :record tname :method (first form)
+                               :form form :reserved reserved-methods})))
+            [(conj acc [:method form]) named?])
+
+          :else
+          (bad! form (str "is neither a protocol or interface name nor a method "
+                          "implementation"))))
+      [[] false] impls))))
+
 (defmacro defrecord
   "Define a validated map-like type with a real field per declared key, so reads and writes
   are field access rather than map lookups.
@@ -535,9 +670,20 @@
   A field becomes a key qualified by the namespace this form is written in -- a `Heist`
   defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
   `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
-  declare, so two types that happen to share a field name share nothing else."
-  [tname fields definition]
+  declare, so two types that happen to share a field name share nothing else.
+
+  Trailing forms are protocol implementations, written once and installed on both generated
+  types. On the draft type the body runs as written. On the sealed type it is wrapped: the
+  method opens a draft of the receiver, runs the body against that, and seals the result --
+  so a method called on a sealed value cannot produce an invalid one whatever it does
+  inside, and the same body serves the impl layer unchanged. Only a draft of this type is
+  sealed on the way out; a number, a string, an already-sealed value, a draft of some other
+  type, all pass through untouched. The receiver is a draft in both cases, so a body asking
+  `(instance? Heist h)` would surprise itself and wants [[of-type?]]. [[unsealed]] opts a
+  return out of the seal."
+  [tname fields definition & impls]
   (let [{:keys [options checks]} (parse-definition tname definition)
+        impl-forms (parse-impls tname impls)
         model-sym (symbol (str tname "-model"))
         fsyms     (mapv #(with-meta % nil) fields)
         ;; The defining namespace qualifies the keys, so a field named `name` is
@@ -553,6 +699,7 @@
         tgthint   (with-meta tgtsym {:tag tname})
         dname     (symbol (str tname "Draft"))
         [extsym dirtysym ownsym tokensym] (map gensym ["ext" "dirty" "own" "token"])
+        [selfsym toksym] (map gensym ["self" "token"])
         dvsym     (with-meta (gensym "d") {:tag dname})
         svsym     (with-meta (gensym "s") {:tag tname})
         dfield    (fn [f] (list '. dvsym (symbol (str "-" f))))
@@ -588,6 +735,33 @@
         index     (reduce (fn [idx i] (reduce #(update %1 %2 (fnil conj []) i) idx (deps-of i)))
                           {} (range nchecks))
         independent (filterv #(empty? (deps-of %)) (range nchecks))
+        ;; ---- the protocol implementations ----
+        ;; The draft type runs the body as written; only the `unsealed` marker is unwrapped,
+        ;; so a body means the same thing wherever it runs.
+        draft-impls (mapv (fn [[kind form]]
+                            (if (= kind :type)
+                              form
+                              (let [[mname args & body] form]
+                                `(~mname ~args (draft-impl-return ~model-sym (do ~@body))))))
+                          impl-forms)
+        ;; The sealed type wraps it: the receiver the body sees is a draft of the value,
+        ;; owned by this call, so an enclosing-style `drafting` inside the body passes it
+        ;; straight through and only the wrapper seals. What comes back is sealed only if
+        ;; it is a draft of this type -- most methods return something else entirely.
+        sealed-impls (mapv (fn [[kind form]]
+                             (if (= kind :type)
+                               form
+                               (let [[mname args & body] form
+                                     recv (first args)]
+                                 `(~mname [~(with-meta selfsym (meta recv)) ~@(rest args)]
+                                    (sealed-impl-return
+                                     ~model-sym
+                                     (let [~toksym (Object.)]
+                                       (binding [*owner* ~toksym]
+                                         (let [~recv ((:draft-from ~model-sym)
+                                                      ~selfsym ~toksym)]
+                                           ~@body))))))))
+                           impl-forms)
         ;; Run the checks at `idxs` over the expressions `argvs-of` gives for each -- locals
         ;; or direct field reads, so evaluating one twice costs nothing. Every check in the
         ;; group is called before any verdict is read, because a failure does not stop the
@@ -668,7 +842,9 @@
                                    (. ~tgthint ~(symbol (str "-" f)))
                                    ~thunksym)))])
                        (map vector ks fsyms))
-             nil)))
+             nil))
+
+         ~@sealed-impls)
 
        ;; The draft: the same real fields, plus a map for keys the type does not declare and a
        ;; bitmask of which declared fields have been written. Extraneous keys set no bit, so
@@ -697,7 +873,9 @@
          (~'meta [_#] ~mtasym)
          (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym dirtysym ownsym mta2sym))
          (~'cons [this# ~osym]
-           (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym)) this# (entries-of ~osym))))
+           (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym)) this# (entries-of ~osym)))
+
+         ~@draft-impls)
 
        (def ~model-sym
          {:name        '~tname
