@@ -48,12 +48,14 @@
     (let [d (rec/draft job)]
       (is (identical? d (dissoc d :never-there))))))
 
-(deftest seal-reports-a-field-never-written
+(deftest seal-judges-a-field-never-written-as-nil
   (let [e (err #(rec/drafting [x Heist] (assoc x ::heist/name "X")))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (contains? #{::heist/crew ::heist/take ::heist/cuts} (:key e)))))
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::heist/crew ::heist/take ::heist/cuts] (vec (keys (:failures e))))
+        "each shape check says what it thinks of the nil nobody wrote, and the two
+         cross-field checks wait on them")))
 
-;;; --------------------------- "never written" is not "written to nil" ---------------------------
+;;; ------------------------- "never written" is "written to nil" -------------------------
 
 (rec/defrecord Note
   [title body]
@@ -61,12 +63,14 @@
    {::title string?
     ::body  ([body] (or (nil? body) (string? body)))}})
 
-(deftest nil-is-a-legal-value-when-the-check-admits-it
+(deftest nil-is-a-legal-value-when-the-shape-check-admits-it
   (let [n (rec/drafting [x Note] (merge x {::title "t" ::body nil}))]
     (is (nil? (::body n)))
     (is (= [::title ::body] (keys n)) "the field is present, holding nil"))
-  (testing "leaving it unwritten is a different thing entirely"
-    (is (= ::rec/missing-field (:error (err #(rec/drafting [x Note] (assoc x ::title "t"))))))))
+  (testing "and leaving it unwritten is the same thing, judged the same way"
+    (let [n (rec/drafting [x Note] (assoc x ::title "t"))]
+      (is (nil? (::body n)))
+      (is (= [::title ::body] (keys n))))))
 
 ;;; --------------------------------------- drafting ---------------------------------------
 

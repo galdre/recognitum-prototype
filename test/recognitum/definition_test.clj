@@ -90,7 +90,8 @@
     (is (rec/sealed? (map->Bare {::a 1 ::b 2})))
     (is (= 1 (::a (->Bare 1 2))))
     (is (= ::rec/unknown-field (:error (err #(assoc (->Bare 1 2) :a 1)))))
-    (is (= ::rec/missing-field (:error (err #(map->Bare {::a 1})))))
+    (is (rec/sealed? (map->Bare {::a 1}))
+        "a key the map omits is nil, and a type with no checks has nothing to say about it")
     (is (rec/sealed? (rec/drafting [d Bare] (assoc d ::a 1) (-> d (assoc ::a 1) (assoc ::b 2)))))))
 
 (deftest a-section-may-be-present-and-empty

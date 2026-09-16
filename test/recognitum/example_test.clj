@@ -123,8 +123,9 @@
                 (assoc ::heist/cuts {:charlie 1}))
           e (err #(rec/check d ::heist/crew-is-vouched-for))]
       (is (= ::rec/check-failed (:error e)))
-      (is (= [::heist/crew ::heist/only-crew-get-cuts] (keys (:failures e)))
-          "the check asked about never ran, so the gate's failures are the answer")
+      (is (= [::heist/crew] (keys (:failures e)))
+          "the check asked about never ran, so the gate's failure is the answer --
+           and ::only-crew-get-cuts, which is the rest of that gate, waits on ::crew too")
       (is (= 0 (roster/call-count))))))
 
 ;;; ------------------------------ deduplication across values ------------------------------
@@ -273,12 +274,23 @@
 
 (defn- hand-verdict
   "What the bench's hand-rolled side says about `m`, a bare-keyed map: `:ok`, `:rejected`,
-  or `:threw`. Every predicate runs, as the library runs every check, so that a throw in
-  one is not hidden by an earlier one having already said no."
+  or `:threw`.
+
+  In the library's own two phases: each field predicate is that field's shape check, and a
+  cross-field predicate runs only where the shape predicates over the fields it reads came
+  back true. Every predicate that runs does run, so a throw in one is not hidden by an
+  earlier one having already said no -- which is what makes this an oracle for gating
+  rather than a restatement of it."
   [m]
-  (let [rs (for [f (concat (map (fn [[k p]] #(p (get m k))) bench/field-preds)
-                           [#(bench/cuts-add-up? m) #(bench/only-crew? m)])]
-             (try (boolean (f)) (catch Throwable _ :threw)))]
+  (let [shape (into {}
+                    (map (fn [[k p]]
+                           [k (try (boolean (p (get m k))) (catch Throwable _ :threw))]))
+                    bench/field-preds)
+        cross (for [[p ks] [[#(bench/cuts-add-up? m) [:take :cuts]]
+                            [#(bench/only-crew? m)   [:crew :cuts]]]
+                    :when (every? #(true? (get shape %)) ks)]
+                (try (boolean (p)) (catch Throwable _ :threw)))
+        rs    (concat (vals shape) cross)]
     (cond (some #{:threw} rs) :threw
           (every? true? rs)   :ok
           :else               :rejected)))

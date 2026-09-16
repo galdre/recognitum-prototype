@@ -248,7 +248,8 @@
     (is (= 1 (ran ::a)))
     (let [e (err #(rec/seal d))]
       (is (= ::rec/check-failed (:error e)))
-      (is (= [::a ::a-fits] (vec (keys (:failures e))))))
+      (is (= [::a] (vec (keys (:failures e))))
+          "::a-fits waits on ::a, so it is not run against what ::a rejected"))
     (is (= 2 (ran ::a)) "the failing check ran again")))
 
 (deftest a-second-seal-runs-only-what-is-still-not-passing
@@ -261,16 +262,22 @@
     (is (= {::a 1 ::b 1 ::a-fits 2 ::always 1} (counts))
         "only the check that failed was run again")))
 
-(deftest seal-still-reports-every-failure-in-declaration-order
+(deftest seal-still-reports-every-failure-in-phase-order
   (reset-runs!)
   (let [e (err #(rec/seal (-> (rec/draft Ledger)
                               (assoc ::a "not an int") (assoc ::b :not-a-string)
                               (assoc ::c :x))))]
     (is (= ::rec/check-failed (:error e)))
-    (is (= [::a ::b ::a-fits] (vec (keys (:failures e))))
-        "three failures, one throw, in the order the type declares its checks")
-    (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))
-        "none of them stopped the pass")))
+    (is (= [::a ::b] (vec (keys (:failures e))))
+        "two failures, one throw, in the order the type declares its checks")
+    (is (= {::a 1 ::b 1 ::a-fits 0 ::always 1} (counts))
+        "neither shape failure stopped the pass, and ::a-fits waits on both of them"))
+  (testing "and where the shapes hold, what waits on them is what is reported"
+    (reset-runs!)
+    (let [e (err #(rec/seal (-> (rec/draft Ledger)
+                                (assoc ::a 99) (assoc ::b "xx") (assoc ::c :x))))]
+      (is (= [::a-fits] (vec (keys (:failures e)))))
+      (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))))))
 
 (deftest fixing-the-field-and-sealing-again-works
   (reset-runs!)
@@ -299,13 +306,17 @@
 
 ;;; --------------------- what seal refuses, it refuses before running ---------------------
 
-(deftest a-field-never-written-is-refused-before-any-check-runs
+(deftest a-field-never-written-is-judged-as-nil
+  ;; There is nothing to refuse: the field holds nil, as it would on a `defrecord` whose
+  ;; field was never set, and its shape check is what says whether that will do. `c` is
+  ;; named by no check, so nothing has anything to say about it and it seals holding nil.
   (reset-runs!)
   (let [e (err #(rec/seal (assoc (rec/draft Ledger) ::a 1)))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (contains? #{::b ::c} (:key e))))
-  (is (= {::a 0 ::b 0 ::a-fits 0 ::always 0} (counts))
-      "an incomplete draft is not a value to run checks against"))
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::b] (vec (keys (:failures e)))))
+    (is (= {::b nil} (:values (get (:failures e) ::b)))))
+  (is (= {::a 1 ::b 1 ::a-fits 0 ::always 1} (counts))
+      "every check that could run did; ::a-fits waits on ::b"))
 
 (deftest undeclared-keys-are-refused-before-any-check-runs
   (reset-runs!)

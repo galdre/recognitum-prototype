@@ -286,12 +286,13 @@
     (is (= 1 (ran ::crew)) "the gate ran")
     (is (= 0 (ran ::name)) "and nothing else did")))
 
-(deftest a-field-a-batched-io-dep-names-must-have-been-written
+(deftest a-field-a-batched-io-dep-names-is-gated-as-nil-like-any-other
   (let [d (assoc (rec/draft Job) ::cuts {:charlie 1})
         e (err #(rec/check d ::only-roster-gets-a-cut))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (= [::crew] (:keys e)) "named through the batch that names it")
-    (is (= 0 (ran ::roster)))))
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::crew] (vec (keys (:failures e))))
+        "the gate over the field the batch names, judging the nil nobody wrote")
+    (is (= 0 (ran ::roster)) "so no tuple was built and nothing was handed anywhere")))
 
 ;;; ------------------------------ what a batched fetch returns ------------------------------
 

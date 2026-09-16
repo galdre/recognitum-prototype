@@ -125,7 +125,8 @@
   (let [d (whole "a title longer than the body" "short" :memo)]
     (is (true? (rec/check d ::title)))
     (is (false? (rec/check d ::long)) "the body says less than the title")
-    (is (= #{::title} (passed d)))
+    (is (= #{::title ::body} (passed d))
+        "::long waits on both shape checks, so establishing it established them")
     (is (= #{} (certs d)))))
 
 (deftest certifying-shows-up-as-the-certificate-being-held

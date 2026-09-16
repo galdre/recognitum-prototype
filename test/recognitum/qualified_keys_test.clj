@@ -122,8 +122,8 @@
   (is (instance? Heist (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a}
                                           ::heist/take 10 ::heist/cuts {:a 10}})))
   (let [e (err #(heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10}))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (= ::heist/cuts (:key e))))
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::heist/cuts] (vec (keys (:failures e)))) "the omitted key is nil, and judged"))
   (is (contains? (:failures (err #(heist/map->Heist {::heist/name "" ::heist/crew #{:a}
                                                      ::heist/take 10 ::heist/cuts {:a 10}})))
                  ::heist/name)))
@@ -139,8 +139,9 @@
                    ::heist/name))
     (is (= [::heist/cuts-sum-to-take]
            (keys (:failures (err #(heist/map->Heist {:name "x" :crew #{:a} :take 9 :cuts {:a 1}}))))))
-    (is (= ::rec/missing-field
-           (:error (err #(heist/map->Heist {:name "x" :crew #{:a} :take 1}))))))
+    (is (= [::heist/cuts]
+           (keys (:failures (err #(heist/map->Heist {:name "x" :crew #{:a} :take 1})))))
+        "a key the map omits is nil, and the shape check over it judges nil"))
   (testing "a bare key naming no field is taken as given and reported as written"
     (let [e (err #(heist/map->Heist {:name "x" :crew #{:a} :take 1 :cuts {:a 1}
                                      :getaway-car "mini"}))]

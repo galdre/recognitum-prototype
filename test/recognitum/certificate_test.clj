@@ -337,16 +337,19 @@
 
 (deftest certify-reports-only-the-checks-the-certificate-names
   (let [d (whole :untitled #{:a :b} :free nil)]
-    (is (= {::pay false ::paid-enough false} (rec/certify d ::payroll))
-        "::title fails too, and is no business of this certificate")
+    (is (= {::pay false} (rec/certify d ::payroll))
+        "::title fails too, and is no business of this certificate -- and ::paid-enough
+         waits on ::pay, so it did not run")
     (is (= {::title false ::pay false} (rec/certify d ::shape))
         "::paid-enough shares a field with ::pay and is still no part of ::shape")))
 
 (deftest certify-runs-everything-it-was-asked-to-and-stops-at-no-failure
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n :no) (assoc ::s :no))]
-    (is (= {::n false ::s false ::both false} (rec/certify d rec/every-check)))
-    (is (= {::n 1 ::s 1 ::both 1} @runs))))
+    (is (= {::n false ::s false} (rec/certify d rec/every-check))
+        "both shape checks ran and both are reported -- the first failure stopped neither")
+    (is (= {::n 1 ::s 1} @runs)
+        "::both waits on the pair, so it was not run and is not reported")))
 
 (deftest the-failure-map-is-ordered-at-any-size
   ;; A map literal would have stopped holding its insertion order at eight entries.
@@ -431,39 +434,32 @@
 
 ;;; -------------------------- a check needs something to read --------------------------
 
-(deftest a-certificate-waiting-on-a-field-nobody-wrote-cannot-run
-  (let [d (rec/draft Job)
-        e (err #(rec/certify d ::shape))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (= 'Job (:record e)))
-    (is (= [::title ::crew ::pay] (vec (keys (:waiting e))))
-        "every check that is waiting, not merely the first")
-    (is (= [::title] (get (:waiting e) ::title)))
-    (is (= [::title ::crew ::pay] (:keys e)))
-    (testing "certify! says the same thing"
-      (is (= ::rec/missing-field (:error (err #(rec/certify! d ::shape))))))
-    (testing "and nothing is recorded, because nothing was determined"
+(deftest a-certificate-over-fields-nobody-wrote-judges-nil
+  ;; There is nothing to refuse here: a field nobody wrote holds nil, and what each shape
+  ;; check thinks of nil is a better answer than the library reporting on its own state.
+  (let [d (rec/draft Job)]
+    (is (= {::title false ::crew false ::pay false} (rec/certify d ::shape))
+        "every check in it ran, and every one of them is reported")
+    (testing "certify! throws the ordinary report"
+      (is (= ::rec/check-failed (:error (err #(rec/certify! d ::shape))))))
+    (testing "and nothing is recorded, because nothing passed"
       (is (= #{} (rec/passing d))))))
 
-(deftest it-waits-only-on-what-is-still-unwritten
+(deftest a-cross-field-check-does-not-run-on-a-shape-that-failed
   (let [d (-> (rec/draft Job) (assoc ::title "heist") (assoc ::crew #{:a}))]
-    (let [e (err #(rec/certify d ::shape))]
-      (is (= [::pay] (vec (keys (:waiting e)))))
-      (is (= [::pay] (:keys e))))
-    (testing "and a cross-field check names every field it is waiting on"
-      (let [e (err #(rec/certify d ::payroll))]
-        (is (= [::pay ::paid-enough] (vec (keys (:waiting e)))))
-        (is (= [::pay] (get (:waiting e) ::pay)))
-        (is (= [::pay] (get (:waiting e) ::paid-enough))
-            "::crew is written, so it is not waiting on that")))))
+    (is (= {::pay false} (rec/certify d ::shape))
+        "::title and ::crew were written and pass; ::pay judges the nil nobody wrote")
+    (is (= {::pay false} (rec/certify d ::payroll))
+        "::paid-enough waits on ::pay, so it neither runs nor appears")
+    (is (not (contains? (rec/passing d) ::paid-enough))
+        "and it is not recorded as passing either")))
 
-(deftest a-certificate-already-established-answers-without-waiting
-  ;; The pre-flight is over what is left to run, so a certificate already held answers
-  ;; rather than asking again what its checks were given.
-  (let [d (rec/draft job)
+(deftest a-certificate-already-established-answers-without-running-anything
+  (let [d  (rec/draft job)
         d' (assoc (rec/draft Job) ::title "heist")]
     (is (true? (rec/certify d ::shape)))
-    (is (= ::rec/missing-field (:error (err #(rec/certify d' ::shape)))))))
+    (is (= {::crew false ::pay false} (rec/certify d' ::shape))
+        "and one that is not established runs what it has to")))
 
 (deftest certify-does-not-demand-the-fields-of-checks-it-does-not-name
   (let [d (-> (rec/draft Job) (assoc ::pay 10) (assoc ::crew #{:a :b}))]
@@ -520,8 +516,11 @@
 (deftest holding-every-certificate-is-not-a-licence-to-seal
   (let [d (-> (rec/draft Job) (assoc ::pay 10) (assoc ::crew #{:a :b}))]
     (is (true? (rec/certify d ::payroll)))
-    (is (= ::rec/missing-field (:error (err #(rec/seal d))))
-        "a certificate is a claim about checks, not about being whole")))
+    (let [e (err #(rec/seal d))]
+      (is (= ::rec/check-failed (:error e))
+          "a certificate is a claim about the checks it names and nothing else")
+      (is (= [::title] (vec (keys (:failures e))))
+          "::title judges the nil nobody wrote; ::notes admits nil and passes"))))
 
 (deftest a-certified-draft-still-seals
   (let [d (whole)]

@@ -50,15 +50,15 @@ referring it — the two then coexist in one namespace without ceremony:
     ::take non-neg-int?
     ::cuts cuts-map?
 
+    ;; Neither of these is named after a field, so each waits on the shape checks of the
+    ;; fields it names -- and restates neither of them.
     ::cuts-sum-to-take
     ("the cuts add up to the take"
-     [take cuts] (and (non-neg-int? take) (cuts-map? cuts)
-                      (= take (reduce + 0 (vals cuts)))))
+     [take cuts] (= take (reduce + 0 (vals cuts))))
 
     ::only-crew-get-cuts
     ("only crew get a cut"
-     [crew cuts] (and (crew-set? crew) (cuts-map? cuts)
-                      (every? crew (keys cuts))))
+     [crew cuts] (every? crew (keys cuts)))
 
     ::crew-is-vouched-for
     ("everyone the house has on file for this crew is vetted"
@@ -119,10 +119,25 @@ that is not a declared io-dep, a name used for both a check and an io-dep, or a 
 io-deps is a compile error naming the offender. There is no second way to declare a dependency
 anywhere in the form.
 
-Checks have no ordering among themselves, and every one of them runs. A check spanning two
-fields therefore sees whatever those fields hold, including shapes the checks over them are
-rejecting in the same pass — which is why the two cross-field checks above restate what they
-need rather than assuming an earlier check stopped anything.
+### Shape checks
+
+**A check named after a field is that field's shape check.** `::name`, whether written as the
+shorthand or as `::name ([name] …)`, is the check that says what a well-formed `name` is. The
+naming convention is the declaration; nothing else marks it, and a shape check names exactly its
+own field or the form does not compile.
+
+**Every other check waits on the shape checks of the fields it names.** `::cuts-sum-to-take
+[take cuts]` runs only once `::take` and `::cuts` have passed, so it receives well-formed input
+by construction and restates nothing — which is why a throw out of it is a genuine bug in the
+check, exactly as the contract below says a throw is.
+
+A check whose gate has not passed does not run and is not reported. The shape failure is the
+actionable one; "did not run because `cuts` is not a map" adds nothing to "`cuts` is not a map".
+So failures come back in three phases — shape checks, then the other pure checks, then the
+IO-bound ones — and in declaration order within a phase.
+
+A field with no shape check has no declared shape. The checks naming it run against whatever it
+holds and have to be total over anything. That is the author's choice, made loudly.
 
 ### The contract
 
@@ -293,9 +308,9 @@ are not retained: the call that finds one returns it, and a later call runs anyt
 and produces it again. Every one of these runs everything it was asked to run and reports every
 failure; none stops at the first.
 
-A check naming a field the draft has never been written to reports `:missing-field` rather than
-being handed something no author could recognise. "Never written" and "written to `nil`" are
-different things throughout.
+A field the draft has never been written to reads as `nil`, so a check naming one judges `nil`
+and answers for it. There is no state distinct from `nil` to report, and nothing to be told
+about before the checks can run.
 
 ### Metadata
 
@@ -441,8 +456,8 @@ computed from the arglists rather than restated by you.
 ```
 
 Both run every check, because construction touches every field. `map->Heist` additionally
-rejects a key the type does not declare, and reports a key it declares and the map omits as
-`:missing-field`.
+rejects a key the type does not declare; a key it declares and the map omits is `nil`, as it
+would be on a `defrecord`, and that field's shape check says whether `nil` is acceptable.
 
 It takes either spelling: a bare keyword naming a declared field is qualified into the type's
 namespace, and anything else is taken as written, so a stray `:getaway-car` is reported as
@@ -461,8 +476,9 @@ Where the fields are not all in hand at once, build it the way you would update 
   (reduce apply-fragment h fragments))
 ```
 
-A field never written is reported at seal as `:missing-field`. `nil` is a legal value where a
-check accepts it; a field no check mentions still has to be written.
+A field never written is `nil` at the seal, and its shape check is what decides whether that is
+acceptable. There is no separate notion of a missing field: absence is `nil`, as on a
+`defrecord`, and a field with no shape check seals holding it.
 
 ## Undeclared keys
 
@@ -495,7 +511,6 @@ Everything throws `ex-info` with an `:error` key you can dispatch on. The keys a
 | `:check-failed` | a check returned something other than `true` |
 | `:unknown-field` | `assoc` of a key the type does not declare |
 | `:extraneous-keys` | sealing a draft holding undeclared keys |
-| `:missing-field` | a field never written, at seal or where a check reads it |
 | `:cannot-dissoc` | `dissoc` of a declared field — use `assoc … nil` if its checks admit nil |
 | `:cannot-seal` | sealing something that is neither a draft nor an already-sealed value |
 | `:io-limited` | a direct `assoc` or `merge` on a sealed value of an `:io-limited` type |

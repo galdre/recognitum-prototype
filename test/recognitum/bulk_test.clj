@@ -307,8 +307,9 @@
 (deftest the-gate-is-established-as-a-verdict-like-anything-else
   (let [d (crew-draft "one" #{:charlie} {:charlie 1})]
     (is (= [true] (rec/check-all [d] ::known-get-cuts)))
-    (is (= #{::crew ::known-get-cuts} (rec/passing d))
-        "the check asked about, and what had to pass before it could fetch")
+    (is (= #{::crew ::cuts ::known-get-cuts} (rec/passing d))
+        "the check asked about, the shape check of the field it names, and the gate its
+         fetch waited on")
     (is (= 0 (ran ::name)) "and nothing that gates nothing")))
 
 ;;; --------------------------------- the bang forms ---------------------------------
@@ -340,13 +341,18 @@
     (is (= [::b] (vec (keys (get (:failures e) 2)))))))
 
 (deftest a-failure-carries-the-same-report-it-carries-anywhere-else
-  (let [e (err #(rec/certify-all! [(ledger :nope 7)] rec/every-check))
+  ;; The shapes pass here, which is what lets ::fits run at all and therefore be reported.
+  (let [e (err #(rec/certify-all! [(ledger 9 "xx")] rec/every-check))
         f (get-in (:failures e) [0 ::fits])]
     (is (= "a fits inside b" (:doc f)) "the docstring where there is one")
-    (is (nil? (:doc (get-in (:failures e) [0 ::a]))))
     (is (= [::a ::b] (vec (keys (:values f)))) "the fields it declared, in arglist order")
-    (is (= {::a :nope ::b 7} (into {} (:values f))))
-    (is (false? (:returned f)))))
+    (is (= {::a 9 ::b "xx"} (into {} (:values f))))
+    (is (false? (:returned f))))
+  (testing "and a check written without one says nothing where the docstring would be"
+    (let [f (get-in (:failures (err #(rec/certify-all! [(ledger :nope 7)] rec/every-check)))
+                    [0 ::a])]
+      (is (nil? (:doc f)))
+      (is (= {:not-an-int :nope} (:returned f))))))
 
 (deftest the-message-names-the-value-a-failure-belongs-to
   (let [ds [(ledger 1 "xxx") (ledger :nope "xxx")]
@@ -370,37 +376,32 @@
 
 ;;; ------------------------------- a value nobody wrote -------------------------------
 
-(deftest a-check-cannot-run-against-a-field-nobody-wrote
-  (let [ds [(ledger 1 "xxx") (assoc (rec/draft Ledger) ::a 1)]
-        e  (err #(rec/check-all ds ::fits))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (= 'Ledger (:record e)))
-    (is (true? (:bulk e)))
-    (is (= [1] (:indexes e)) "the values that could not be judged")
-    (is (= {1 {::fits [::b]}} (:waiting e))
-        "keyed by index, and under it the check and the fields it is waiting on")
-    (testing "and nothing was run for anybody"
-      (is (= #{} (rec/passing (first ds))) "the pre-flight is over the whole group"))))
+(deftest a-field-nobody-wrote-is-judged-as-nil-for-that-value-alone
+  ;; No pre-flight: a draft nobody finished is an ordinary draft holding nils, and the
+  ;; shape check over each of them says what it thinks. One incomplete value discards
+  ;; nothing about the others.
+  (let [ds [(ledger 1 "xxx") (assoc (rec/draft Ledger) ::a 1)]]
+    (is (= [true {::b :nope}] (rec/check-all ds ::fits))
+        "::fits waits on ::b, which judged the nil nobody wrote")
+    (is (= #{::a ::b ::fits} (rec/passing (first ds)))
+        "and the whole value was established, not held up by the other one")))
 
-(deftest every-value-that-cannot-be-judged-is-named-at-once
+(deftest every-value-answers-for-itself
   (let [ds [(assoc (rec/draft Ledger) ::a 1)
             (ledger 1 "xxx")
-            (rec/draft Ledger)]
-        e  (err #(rec/certify-all ds ::shape))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (= [0 2] (:indexes e)))
-    (is (= {::b [::b]} (get (:waiting e) 0)))
-    (is (= {::a [::a] ::b [::b]} (get (:waiting e) 2))
-        "every check waiting, and every field it waits on")))
+            (rec/draft Ledger)]]
+    (is (= [{::b :nope} true {::a {:not-an-int nil} ::b :nope}]
+           (rec/certify-all ds ::shape))
+        "index-aligned, and each of them the whole of what that value owes")))
 
-(deftest an-unwritten-field-behind-a-fetch-stops-the-fetch
+(deftest an-unwritten-field-behind-a-fetch-stops-that-values-fetch
   (let [ds [(crew-draft "one" #{:charlie} {:charlie 1})
-            (assoc (rec/draft Crew) ::cuts {:lyle 1})]
-        e  (err #(rec/check-all ds ::known-get-cuts))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (= {1 {::known-get-cuts [::crew] ::crew [::crew]}} (:waiting e))
-        "the check, named through the fetch that names it, and the gate in front of it")
-    (is (= 0 (ran ::roster)) "and nothing reached the outside")))
+            (assoc (rec/draft Crew) ::cuts {:lyle 1})]]
+    (is (= [true {::crew false}] (rec/check-all ds ::known-get-cuts))
+        "the gate over the field the fetch names is what the second value failed")
+    (is (= 1 (ran ::roster)) "one fetch, for the value that earned it")
+    (is (= [[#{:charlie}]] (first @handed))
+        "and the incomplete value's tuple was not carried to the outside")))
 
 ;;; --------------------------------- what is refused ---------------------------------
 
@@ -440,11 +441,13 @@
          (:error (err #(rec/certify-all! [(ledger 1 "xxx")] ::nonesuch))))))
 
 (deftest the-built-in-certificate-covers-the-group-as-it-covers-one
-  (let [ds [(ledger 1 "xxx") (ledger :nope 7)]
+  (let [ds [(ledger 1 "xxx") (ledger :nope 7) (ledger 9 "xx")]
         rs (rec/certify-all ds rec/every-check)]
     (is (true? (first rs)))
-    (is (= [::a ::b ::fits] (vec (keys (second rs))))
-        "every check on the type, in declaration order")))
+    (is (= [::a ::b] (vec (keys (second rs))))
+        "both shape checks, in declaration order; ::fits waits on the pair")
+    (is (= [::fits] (vec (keys (nth rs 2))))
+        "and where the shapes pass, the check that waits on them is what is left")))
 
 ;;; ------------------------------- a fetch that throws -------------------------------
 

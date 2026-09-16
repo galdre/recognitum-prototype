@@ -95,8 +95,9 @@
 
 (deftest map-constructor-validates
   (is (instance? Heist (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10 ::heist/cuts {:a 10}})))
-  (is (= ::rec/missing-field
-         (:error (err #(heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))))
+  (let [e (err #(heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10}))]
+    (is (= ::rec/check-failed (:error e)) "the omitted key is nil, and ::cuts judges nil")
+    (is (= [::heist/cuts] (vec (keys (:failures e))))))
   (is (= ::rec/extraneous-keys
          (:error (err #(heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10 ::heist/cuts {:a 10} :x 1})))))
   (is (= ::rec/check-failed
@@ -107,10 +108,13 @@
   ;; in this library is one function call away from being bypassed.
   (is (= ::rec/check-failed (:error (err #(heist/->Heist "" :not-a-set -999 "garbage"))))
       "the forging attempt that used to succeed")
-  (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts
-          ::heist/cuts-sum-to-take ::heist/only-crew-get-cuts]
+  (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts]
          (vec (keys (:failures (err #(heist/->Heist "" :not-a-set -999 "garbage"))))))
-      "and it is told everything that is wrong with it, not the first thing")
+      "and it is told every shape that is wrong, not the first -- the two cross-field
+       checks wait on those shapes and are not run against them")
+  (is (= [::heist/cuts-sum-to-take ::heist/only-crew-get-cuts]
+         (vec (keys (:failures (err #(heist/->Heist "Job" #{:a} 99 {:b 10}))))))
+      "and once the shapes hold, both of the checks that waited on them are reported")
   (is (nil? (resolve 'recognitum.heist/->HeistDraft))
       "and the draft type's raw factory is unmapped"))
 

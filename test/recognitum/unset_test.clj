@@ -127,8 +127,8 @@
 (deftest a-draft-prints-every-declared-field
   (let [s (pr-str (rec/draft Note))]
     (is (str/starts-with? s "#<Note draft "))
-    (doseq [k [::title ::body ::tags]]
-      (is (str/includes? s (str k)) (str "the printed draft omits " k)))))
+    (doseq [k ["title" "body" "tags"]]
+      (is (str/includes? s (str ":" k)) (str "the printed draft omits " k)))))
 
 ;;; --------------------------------- the error itself is gone ---------------------------------
 

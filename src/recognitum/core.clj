@@ -10,7 +10,20 @@
   it returned is the failure data. An exception is neither: a throw is a bug in the check
   rather than a verdict about the data, so it propagates untouched. Nothing stops at the
   first failure either -- every entry point runs everything it was asked to run and throws
-  once with all of it, keyed by check name in declaration order.
+  once with all of it, keyed by check name.
+
+  A check named after a field is that field's shape check: the statement of what a
+  well-formed value of that field is. It names exactly that field or the form does not
+  compile, and every other check waits on the shape checks of the fields it names -- so a
+  check spanning two fields receives well-formed input by construction and restates
+  nothing, and one whose gate has not passed neither runs nor appears among the failures.
+  That makes three phases, which is the order failures come back in: shape checks, then the
+  other pure checks, then the IO-bound ones, in declaration order within each.
+
+  A field nobody has written reads as `nil`, everywhere, exactly as it would on a
+  `defrecord` whose field was never set. There is no sentinel and no state distinct from
+  `nil`: a draft opened from the type starts with every field `nil`, and whether that will
+  do is the shape check's business and nobody else's.
 
   A write to a validated value runs the checks naming the field written, so such a value
   is never observable in an invalid state. A draft is not a validated value: writes into
@@ -204,29 +217,38 @@
   [model ks]
   (into (sorted-set) (mapcat (:index model)) ks))
 
-(defn- io-bound?
-  "Does the check at `i` name an io-dep, directly or through one? That is the whole of what
-  makes something IO-bound, and it is visible in the arglist where it is written."
-  [model i]
-  (seq (:io (nth (:checks model) i))))
+(defn- phases
+  "`[shape pure io]`: `idxs` split into the three phases anything here runs them in, each
+  keeping the order it was given in -- which is declaration order everywhere these are
+  built.
 
-(defn- pure-of "Those of `idxs` that reach no io-dep." [model idxs]
-  (filterv #(not (io-bound? model %)) idxs))
+  Shape first, because a check named after a field is the statement of what that field is
+  and everything else waits on it; the IO-bound ones last, because nothing reaches the
+  outside until the values it will carry there are known to be well-formed. Within a phase
+  there is no ordering to compute: shape checks depend on nothing, and every other check
+  depends only on shape checks.
 
-(defn- io-of "Those of `idxs` that reach one." [model idxs]
-  (filterv #(io-bound? model %) idxs))
-
-(defn- split-pending
-  "`[pure io]`: those of `idxs` that reach no io-dep, and those that do.
-
-  Asked as one question because the usual answer is that none of them do -- a type with no
-  `:io-deps` cannot have an IO-bound check at all -- and that answer is reached in one pass
-  over the indices rather than two passes building two vectors."
+  One pass, because the usual answer is that nothing is IO-bound and most types have a
+  shape check for every field."
   [model idxs]
   (let [cs (:checks model)]
-    (if (some #(seq (:io (nth cs %))) idxs)
-      [(pure-of model idxs) (io-of model idxs)]
-      [idxs []])))
+    (reduce (fn [[s p i] j]
+              (let [c (nth cs j)]
+                (cond
+                  (:shape c)    [(conj s j) p i]
+                  (seq (:io c)) [s p (conj i j)]
+                  :else         [s (conj p j) i])))
+            [[] [] []] idxs)))
+
+(defn- gate-broken?
+  "Did any shape check gating the check at `i` fail in this pass? `failed` is the set of
+  check indices that did.
+
+  What a sealed value's paths ask, where there is no verdict mask to read: every check of
+  the type passed when the value was made, so a gate that is not among the ones just run is
+  a gate that passed."
+  [model i failed]
+  (boolean (some failed (:shape-gate (nth (:checks model) i)))))
 
 (defn- batch-answer!
   "What a batched fetch returned, insisted on: a map holding an entry for every tuple it was
@@ -326,31 +348,36 @@
   (first (fetch-io-all model [x] [idxs])))
 
 (defn- failures-of
-  "[[failure-entry]] pairs for those of `idxs` that did not return `true`, run through the
-  type's own generated runner -- which reads the fields each check needs directly rather
-  than looking them up. Only the failure path pays for a lookup, to say what it was given.
+  "`[i ret]` for those of `idxs` that did not return `true`, run through the type's own
+  generated runner -- which reads the fields each check needs directly rather than looking
+  them up. Only the failure path pays for a lookup, to say what it was given.
 
   Every one of them runs: a failure does not stop the pass. Only `true` passes, and nothing
   is caught -- a check that throws is a bug in the check rather than a verdict about the
   data."
-  [model run x idxs cache]
-  (let [cs (:checks model)]
-    (reduce (fn [acc i]
-              (let [ret (run i x cache)]
-                (if (true? ret)
-                  acc
-                  (let [c (nth cs i)]
-                    (conj acc (failure-entry c ret (dep-values model c x cache)))))))
-            [] idxs)))
+  [run x idxs cache]
+  (reduce (fn [acc i]
+            (let [ret (run i x cache)]
+              (if (true? ret) acc (conj acc [i ret]))))
+          [] idxs))
+
+(defn- failure-entries
+  "The report for `fs`, which is [[failures-of]]'s answer: the check's docstring, the
+  dependencies it declared with what it was handed for each, and what it returned."
+  [model x fs cache]
+  (map (fn [[i ret]]
+         (let [c (nth (:checks model) i)]
+           (failure-entry c ret (dep-values model c x cache))))
+       fs))
 
 (defn- run-group!
   "Run `idxs` and throw once carrying every failure among them."
   [model run x idxs cache]
-  (let [fs (failures-of model run x idxs cache)]
-    (when (seq fs) (checks-failed! model fs))))
+  (let [fs (failures-of run x idxs cache)]
+    (when (seq fs) (checks-failed! model (failure-entries model x fs cache)))))
 
 (defn- run-io-checks!
-  "Phase two for a value that is not a draft: fetch what the checks at `idxs` name and run
+  "Phase three for a value that is not a draft: fetch what the checks at `idxs` name and run
   them against it.
 
   Reached only once the pure checks have passed, which is the gate -- so the generated
@@ -359,19 +386,27 @@
   (run-group! model (:run-sealed model) x idxs (fetch-io model x idxs)))
 
 (defn- run-checks!
-  "Run the checks at `idxs` against `x` and throw once with every failure.
+  "Run the checks at `idxs` against `x` and throw once with every failure, in phase order.
 
-  Two phases, because shape gates IO. Everything pure runs first and ungated; if any of it
-  failed, the throw happens there and nothing is fetched, because the payload that would
-  trigger a query is the one least worth trusting. Only when the pure phase is clean is
-  anything fetched, and then the IO-bound checks run against what came back.
+  Three phases, because shape gates everything. The shape checks run first and ungated;
+  then the other pure checks, each of them only if the shape checks of the fields it names
+  came back `true` -- so a check spanning two fields is never handed a shape its own type
+  rejected in the same pass, and a check the gate stopped is neither run nor reported,
+  since \"cuts is not a map\" is the actionable failure and \"did not run because cuts is
+  not a map\" adds nothing to it. If any of that failed the throw happens there and nothing
+  is fetched, because the payload that would trigger a query is the one least worth
+  trusting. Only when the pure phases are clean is anything fetched.
 
-  A gate over the fields of a fetch is not needed here beyond that: a sealed value's checks
-  all passed when it was made, so the only ones that can be in doubt are those naming a
-  field being written -- and those are exactly the ones in `idxs`."
+  A gate that is not among `idxs` is a gate that passed: a sealed value's checks all passed
+  when it was made, so the only ones that can be in doubt are those naming a field being
+  written -- and those are exactly the ones in `idxs`."
   [model run x idxs]
-  (let [[pure io] (split-pending model idxs)]
-    (run-group! model run x pure {})
+  (let [[shape pure io] (phases model idxs)
+        f1     (failures-of run x shape {})
+        failed (into #{} (map first) f1)
+        f2     (failures-of run x (remove #(gate-broken? model % failed) pure) {})
+        fs     (into f1 f2)]
+    (when (seq fs) (checks-failed! model (failure-entries model x fs {})))
     (when (seq io) (run-group! model run x io (fetch-io model x io)))))
 
 (defn- entries-of [o]
@@ -472,10 +507,6 @@
 
 ;;; ------------------------------------------ Draft ------------------------------------------
 
-(def ^:private unset
-  "Marks a declared field a draft has never been written to, so `nil` stays a legal value."
-  (Object.))
-
 (defonce ^:private draft-registry (atom {}))
 
 (defn- register-draft! "Associate a draft class with its model map." [cls model]
@@ -569,90 +600,6 @@
                       {:error ::unknown-check :record (:name model) :check cname
                        :checks (mapv :name (:checks model))}))))
 
-(defn- waiting-on
-  "check name -> the fields it reads that `d` has never been written to, in arglist order,
-  for every check at `idxs` that is waiting on one.
-
-  The fields it *reads*, not the fields it names: a check naming an io-dep reads whatever
-  that io-dep names, transitively, and the unwritten-field sentinel must reach a fetch no
-  more than it may reach a check body.
-
-  Every check in the group is asked, rather than the search stopping at the first one that
-  is waiting: nothing else here stops at the first anything, and a caller told about one
-  unwritten field at a time would write one and be told about the next."
-  [model d idxs]
-  (let [missing ((:draft-missing model) d)]
-    ;; A complete draft is the ordinary case and has nothing to answer here, so it does not
-    ;; pay for the search: no field is unwritten, so no check is waiting on one.
-    (if (empty? missing)
-      {}
-      (let [missing (set missing)
-            cs      (:checks model)]
-        (apply array-map
-               (into [] (mapcat (fn [i]
-                                  (let [c  (nth cs i)
-                                        ks (filterv missing (:field-closure c))]
-                                    (when (seq ks) [(:name c) ks]))))
-                     idxs))))))
-
-(defn- missing-fields!
-  "A check cannot judge a field nobody wrote. \"Never written\" and \"written to nil\" are
-  different things everywhere else here, and the sentinel that tells them apart must not
-  reach a check body -- a check handed it would be judging the library's internals, and a
-  verdict recorded from that would be a verdict about nothing.
-
-  `waiting` is [[waiting-on]]'s answer, never empty. `:waiting` carries all of it; `:check`,
-  `:key` and `:keys` describe the first, which is the whole of it wherever one check was
-  asked about."
-  [model waiting]
-  (let [[cname cks] (first waiting)
-        ks          (into [] (distinct) (mapcat val waiting))]
-    (throw (ex-info (if (next waiting)
-                      (format "%s cannot run %d checks: %s"
-                              (:name model) (count waiting)
-                              (apply str
-                                     (interpose
-                                      "; "
-                                      (map (fn [[c cks]]
-                                             (format "%s names %s, which %s never written"
-                                                     (pr-str c) (pr-str cks)
-                                                     (if (next cks) "were" "was")))
-                                           waiting))))
-                      (format "%s cannot run %s: it names %s, which %s never written"
-                              (:name model) (pr-str cname) (pr-str cks)
-                              (if (next cks) "were" "was")))
-                    {:error ::missing-field :record (:name model) :check cname
-                     :key (first ks) :keys ks :waiting waiting}))))
-
-(defn- missing-values!
-  "[[missing-fields!]] for a group call: one `:missing-field` naming every value that could
-  not be judged and, under each, every check waiting and every field it is waiting on.
-
-  `waiting` is index -> [[waiting-on]]'s answer, never empty. Keyed by index for the reason
-  a group's results are: two drafts holding identical data are `=`. Thrown rather than
-  reported per value because nothing has run yet -- the pre-flight happens before the first
-  check of the first value, so there is no partial success to preserve, and a caller told
-  about one incomplete value at a time would fix it and be told about the next."
-  [model waiting]
-  (throw (ex-info (format "%s cannot run checks against %d of the values it was given -- %s"
-                          (:name model) (count waiting)
-                          (apply str
-                                 (interpose
-                                  "; "
-                                  (map (fn [[n w]]
-                                         (format "%d: %s" n
-                                                 (apply str
-                                                        (interpose
-                                                         ", "
-                                                         (map (fn [[c cks]]
-                                                                (format "%s names %s, which %s never written"
-                                                                        (pr-str c) (pr-str cks)
-                                                                        (if (next cks) "were" "was")))
-                                                              w)))))
-                                       waiting))))
-                  {:error ::missing-field :record (:name model) :bulk true
-                   :indexes (vec (keys waiting)) :waiting waiting})))
-
 (defn- not-established
   "Those of `idxs` that `d`'s mask does not already say are passing, in the order given.
 
@@ -675,36 +622,66 @@
   caller throws -- the checks that passed are marked as passing, and the one that failed is
   marked as not.
 
+  A check whose gate `d`'s mask does not satisfy records nothing either, and is not among
+  the failures. It did not run, so there is no verdict about it to write down -- the shape
+  failure that stopped it is the one the caller is owed, and a bit left clear is what makes
+  a later call run it once the shape is fixed. Which is why the phases are separate passes:
+  a gate is read off the mask, so what gates this pass has to have been written into the
+  mask by the last one.
+
   A check that throws records nothing. It reached no verdict, so its bit says what it said
   before, and the throw propagates: a bug in a check is not a claim about the data."
   [model d idxs cache]
-  (let [run (:run-draft model)]
+  (let [run  (:run-draft model)
+        cs   (:checks model)
+        mask (verdict-mask d)]
     (reduce (fn [acc i]
-              (let [ret (run i d cache)]
-                (if (record-verdict! d i (true? ret)) acc (conj acc [i ret]))))
+              (let [g (:shape-mask (nth cs i))]
+                (if-not (or (zero? g) (= g (bit-and mask g)))
+                  acc
+                  (let [ret (run i d cache)]
+                    (if (record-verdict! d i (true? ret)) acc (conj acc [i ret]))))))
             [] idxs)))
 
-(defn- gate-of
-  "The pure checks that must pass before anything the checks at `idxs` name may fetch --
-  the checks over the fields those io-deps name, transitively.
+(defn- mask-indices
+  "The indices of the bits set in `m`, ascending -- which is declaration order, since a
+  check's index is its bit.
 
-  Shape gates IO: nothing reaches a database until the values it will carry there are
-  established as well-formed, because the payload that triggers the query is the one least
-  worth trusting. The gate is narrow, and narrow without anyone arranging it: an io-dep
-  declares its own fields, so a fetch over `crew` waits on the checks covering `crew` and
-  not on the whole type. A malformed field nothing IO touches holds up nothing."
+  One iteration per set bit rather than one per check: a plan is usually a handful of
+  checks out of a type's whole complement, and this is on the path of every call that
+  establishes anything."
+  [m]
+  (loop [m (long m), acc (transient [])]
+    (if (zero? m)
+      (persistent! acc)
+      (recur (bit-and m (dec m)) (conj! acc (Long/numberOfTrailingZeros m))))))
+
+(defn- wants
+  "`idxs` plus everything that has to pass before any of them can run, as a mask.
+
+  Two kinds of prerequisite. Anything that is not a shape check waits on the shape checks
+  of the fields it names; anything IO-bound waits, as well, on the pure checks over the
+  fields its fetches name -- nothing reaches a database until the values it will carry
+  there are established as well-formed. Both are masks the macro computed, so folding one
+  in is a `bit-or`.
+
+  The closure is taken to a fixed point, over whatever each round added rather than over
+  everything again, because a prerequisite has prerequisites of its own: the pure checks
+  gating a fetch are ordinary cross-field checks, and each of them waits on the shape
+  checks of the fields it names. It settles at once in practice -- what those add are shape
+  checks, which wait on nothing -- and the loop is what makes that a fact about this type
+  rather than an assumption about every type.
+
+  The gate is narrow without anyone arranging it: an io-dep declares its own fields, so a
+  fetch over `crew` waits on the checks covering `crew` and not on the whole type."
   [model idxs]
-  (let [cs (:checks model)]
-    (vec (sort (into #{} (mapcat #(:gate (nth cs %))) idxs)))))
-
-(defn- failure-entries
-  "The report for `fs`, which is [[record-run]]'s answer: the check's docstring, the
-  dependencies it declared with what it was handed for each, and what it returned."
-  [model d fs cache]
-  (map (fn [[i ret]]
-         (let [c (nth (:checks model) i)]
-           (failure-entry c ret (dep-values model c d cache))))
-       fs))
+  (let [cs  (:checks model)
+        add (fn [m i] (let [c (nth cs i)] (bit-or m (:shape-mask c) (:gate-mask c))))]
+    (loop [m (reduce bit-set 0 idxs), fresh idxs]
+      (let [m' (reduce add m fresh)]
+        (if (= m' m)
+          m
+          (recur m' (mask-indices (bit-and-not m' m))))))))
 
 (def ^:private established
   "The answer for a draft with nothing left to establish: nothing ran and nothing was
@@ -712,9 +689,16 @@
   {:failures [] :cache {}})
 
 (defn- plan-for
-  "What is left to do about the checks at `idxs` for the draft `d`: the pure checks to run
-  -- those asked for that are not already passing, together with whatever gates a fetch
-  among them -- the IO-bound ones, and what any of them is waiting on.
+  "What is left to do about the checks at `idxs` for the draft `d`: the shape checks to run,
+  the other pure checks, and the IO-bound ones -- each of them what the draft's mask does
+  not already say is passing, together with whatever prerequisites those have.
+
+  Prerequisites are pulled in here rather than discovered when a check turns out not to be
+  runnable: [[wants]] takes the closure, and [[phases]] puts each of them where it belongs.
+  A check that is not a shape check waits on the shape checks of the fields it names, which
+  land in the shape phase; anything IO-bound waits as well on the pure checks over the
+  fields its fetches name, which land in the pure phase, and on their shape gates with
+  them.
 
   `nil` where there is nothing to do at all, which is the case worth not paying for: a
   draft of a sealed value that has not been written to, a check an earlier call already
@@ -725,20 +709,17 @@
   (when (seq idxs)
     (let [pending (not-established d idxs)]
       (when (seq pending)
-        (let [[pure io] (split-pending model pending)
-              gate      (if (seq io)
-                          (not-established d (remove (set pure) (gate-of model io)))
-                          [])]
-          (if (seq gate)
-            {:pure    (vec (sort (distinct (concat pure gate))))
-             :io      io
-             :waiting (waiting-on model d (distinct (concat pending gate)))}
-            ;; `idxs` is ascending and distinct wherever it is built -- a certificate's
-            ;; `:ids`, or the single check `check` was asked about -- so `pending` and
-            ;; `pure` already are, and sorting them again would not move them.
-            {:pure    pure
-             :io      io
-             :waiting (waiting-on model d pending)}))))))
+        ;; Masks rather than sets: a check's index is its bit, so the union of what is
+        ;; wanted is a `bit-or` per check and what is left to do is one `bit-and-not`
+        ;; against the verdicts. Where nothing was added -- the ordinary case, since a
+        ;; group asked for usually carries its own gates -- `pending` is already the
+        ;; answer and nothing is rebuilt.
+        (let [pm   (reduce bit-set 0 pending)
+              want (wants model pending)
+              todo (if (= want pm) pending (mask-indices (bit-and-not want (verdict-mask d))))]
+          (when (seq todo)
+            (let [[shape pure io] (phases model todo)]
+              {:shape shape :pure pure :io io})))))))
 
 (defn- establish-all
   "Establish, against each draft in `ds`, the checks at its own entry of `idxss`, and answer
@@ -746,47 +727,44 @@
   with `ds`.
 
   What is actually run for a draft is whatever its own mask does not already say is passing,
-  together with the pure checks gating any fetch that involves -- so `check` and `certify`
-  mean *establish this*, not *run exactly this*, and a satisfied prerequisite is free,
-  value by value. Where nothing is pending for any of them, no phase is entered at all: a
-  `seal` of a draft nothing has been written to, and a `check` of a check already
-  established, are the calls this library is arranged to make cheap, so they are answered
-  before anything is built rather than by running an empty pass over each phase in turn.
+  together with whatever gates that -- so `check` and `certify` mean *establish this*, not
+  *run exactly this*, and a satisfied prerequisite is free, value by value. Where nothing is
+  pending for any of them, no phase is entered at all: a `seal` of a draft nothing has been
+  written to, and a `check` of a check already established, are the calls this library is
+  arranged to make cheap, so they are answered before anything is built rather than by
+  running an empty pass over each phase in turn.
 
-  Two phases, because shape gates IO. Everything pure runs first and ungated; a draft any of
-  it failed for fetches nothing, and its failures -- the ones asked for and the ones gating
-  them alike -- are its answer. Only the drafts whose pure phase came back clean reach the
-  fetch, and they reach it together: one pass per io-dep over the whole group, so a batched
-  fetch sees every argument tuple in one call and distinct tuples are computed once however
-  many values share them. The gate is per value, so one malformed draft holds up nothing but
-  its own fetch. Where no draft owes an IO-bound check the fetch pass is not entered either.
-
-  The fields are pre-flighted over every check of every draft first, io-deps included, so a
-  group too incomplete to judge says so about all of it at once rather than one at a time.
-  `missing!` is handed what is waiting, keyed by the draft's index: what an incomplete draft
-  means is the caller's to phrase, and one draft's answer is not the shape a group's is."
-  [model ds idxss missing!]
+  Three phases, because shape gates everything. The shape checks run first and ungated,
+  writing their verdicts into the mask; the other pure checks follow, each running only if
+  the mask now says the shape checks of the fields it names are passing, so a check the gate
+  stopped is neither run nor reported. A draft anything failed for fetches nothing, and its
+  failures -- the ones asked for and the ones gating them alike -- are its answer. Only the
+  drafts whose pure phases came back clean reach the fetch, and they reach it together: one
+  pass per io-dep over the whole group, so a batched fetch sees every argument tuple in one
+  call and distinct tuples are computed once however many values share them. The gate is per
+  value, so one malformed draft holds up nothing but its own fetch. Where no draft owes an
+  IO-bound check the fetch pass is not entered either."
+  [model ds idxss]
   (let [ds    (vec ds)
         idxss (vec idxss)
         n     (count ds)]
-    (loop [i 0, plans (transient []), w (transient []), pending? false]
+    (loop [i 0, plans (transient []), pending? false]
       (if (< i n)
         (let [p (plan-for model (nth ds i) (nth idxss i))]
-          (recur (inc i)
-                 (conj! plans p)
-                 (if (and p (seq (:waiting p))) (conj! (conj! w i) (:waiting p)) w)
-                 (or pending? (some? p))))
+          (recur (inc i) (conj! plans p) (or pending? (some? p))))
         (if-not pending?
           (vec (repeat n established))
-          (let [plans (persistent! plans)
-                w     (persistent! w)]
-            (when (seq w) (missing! (apply array-map w)))
+          (let [plans (persistent! plans)]
             (loop [i 0, fss (transient []), ios (transient []), fetching? false]
               (if (< i n)
                 ;; A draft whose shape failed carries nothing to the fetch, and one that
                 ;; owes no IO-bound check asks for none.
                 (let [p  (nth plans i)
-                      fs (if p (record-run model (nth ds i) (:pure p) {}) [])
+                      fs (if p
+                           (let [d (nth ds i)]
+                             (into (record-run model d (:shape p) {})
+                                   (record-run model d (:pure p) {})))
+                           [])
                       io (if (or (nil? p) (seq fs)) [] (:io p))]
                   (recur (inc i) (conj! fss fs) (conj! ios io)
                          (or fetching? (boolean (seq io)))))
@@ -808,10 +786,9 @@
 
 (defn- establish-group
   "[[establish-all]] against one draft: a group of one, so that a call spanning values and a
-  call about one go through the same phases and the same fetches. What an incomplete draft
-  answers with is the singular report, since there is only the one value to be waiting."
+  call about one go through the same phases and the same fetches."
   [model d idxs]
-  (first (establish-all model [d] [idxs] (fn [w] (missing-fields! model (val (first w)))))))
+  (first (establish-all model [d] [idxs])))
 
 (defn- run-draft-checks!
   "Establish the checks at `idxs` against the draft `d` and throw once with every failure,
@@ -1035,7 +1012,7 @@
     (when-let [model (group-model! what ds)]
       (let [idxs (idxs-of model)]
         [model ds idxs
-         (establish-all model ds (repeat (count ds) idxs) #(missing-values! model %))]))))
+         (establish-all model ds (repeat (count ds) idxs))]))))
 
 (defn- insisted
   "`true`, or one throw carrying every failure of every value in `rs`. What the bang forms
@@ -1241,16 +1218,18 @@
   ;; and a write clears exactly the checks naming the field it wrote. So a set bit is a
   ;; verdict about this data, and re-reaching it would learn nothing.
   ;;
-  ;; A refusal comes first and costs no check at all. An undeclared key and a field nobody
-  ;; wrote are facts about the draft rather than about any check's judgement, and a check
-  ;; handed the unwritten-field sentinel would be judging the library's internals.
+  ;; The refusal comes first and costs no check at all. An undeclared key is a fact about
+  ;; the draft rather than about any check's judgement: no check names it, so no check has
+  ;; anything to say about it.
+  ;;
+  ;; A field nobody wrote is not refused here, and is not a separate notion. It holds nil,
+  ;; as it would on a `defrecord` whose field was never set, and its shape check says what
+  ;; it thinks of nil -- which is a better answer than the library reporting that nobody
+  ;; wrote anything, and leaves a field with no shape check free to seal holding it.
   (when-let [extra (extraneous d)]
     (throw (ex-info (format "%s has no field(s) %s -- use `clean` to strip them"
                             (:name model) (pr-str (vec extra)))
                     {:error ::extraneous-keys :record (:name model) :keys (vec extra)})))
-  (when-let [missing (seq ((:draft-missing model) d))]
-    (throw (ex-info (format "%s is missing field %s" (:name model) (first missing))
-                    {:error ::missing-field :record (:name model) :key (first missing)})))
   ;; Every check on the type is exactly what the built-in certificate covers, so the vector
   ;; of indices to select from is one the macro already built.
   (run-draft-checks! model d (not-established d (:ids (get (:certificates model) every-check))))
@@ -1417,6 +1396,30 @@
                                (unknown-dependency! ctx entry))
             :else            (unknown-dependency! ctx entry)))
         args))
+
+(defn- malformed-shape-check!
+  "Refuse a check named after a field that does not name exactly that field.
+
+  The naming convention is the declaration: `::name` is the check that says what a
+  well-formed `name` is, and nothing else marks it. So `::name ([name crew] ...)` is not a
+  shape check written loosely -- it is two claims at once, that this is what a `name` is and
+  that it depends on something other than `name`, and the second destroys what the first is
+  for. Shape checks depending on nothing is exactly what makes the dependency structure two
+  levels deep: every other check depends only on shape checks, so no ordering among checks
+  ever has to be computed and a gate can be one bitwise `and`.
+
+  A check that is not named after a field may name whatever it likes."
+  [tname c field]
+  (let [names (:deps c)]
+    (throw (ex-info (format (str "%s check %s is named after the field %s, so it is that "
+                                 "field's shape check and must name exactly that field -- "
+                                 "it names %s")
+                            tname (pr-str (:name c)) (pr-str field)
+                            (if (seq names)
+                              (apply str (interpose ", " (map pr-str names)))
+                              "nothing"))
+                    {:error ::malformed-shape-check :record tname :check (:name c)
+                     :field field :names names :args (:args c)}))))
 
 (defn- reject-duplicate-names!
   "A keyword in an arglist means an io-dep and a check never appears in one, so the two
@@ -1828,12 +1831,22 @@
 
   A check passes by returning `true` and nothing else; whatever else it returns is the
   failure data, reported under the check's name alongside its docstring and the fields it
-  declared. Checks have no ordering among themselves and every one of them runs, so a
-  check spanning two fields sees whatever those fields hold, including shapes the checks
-  over them are rejecting in the same pass -- it restates what it needs rather than
-  assuming an earlier check stopped anything. An exception is not caught: it is a bug in
-  the check rather than a claim about the data, and \"we could not determine whether this
-  is valid\" is not \"this is invalid\".
+  declared. An exception is not caught: it is a bug in the check rather than a claim about
+  the data, and \"we could not determine whether this is valid\" is not \"this is invalid\".
+
+  A check *named after a field* is that field's shape check -- the statement of what a
+  well-formed value of that field is. The naming convention is the whole of the
+  declaration, and such a check names exactly its own field or the form does not compile.
+  Every other check waits on the shape checks of the fields it names: `::cuts-sum-to-take
+  [take cuts]` runs once `::take` and `::cuts` have passed, so it receives well-formed
+  input by construction and restates nothing, and a throw out of it is therefore the bug
+  the contract above says a throw is. A check whose gate has not passed neither runs nor
+  appears among the failures -- the shape failure is the actionable one. A field with no
+  shape check has no declared shape, so the checks naming it run against whatever it holds
+  and have to be total over anything: the author's choice, made loudly.
+
+  That is three phases, and it is the order failures come back in: the shape checks, then
+  the other pure checks, then the IO-bound ones, in declaration order within each.
 
   `:io-deps` names functions that fetch something from outside the value -- a database row,
   an upstream response. They are written exactly as checks are, arglist and all, and follow
@@ -1999,6 +2012,20 @@
                                                          (:args c)))))
                         (seq checks))
         _         (reject-duplicate-names! tname (map :name parsed) io-names)
+        ;; A check named after a field is that field's shape check -- the check that says
+        ;; what a well-formed value of that field is. The naming convention is the whole of
+        ;; the declaration, and it is marked here so that nothing downstream re-derives it.
+        ;; It names exactly its own field or the form does not compile, which is what keeps
+        ;; the dependency structure two levels deep: shape checks depend on nothing, every
+        ;; other check depends only on shape checks, and no ordering among checks ever has
+        ;; to be computed.
+        field-key? (set ks)
+        parsed    (mapv (fn [c]
+                          (let [sh (when (contains? field-key? (:name c)) (:name c))]
+                            (when (and sh (not= [sh] (:deps c)))
+                              (malformed-shape-check! tname c sh))
+                            (assoc c :shape sh)))
+                        parsed)
         ;; What a check reaches: the io-deps behind it in fetch order, and every field it
         ;; reads -- its own, plus whatever the fetches it names read. A check is IO-bound
         ;; exactly when the first of those is non-empty.
@@ -2031,6 +2058,25 @@
         ivar      (fn [j] (symbol (str tname "--io-" j)))
         deps-of   (fn [i] (:deps (nth parsed i)))
         pure?     (fn [i] (empty? (:io (nth parsed i))))
+        shape?    (fn [i] (some? (:shape (nth parsed i))))
+        ;; field key -> the index of that field's shape check, where it has one. A field
+        ;; with none has no declared shape: the checks naming it run against whatever it
+        ;; holds and have to be total over anything, which is the author's choice made
+        ;; loudly rather than a hole.
+        shape-id  (into {} (keep-indexed (fn [i c] (when (:shape c) [(:shape c) i]))) parsed)
+        ;; Every other check waits on the shape checks of the fields it names, so it
+        ;; receives well-formed input by construction and restates nothing. A throw from it
+        ;; is therefore a genuine bug in the check, which is what the check contract already
+        ;; says a throw is. Sorted, so a phase reports in declaration order; as a mask too,
+        ;; because a draft tests it against its verdicts in one `and`.
+        parsed    (mapv (fn [c]
+                          (let [g (if (:shape c)
+                                    []
+                                    (vec (sort (into #{}
+                                                     (keep shape-id)
+                                                     (remove io? (:deps c))))))]
+                            (assoc c :shape-gate g :shape-mask (reduce bit-set 0 g))))
+                        parsed)
         ;; Derived from the arglists, so it cannot be misdeclared: there is nowhere to
         ;; declare it. Sorted vectors, because a sorted set does not survive being embedded
         ;; in emitted code -- the compiler rebuilds a set literal as a hash set.
@@ -2048,13 +2094,13 @@
         ;; there are established as well-formed, and because an io-dep declares its own
         ;; fields the gate is narrow without anyone narrowing it.
         parsed    (mapv (fn [c]
-                          (assoc c :gate
-                                 (let [fs (into [] (comp (mapcat #(:fields (io-info (:name (nth io-parsed %)))))
-                                                         (distinct))
-                                                (:io c))]
-                                   (vec (sort (into #{} (comp (mapcat #(get index %))
-                                                              (filter pure?))
-                                                    fs))))))
+                          (let [g (let [fs (into [] (comp (mapcat #(:fields (io-info (:name (nth io-parsed %)))))
+                                                          (distinct))
+                                                 (:io c))]
+                                    (vec (sort (into #{} (comp (mapcat #(get index %))
+                                                               (filter pure?))
+                                                     fs))))]
+                            (assoc c :gate g :gate-mask (reduce bit-set 0 g))))
                         parsed)
         pure-idxs (fn [idxs] (filterv pure? idxs))
         io-idxs   (fn [idxs] (filterv (complement pure?) idxs))
@@ -2106,29 +2152,53 @@
                                          (finally (pop-thread-bindings)))))))))
                            impl-forms)
         ;; Run the checks at `idxs` over the expressions `argvs-of` gives for each -- locals
-        ;; or direct field reads, so evaluating one twice costs nothing. Every check in the
-        ;; group is called before any verdict is read, because a failure does not stop the
-        ;; pass; then every one that did not return `true` is reported together. Nothing is
-        ;; caught, so a check that throws leaves the `let` before there is anything to
-        ;; report, which is the contract: a throw is a bug rather than a verdict. The value
-        ;; maps are built only inside the branch that is about to throw.
+        ;; or direct field reads, so evaluating one twice costs nothing. The shape checks
+        ;; are called first and every other one after, each of those guarded by the shape
+        ;; checks of the fields it names: a check whose gate did not come back `true` is not
+        ;; called and stands as `true`, which is exactly what it means for it not to be
+        ;; reported. That is sound here and only here, because a gate that failed is itself
+        ;; in this group and about to throw -- nothing a skipped check stands for escapes.
+        ;;
+        ;; A gate not among `idxs` is a gate that passed: this is the sealed path, and a
+        ;; sealed value is one every check passed on, so the only verdicts in doubt are
+        ;; those over a field being written.
+        ;;
+        ;; Every check that is going to run is called before any verdict is read, because a
+        ;; failure does not stop the pass; then every one that did not return `true` is
+        ;; reported together, shape failures first. Nothing is caught, so a check that
+        ;; throws leaves the `let` before there is anything to report, which is the
+        ;; contract: a throw is a bug rather than a verdict. The value maps are built only
+        ;; inside the branch that is about to throw.
         run-group (fn [idxs argvs-of]
-                    (when (seq (pure-idxs idxs))
-                      (let [idxs (pure-idxs idxs)
-                            rs   (mapv #(gensym (str "r" % "-")) idxs)]
-                        `(let [~@(mapcat (fn [i r] [r `(~(cvar i) ~@(argvs-of i))]) idxs rs)]
-                           (when-not (and ~@(map (fn [r] `(true? ~r)) rs))
-                             (~(internal 'checks-failed!)
-                              ~model-sym
-                              [~@(map (fn [i r]
-                                        `(when-not (true? ~r)
-                                           (~(internal 'failure-entry)
-                                            (nth (:checks ~model-sym) ~i) ~r
-                                                          (array-map
-                                                           ~@(interleave (deps-of i)
-                                                                         (argvs-of i))))))
-                                      idxs rs)]))))))
-        ;; Phase two, for the paths that produce a sealed value: the IO-bound checks among
+                    (let [idxs (pure-idxs idxs)]
+                      (when (seq idxs)
+                        (let [in    (set idxs)
+                              order (into (filterv shape? idxs) (remove shape? idxs))
+                              rs    (into {} (map (fn [i] [i (gensym (str "r" i "-"))])) order)
+                              gate  (fn [i] (filterv in (:shape-gate (nth parsed i))))]
+                          `(let [~@(mapcat
+                                    (fn [i]
+                                      (let [call `(~(cvar i) ~@(argvs-of i))
+                                            g    (gate i)]
+                                        [(rs i)
+                                         (if (seq g)
+                                           `(if (and ~@(map (fn [j] `(true? ~(rs j))) g))
+                                              ~call
+                                              true)
+                                           call)]))
+                                    order)]
+                             (when-not (and ~@(map (fn [i] `(true? ~(rs i))) order))
+                               (~(internal 'checks-failed!)
+                                ~model-sym
+                                [~@(map (fn [i]
+                                          `(when-not (true? ~(rs i))
+                                             (~(internal 'failure-entry)
+                                              (nth (:checks ~model-sym) ~i) ~(rs i)
+                                              (array-map
+                                               ~@(interleave (deps-of i)
+                                                             (argvs-of i))))))
+                                        order)])))))))
+        ;; Phase three, for the paths that produce a sealed value: the IO-bound checks among
         ;; `idxs`, run against the value `xform` builds once the inline group above has
         ;; passed. Not inlined, because what a fetch is handed has to be computed in the
         ;; graph's order and shared across the checks naming it -- and because the value has
@@ -2225,15 +2295,17 @@
          ~@sealed-impls)
 
        ;; The draft: the same real fields, plus a map for keys the type does not declare
-       ;; and a mutable bitmask of which checks currently pass. Which fields have been
-       ;; written is read off the fields themselves, through the `unset` sentinel, and
-       ;; which checks are still to run is read off the mask -- so there is nothing else
-       ;; for a write to maintain.
+       ;; and a mutable bitmask of which checks currently pass. A field nobody has written
+       ;; holds nil, as it would on a `defrecord` whose field was never set, so there is no
+       ;; "never written" state to maintain and nothing to keep away from a check body;
+       ;; which checks are still to run is read off the mask, and that is the whole of what
+       ;; a write has to seed.
        (p/def-map-type ~dname ~(into fsyms [extsym vdfield ownsym mtasym])
+         ;; A declared field is present whatever it holds, so `get` never reaches its
+         ;; default for one -- which is what a record does.
          (~'get [_# ~ksym ~dsym]
            (case ~ksym
-             ~@(mapcat (fn [[k f]] [k `(if (identical? ~f ~(internal 'unset)) ~dsym ~f)])
-                       (map vector ks fsyms))
+             ~@(interleave ks fsyms)
              (get ~extsym ~ksym ~dsym)))
          ;; A write seeds the new draft's verdicts from this one's, clearing exactly the
          ;; checks naming the field written -- not the ones whose values moved, which is a
@@ -2252,12 +2324,10 @@
              (if (contains? ~extsym ~ksym)
                ~(dctor fsyms `(dissoc ~extsym ~ksym) vdsym ownsym mtasym)
                this#)))
+         ;; Every declared key, always. A draft is a record with a map beside it, not a map
+         ;; that accumulates keys as they are written.
          (~'keys [_#]
-           (concat (cond-> [] ~@(mapcat (fn [[k f]]
-                                          [`(not (identical? ~f ~(internal 'unset)))
-                                           `(conj ~k)])
-                                        (map vector ks fsyms)))
-                   (keys ~extsym)))
+           (if (seq ~extsym) (concat ~ks (keys ~extsym)) ~ks))
          ;; The same two keys a sealed value answers with, read off the mask rather than
          ;; fixed: on a draft they are what has actually been established. Merged over the
          ;; caller's metadata for the same reason, and the caller's own keys survive.
@@ -2289,16 +2359,22 @@
           :field-order ~ks
           :field-set   ~(set ks)
           ;; `:deps` is what the check named, in arglist order, and is what a failure
-          ;; reports. `:io` is what it reaches through those names -- the io-deps behind it
-          ;; in fetch order, empty exactly when it is pure; `:gate` the pure checks that
-          ;; must pass before any of them fetches; `:field-closure` every field it reads,
-          ;; its own and its fetches' alike, which is what an unwritten field is looked for
-          ;; in and what a write invalidates it by.
+          ;; reports. `:shape` is the field this check is the shape check of, or nil, which
+          ;; is what puts it in the first phase and what makes it gate anything;
+          ;; `:shape-gate` and `:shape-mask` are the shape checks it waits on, as indices
+          ;; and as bits of a draft's verdict mask. `:io` is what it reaches through the
+          ;; names it gave -- the io-deps behind it in fetch order, empty exactly when it is
+          ;; pure; `:gate` and `:gate-mask` the pure checks that must pass before any of
+          ;; them fetches; `:field-closure` every field it reads, its own and its fetches'
+          ;; alike, which is what a write invalidates it by.
           :checks      ~(mapv (fn [i]
-                                (let [{:keys [name doc deps io gate field-closure]}
+                                (let [{:keys [name doc deps shape shape-gate shape-mask
+                                              io gate gate-mask field-closure]}
                                       (nth parsed i)]
                                   {:name name :doc doc :deps deps :pred (cvar i)
-                                   :io io :gate gate :field-closure field-closure}))
+                                   :shape shape :shape-gate shape-gate :shape-mask shape-mask
+                                   :io io :gate gate :gate-mask gate-mask
+                                   :field-closure field-closure}))
                               (range nchecks))
           ;; The io-deps in fetch order, so that ascending index is an order they can run
           ;; in, and the names of them, so that a resolved dependency can be told from a
@@ -2382,10 +2458,12 @@
                            ~@(mapcat (fn [j] [j `(~(ivar j) ~tuplessym)])
                                      (filter batched? (range nio)))
                            nil))
-          ;; From the type, nothing is established; from a sealed value, everything is --
+          ;; From the type, nothing is established and every field is nil -- which is what
+          ;; a `defrecord` none of whose fields were set holds, and what the shape checks
+          ;; will be asked about. From a sealed value everything is established, because
           ;; that is what being sealed means, and the draft inherits exactly that claim.
           :draft-empty      (fn [~ownsym]
-                              ~(dctor (repeat n (internal 'unset)) {} 0 ownsym nil))
+                              ~(dctor (repeat n nil) {} 0 ownsym nil))
           ;; The metadata comes off the field rather than through `meta`, which would hand
           ;; back the library's keys merged in and store a snapshot of them as though the
           ;; caller had written it. What the draft inherits is what the caller actually set.
@@ -2403,12 +2481,6 @@
           :draft-clean      (fn [~dvsym]
                               ~(dctor dfields {} `(~(internal 'verdict-mask) ~dvsym)
                                       (dfield ownsym) (dfield mtasym)))
-          :draft-missing    (fn [~dvsym]
-                              (cond-> [] ~@(mapcat (fn [[k f]]
-                                                     [`(identical? ~(dfield f)
-                                                                   ~(internal 'unset))
-                                                      `(conj ~k)])
-                                                   (map vector ks fsyms))))
           :draft-seal       (fn [~dvsym] (new ~tname ~@dfields ~(dfield mtasym)))})
        ;; `deftype` interns a positional factory that checks nothing -- a public back door
        ;; straight through every guarantee the type exists to make. Replace it with one that
@@ -2420,9 +2492,10 @@
          ~(with-io (range nchecks) `(new ~tname ~@fsyms nil)))
 
        (defn ~(symbol (str "map->" tname))
-         ~(str "Construct a validated " tname " from a map holding exactly its declared keys.\n"
+         ~(str "Construct a validated " tname " from a map of its declared keys.\n"
                "  A key it does not declare is an error; a key it declares and the map omits is\n"
-               "  reported as :missing-field, so `nil` and absent stay distinct.\n\n"
+               "  nil, as it would be on a defrecord, and that field's shape check says whether\n"
+               "  nil is acceptable.\n\n"
                "  Keys may be written qualified or bare: a bare keyword naming a declared field is\n"
                "  qualified into " key-ns ", which is what lets a printed literal -- whose tag\n"
                "  already carries the namespace -- read back through here and be validated.")

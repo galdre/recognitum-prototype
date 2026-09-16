@@ -322,7 +322,7 @@
     (is (= 1 (roster/call-count))))
   (testing "and both still refuse what the checks refuse"
     (is (= ::rec/check-failed (:error (err #(->Job "A Job" #{:charlie} {:napster 1} nil)))))
-    (is (= ::rec/missing-field (:error (err #(map->Job {::name "A Job"})))))))
+    (is (= ::rec/check-failed (:error (err #(map->Job {::name "A Job"})))))))
 
 (deftest check-and-certify-on-a-draft-are-untouched
   (let [d (-> (rec/draft Job)

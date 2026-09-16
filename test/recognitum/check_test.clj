@@ -12,15 +12,18 @@
   after a write it runs. That is the whole value of the mask: the evidence behind a verdict
   is not kept, but the verdict is.
 
-  A check with nothing to run against cannot be run at all. A field the draft has never
-  been written to is not `nil` -- the two are different things everywhere else in this
-  library, and a check body must never be handed the sentinel that tells them apart -- so a
-  check naming an unwritten field reports `:missing-field` rather than judging a value
-  nobody wrote.
+  A check that is not named after a field waits on the shape checks of the fields it names,
+  so `check` runs those too where they are not already passing -- which is the whole of
+  \"runs whatever it depends on\". Where one of them fails, the check asked about never ran
+  and has no verdict of its own to answer with, so the reason is thrown instead.
 
-  Checking is not sealing. An undeclared key, an unwritten field some other check names, a
-  check that has not been run: none of them stop the check in hand. That is what running
-  checks early on an incomplete value means."
+  A field the draft has never been written to reads as `nil`, as it would on a `defrecord`
+  whose field was never set, and a check naming one judges `nil`. There is no sentinel and
+  nothing to keep away from a check body.
+
+  Checking is not sealing. An undeclared key, a field some other check names, a check that
+  has not been run: none of them stop the check in hand. That is what running checks early
+  on an incomplete value means."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]))
@@ -163,11 +166,13 @@
       (is (= ::rec/check-failed (:error (err #(rec/check! d ::a-fits)))))
       (is (= #{::b} (rec/passing d))))))
 
-(deftest checking-touches-no-verdict-but-its-own
+(deftest checking-establishes-what-it-waits-on-and-nothing-else
   (let [d (fresh)]
     (rec/check d ::a-fits)
-    (is (= #{::a-fits} (rec/passing d))
-        "a check spanning two fields establishes itself and nothing else")))
+    (is (= #{::a ::b ::a-fits} (rec/passing d))
+        "a check spanning two fields establishes their shape checks on the way")
+    (is (not (contains? (rec/passing d) ::always))
+        "and nothing it does not wait on")))
 
 (deftest a-verdict-established-on-one-version-says-nothing-about-another
   ;; The seed is a snapshot, so versions diverge rather than share.
@@ -223,46 +228,56 @@
     (is (= 2 (ran ::n)))
     (is (= #{} (rec/passing d)))))
 
-(deftest a-pure-check-has-no-prerequisites
-  ;; Checks have no ordering among themselves, so establishing one establishes nothing
-  ;; else -- a check spanning two fields restates the shapes it needs rather than
-  ;; assuming the checks over those fields ran first.
+(deftest a-pure-check-waits-on-the-shape-checks-of-the-fields-it-names
+  ;; Which is why it restates neither of them: `::both` is handed an n and an s that have
+  ;; already been established as an int and a string.
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
     (is (true? (rec/check d ::both)))
-    (is (= {::both 1} @runs))
-    (is (= #{::both} (rec/passing d)))))
+    (is (= {::n 1 ::s 1 ::both 1} @runs))
+    (is (= #{::n ::s ::both} (rec/passing d))))
+  (testing "and a gate already passing is free, as any established verdict is"
+    (reset! runs {})
+    (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
+      (is (true? (rec/check d ::n)))
+      (is (true? (rec/check d ::s)))
+      (reset! runs {})
+      (is (true? (rec/check d ::both)))
+      (is (= {::both 1} @runs)))))
 
 ;;; ---------------------------- a check needs something to read ----------------------------
 
-(deftest a-check-naming-a-field-never-written-cannot-run
+(deftest a-check-naming-a-field-never-written-judges-nil
   (let [d (rec/draft Ledger)]
-    (let [e (err #(rec/check d ::a))]
-      (is (= ::rec/missing-field (:error e)))
-      (is (= 'Ledger (:record e)))
-      (is (= ::a (:check e)))
-      (is (= ::a (:key e))))
-    (testing "check! says the same thing -- an unwritten field is not a verdict either way"
-      (is (= ::rec/missing-field (:error (err #(rec/check! d ::a))))))
-    (testing "and nothing is recorded, because nothing was determined"
+    (is (false? (rec/check d ::a)) "`(int? nil)`, which is the check's own answer")
+    (is (= ::rec/check-failed (:error (err #(rec/check! d ::a)))))
+    (testing "and nothing is recorded, because nothing passed"
       (is (= #{} (rec/passing d))))))
 
-(deftest it-names-every-field-it-is-waiting-on-in-arglist-order
-  (let [d (rec/draft Ledger)]
-    (is (= [::a ::b] (:keys (err #(rec/check d ::a-fits)))))
-    (is (= [::b] (:keys (err #(rec/check (assoc d ::a 1) ::a-fits)))))
-    (is (= [::a] (:keys (err #(rec/check (assoc d ::b "xx") ::a-fits)))))))
+(deftest a-check-whose-gate-fails-reports-the-gate-rather-than-answering
+  ;; The question was whether `::a-fits` passes, and "the data never got far enough to ask"
+  ;; is not `false` -- so the reason is thrown, as it is when a gate ahead of a fetch fails.
+  (let [d (rec/draft Ledger)
+        e (err #(rec/check d ::a-fits))]
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::a ::b] (keys (:failures e))) "both shape checks it was waiting on"))
+  (let [e (err #(rec/check (assoc (rec/draft Ledger) ::a 1) ::a-fits))]
+    (is (= [::b] (keys (:failures e))) "and only the one still in the way"))
+  (testing "which is what keeps the body from being handed a shape it cannot read"
+    (let [d (rec/draft Ledger)]
+      (is (= ::rec/check-failed (:error (err #(rec/check d ::a-fits))))
+          "rather than a NullPointerException out of (count nil)"))))
 
-(deftest the-sentinel-for-never-written-never-reaches-a-check-body
+(deftest an-unwritten-field-reaches-a-check-body-as-nil
   (reset! runs {})
-  (is (= ::rec/missing-field (:error (err #(rec/check (rec/draft Counted) ::n)))))
-  (is (= {} @runs) "the body was never called, so it cannot have seen what it must not see"))
+  (is (false? (rec/check (rec/draft Counted) ::n)))
+  (is (= {::n 1} @runs) "the body ran, and what it was given was nil"))
 
-(deftest written-to-nil-is-not-never-written
+(deftest writing-nil-is-the-same-as-never-writing
   (is (true? (rec/check (assoc (rec/draft Maybe) ::n nil) ::m))
       "nil is a legal value where a check admits it")
-  (is (= ::rec/missing-field (:error (err #(rec/check (rec/draft Maybe) ::m))))
-      "and absent is a different thing entirely"))
+  (is (true? (rec/check (rec/draft Maybe) ::m))
+      "and never writing it is the same thing, judged the same way"))
 
 (deftest a-check-naming-no-field-runs-against-an-empty-draft
   (let [d (rec/draft Ledger)]
@@ -275,8 +290,11 @@
   (let [d (assoc (rec/draft Ledger) ::b "xxx")]
     (is (true? (rec/check d ::b)))
     (is (= #{::b} (rec/passing d)))
-    (is (= ::rec/missing-field (:error (err #(rec/seal d))))
-        "sealing still wants every field -- running a check early is not a claim to be whole")))
+    (let [e (err #(rec/seal d))]
+      (is (= ::rec/check-failed (:error e))
+          "sealing still runs everything -- running a check early is not a claim to be whole")
+      (is (= [::a] (keys (:failures e)))
+          "::a judges the nil nobody wrote; ::a-fits waits on ::a and does not run"))))
 
 (deftest an-undeclared-key-does-not-stop-a-check
   (let [d (assoc (fresh) :getaway-car "mini")]
@@ -332,7 +350,8 @@
       (is (= #{::b ::always} (rec/passing d')) "the write cleared ::a and ::a-fits")
       (let [e (err #(rec/seal d'))]
         (is (= ::rec/check-failed (:error e)))
-        (is (= [::a ::a-fits] (keys (:failures e))))))))
+        (is (= [::a] (keys (:failures e)))
+            "::a-fits waits on ::a, so the shape failure is the whole of the report")))))
 
 (deftest a-check-inside-a-drafting-form-answers-about-the-draft-in-hand
   (let [a (atom nil)]
@@ -341,4 +360,5 @@
            (let [x (-> x (assoc ::a 1) (assoc ::b "xxx") (assoc ::c :anything))]
              (reset! a [(rec/check x ::a) (rec/check x ::a-fits) (rec/passing x)])
              x))))
-    (is (= [true true #{::a ::a-fits}] @a))))
+    (is (= [true true #{::a ::b ::a-fits}] @a)
+        "::b came with ::a-fits, which waits on it")))

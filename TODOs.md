@@ -88,7 +88,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 Both steps implement rulings recorded in `SPEC.md` after the first run: "Shape checks", "Unset
 fields", and "The baseline is `defrecord`". Read those sections before anything else.
 
-- [ ] **G1. Shape checks gate the rest, and unset is `nil`.** A check named after a field is that
+- [x] **G1. Shape checks gate the rest, and unset is `nil`.** A check named after a field is that
       field's shape check; it must name exactly that field, or the form does not compile. The
       model marks shape checks structurally. Every other pure check gets a gate mask — the
       shape-check bits of the fields it names — and runs only once those have passed; a check
@@ -130,6 +130,46 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       access rather than keyword lookup is the change most likely to move it.
 
 ## Deferred during implementation
+
+- [ ] **G1 — a check whose shape gate fails throws from `check`, where `SPEC.md` gives
+      two outcomes.** The same position E1 took for a failing IO gate, and for the same
+      reason: `SPEC.md` says `check` returns `true` or the failing check's data, and says
+      separately that a check whose gate has not passed does not run. Where both apply the
+      check asked about has no data of its own, so `check` throws the ordinary
+      `:check-failed` carrying the gate's failures rather than inventing a verdict.
+      `certify` needs no such rule -- it is shaped for several failures, so a failing gate
+      simply appears among them -- and `check-all` answers that value with the gate's
+      failures keyed by check name, as E3 already ruled for the IO gate. If the reading is
+      wrong, `establish` is the only place it lives.
+
+- [ ] **G1 — an IO-bound check gets a shape gate too, which buys nothing observable
+      yet.** `TODOs` scoped the gate to "every other pure check"; `SPEC.md`'s "Shape
+      checks" says "every other check waits on the shape checks of the fields it names",
+      and that is what was implemented -- every check not named after a field carries a
+      `:shape-mask`, IO-bound ones included. It cannot currently be observed, because a
+      value that failed any pure check fetches nothing at all, so an IO-bound check is
+      already unreachable whenever its shape gate is unsatisfied. It was done this way so
+      that the rule is one rule; if the coarse pure-phase gate is ever narrowed to the
+      fetches a failure actually touches, this is already correct rather than a hole that
+      opens at that moment.
+
+- [ ] **G1 — `::malformed-shape-check` has no row in `SPEC.md`'s error table.** Nor do
+      `::unknown-dependency`, `::malformed-check` or any of the other compile-time
+      refusals, so this is the existing shape of that table rather than a new gap: it
+      lists what a caller can dispatch on at run time. Recorded because the table now
+      omits one more thing, and because whoever gives the compile-time family a home --
+      E4's deferral wants the same for `::io-limited` -- should take this with it.
+
+- [ ] **G1 — the plan is computed in masks, and `cost-test` is why.** `plan-for` folds a
+      check's prerequisites in with `bit-or` against the masks the macro computed, takes
+      the closure to a fixed point, and answers `pending` unchanged where nothing was
+      added -- which is the ordinary case, since a group asked for usually carries its own
+      gates. The first version built a `sorted-set` per call instead, and
+      `cost-test/a-three-field-update-inside-a-drafting-stays-within-its-multiple` read
+      2.01x against a bound of 2.0. That is a bound doing its job. What is left undone is
+      the same thing F2 deferred: `checks-for` still builds a `sorted-set` per write out
+      of the field -> checks index, where the macro already computes a per-field mask, and
+      `mask-indices` is now sitting there to expand the result.
 
 - [ ] **F2 — `merge` on a sealed value is the one row the library loses.** 1251ns against
       814ns hand-rolled, and the only row over 1.2x that is not a `drafting`. Nothing here

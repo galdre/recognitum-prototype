@@ -301,8 +301,9 @@
     (is (= [::crew] (vec (keys (:failures e)))))
     (is (= 0 (ran ::roster)))
     (is (= 0 (ran ::only-roster-gets-a-cut)))
-    (testing "and the gate's own verdict is recorded, since it did run"
-      (is (= #{} (rec/passing d))))))
+    (testing "and the verdicts of whatever did run are recorded"
+      (is (= #{::cuts} (rec/passing d))
+          "::cuts is the shape check ::only-roster-gets-a-cut waits on, and it passed"))))
 
 (deftest certify-reports-a-failing-gate-among-its-failures
   (let [d (-> (whole) (assoc ::crew "not a crew"))]
@@ -327,15 +328,14 @@
     (is (rec/sealed? (rec/seal d)))
     (is (= [::roster ::only-roster-gets-a-cut] (order ::roster ::only-roster-gets-a-cut)))))
 
-(deftest a-field-an-io-dep-names-must-have-been-written
-  ;; The unwritten-field sentinel must not reach a fetch any more than it may reach a
-  ;; check: "never written" and "written to nil" are different things, and a fetch handed
-  ;; the sentinel would be querying the library's internals.
+(deftest a-field-an-io-dep-names-is-gated-as-nil-like-any-other
+  ;; A field nobody wrote holds nil, and the gate over it is what keeps that nil away from
+  ;; the outside: the shape check says no, so the fetch never happens.
   (let [d (assoc (rec/draft Job) ::cuts {:charlie 1})
         e (err #(rec/check d ::only-roster-gets-a-cut))]
-    (is (= ::rec/missing-field (:error e)))
-    (is (= [::crew] (:keys e)) "named through the io-dep that names it")
-    (is (contains? (:waiting e) ::only-roster-gets-a-cut))
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::crew] (vec (keys (:failures e)))) "the gate over the field the fetch names")
+    (is (= {::crew nil} (:values (get (:failures e) ::crew))))
     (is (= 0 (ran ::roster)))
     (is (= 0 (roster/call-count)))))
 

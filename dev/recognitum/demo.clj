@@ -132,8 +132,10 @@
                 (assoc ::heist/name "In Progress")
                 (assoc ::heist/crew #{:charlie :lyle}))]
       (show "(rec/check d ::heist/name)"     (fn [] (rec/check d ::heist/name)))
-      (show "(rec/check d ::heist/cuts) -- never written"
+      (show "(rec/check d ::heist/cuts) -- never written, so nil, and judged as nil"
             (fn [] (rec/check d ::heist/cuts)))
+      (show "(rec/check d ::heist/cuts-sum-to-take) -- it waits on the shape checks"
+            (fn [] (rec/check d ::heist/cuts-sum-to-take)))
       (show "(rec/certify d ::heist/shape) -- take and cuts owed"
             (fn [] (rec/certify d ::heist/shape)))
       (show "(rec/holding d)"                (fn [] (rec/holding d)))
@@ -210,7 +212,10 @@
     (show "(heist/->Heist \"Job\" #{:a} 10 {:a 10})" (fn [] (heist/->Heist "Job" #{:a} 10 {:a 10})))
     (show "->Heist with a bad field" (fn [] (heist/->Heist "" #{:a} 10 {:a 10})))
     (show "->Heist with everything wrong at once" (fn [] (heist/->Heist "" :not-a-set -1 "garbage")))
-    (show "map->Heist missing a key" (fn [] (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))
+    (show "map->Heist with a key left out -- it is nil, and the shape check says so"
+          (fn [] (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))
+    (show "a shape failure is the whole report -- what waits on it does not run"
+          (fn [] (heist/->Heist "Job" #{:a} 10 "garbage")))
 
     (section "printing names the reader you need")
     (show "(pr-str job)" (fn [] (pr-str job)))

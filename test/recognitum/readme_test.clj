@@ -109,7 +109,7 @@
          (mapv keyword))))
 
 (deftest the-error-table-lists-exactly-what-the-library-throws
-  (is (= #{:check-failed :unknown-field :extraneous-keys :missing-field
+  (is (= #{:check-failed :unknown-field :extraneous-keys
            :cannot-dissoc :cannot-seal :io-limited}
          (set (error-rows)))
       "every error a caller can dispatch on, and nothing that is no longer thrown")

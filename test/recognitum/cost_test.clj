@@ -17,9 +17,8 @@
   drafting row was.
 
   The second half is about what the cheap path must keep doing. A call with nothing pending
-  now answers before it enters a phase, so everything a seal owes that is not a check --
-  refusing an undeclared key, refusing a field nobody wrote -- has to survive being reached
-  by a route that runs nothing at all."
+  now answers before it enters a phase, so what a seal owes that is not a check -- refusing
+  an undeclared key -- has to survive being reached by a route that runs nothing at all."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.bench :as b]
@@ -127,18 +126,16 @@
    {::shape #{::a ::b}}})
 
 ;; A field no check mentions, so a draft can be in the state this suite needs: every check
-;; passing and the value still unfinished.
+;; passing and a field still unwritten.
 (defn- tally [] (-> (rec/draft Tally) (assoc ::a 1) (assoc ::b "xx")))
 
-(deftest a-seal-with-nothing-to-run-still-refuses-a-field-nobody-wrote
+(deftest a-seal-with-nothing-to-run-runs-nothing
   (let [d (tally)]
     (is (true? (rec/certify d ::shape)) "every check the type has now passes")
     (reset! runs [])
-    (let [e (try (rec/seal d) nil (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-      (is (= :recognitum.core/missing-field (:error e))
-          "nothing was left to check, and the value is still not one")
-      (is (= ::spare (:key e)))
-      (is (zero? (count @runs)) "and it said so without running a check"))))
+    (is (rec/sealed? (rec/seal d))
+        "and ::spare, which no check names, has no shape to be the wrong one")
+    (is (zero? (count @runs)) "so the seal ran nothing at all")))
 
 (deftest a-seal-with-nothing-to-run-still-refuses-an-undeclared-key
   (let [t (drafting [x Tally] (-> x (assoc ::a 1) (assoc ::b "xx") (assoc ::spare nil)))]
