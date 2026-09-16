@@ -59,8 +59,8 @@ invariants depending on them. `:draft-dirty-keys` is the touched set.
       a check, off by default. `*audit-invariant-keys*` runs each invariant against a proxy
       recording its key reads and throws `:undeclared-invariant-key` on one it does not declare.
       Zero cost when off; `README.md` has a "Checking your `:keys`" section.
-  - [ ] Nothing exercises it permanently. Constructing one instance of a type under the audit
-        catches every mis-declaration in that type — that belongs in the test suite below.
+  - [x] `prototype.audit-test` exercises it: the silent hole, the catch at construction, an
+        honest type passing, a whole-map read abstaining, and the binding not leaking.
 - Not drift: `CONSIDERATIONS.md` §14's note that seal rechecks a key written back to its
   original value is a fair efficiency observation. The contract is extensional, so a cheaper
   sound strategy is permitted. (An earlier draft of this file called it inverted. It is not.)
@@ -109,16 +109,19 @@ as deliberate.
 
 ## Unverified claims
 
-- [ ] `clean` and `:extraneous-keys` are documented in `README.md` but exercised by neither
-      `demo.clj` nor `ownership_test.clj`. (Both work — spot-checked at inventory time.)
+- [x] `clean` and `:extraneous-keys` are now covered by `prototype.draft-test`, along with the
+      `dissoc` rules and the unset-vs-nil distinction.
 - [ ] A `revising` body returning a sealed value instead of a draft throws a bare
       `NullPointerException`, not an `ex-info`. Decide whether that is a supported mistake worth
       a real error.
 
 ## Post-migration
 
-- [ ] No `clojure.test` suite. `test/` exists and `clojure -X:test` runs; there is nothing in it.
-      The demo scripts are the current correctness story — `CONSIDERATIONS.md` §14 says so.
+- [x] `clojure.test` suite: 32 tests, 267 assertions, in three namespaces. Verified to have
+      teeth by mutating the library — dropping seal's field checks, dropping invariant runs on
+      writes, un-refusing extraneous-key detection, and silently disabling the audit are each
+      caught. `CONSIDERATIONS.md` §14 still says the demo scripts are the correctness story;
+      that line is now wrong and is part of the §14 re-read below.
 - [ ] `dev/prototype/ownership_test.clj` is named like a test but is a `println` script. Rename,
       or convert it into the real suite it is impersonating.
 - [ ] Namespace root is still `prototype.*`. Decide the real name before anything depends on it.

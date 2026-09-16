@@ -209,6 +209,14 @@ It is off by default and costs nothing when off. When on, each invariant run all
 and reads go through it, so leave it out of production. A predicate that asks for the whole map
 (`keys`, `vals`, `into {}`) cannot be attributed, and the audit abstains rather than guess.
 
+## Running it
+
+```
+clojure -X:test                                        # the suite
+clojure -M:dev -e "(require 'prototype.demo)(prototype.demo/run)"
+clojure -M:bench -e "(require 'prototype.bench4)(prototype.bench4/run)"
+```
+
 ## What it costs
 
 Measured against a plain `defrecord` with the same predicates and invariants written by hand:
