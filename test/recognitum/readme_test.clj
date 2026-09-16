@@ -175,3 +175,49 @@
     (is (re-find #"\d{4}-\d{2}-\d{2}" (str perf)) "with the date it was taken")
     (is (str/includes? (str/lower-case (str perf)) "re-measure")
         "and a standing warning not to trust it to three figures")))
+
+(defn- perf-section []
+  (second (str/split @readme #"## What it costs")))
+
+(defn- perf-rows
+  "The data rows of the performance table: each one `[label cell cell]`."
+  []
+  (->> (str/split-lines (str (perf-section)))
+       (map str/trim)
+       ;; past the header row and its separator, so the column names are not read as a
+       ;; measurement of something called "hand-rolled".
+       (drop-while #(not (re-find #"^\|\s*-" %)))
+       rest
+       (take-while #(str/starts-with? % "|"))
+       (map #(mapv str/trim (rest (str/split % #"\|"))))
+       (remove #(every? str/blank? %))))
+
+(deftest the-performance-table-does-not-disclaim-its-own-numbers
+  ;; A table that says its own figures were measured against an implementation two phases
+  ;; ago is not a measurement; it is an apology for one. Either re-run the benchmark or
+  ;; delete the table.
+  (let [perf (str/lower-case (str (perf-section)))]
+    (doseq [token ["taken before" "predate" "before checks became"]]
+      (is (not (str/includes? perf token))
+          (str "the performance table still disclaims its own numbers: " token)))))
+
+(deftest the-performance-table-reports-every-shape-the-benchmark-measures
+  ;; `recognitum.bench` prints three sections -- the single operations, a batch of renames,
+  ;; and a batch of add-members -- and the table used to carry one row out of the last two.
+  ;; The rows a table leaves out are the ones a reader cannot check, and the batched shapes
+  ;; are where the library is doing something a hand-rolled version has to be written to
+  ;; match.
+  (let [perf (str/lower-case (str (perf-section)))]
+    (doseq [shape ["read" "merge" "construct" "rename" "add-member" "drafting"]]
+      (is (str/includes? perf shape)
+          (str "the performance table measures no " shape)))))
+
+(deftest every-row-of-the-performance-table-carries-two-measurements
+  (let [rows (perf-rows)]
+    (is (<= 8 (count rows))
+        "one row per shape the benchmark measures, both batch families included")
+    (doseq [[label & cells] rows]
+      (is (= 2 (count cells)) (str "row " (pr-str label) " is not a two-column comparison"))
+      (doseq [c cells]
+        (is (re-find #"\d" c) (str "row " (pr-str label) " has a cell with no figure in it"))
+        (is (str/includes? c "ns") (str "row " (pr-str label) " has a cell with no unit on it"))))))
