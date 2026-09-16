@@ -55,7 +55,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### D — drafts and verdicts
 
-- [ ] **D1. The verdict mask.** An `^:unsynchronized-mutable` field on the draft. Set on pass,
+- [x] **D1. The verdict mask.** An `^:unsynchronized-mutable` field on the draft. Set on pass,
       clear on failure. `assoc` seeds the new draft by `and`-ing the parent's mask against the
       invalidation mask for the written field. Snapshot, so versions diverge.
 - [ ] **D2. `check` / `check!`.** Return `true` or failure data; none return a draft. Running a
@@ -126,6 +126,32 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       "audit" in any sense without the suite failing. If a later document wants the word for
       something unrelated, narrow those two assertions to the token list the file already
       carries rather than deleting them.
+
+- [ ] **D1 — `passing` answers for a draft only, and D4 will want it for both.**
+      `SPEC.md`'s uniform `meta` says a sealed value reports the same
+      `:recognitum.core/passed` key a draft does, holding every check, "a compile-time
+      constant for a sealed type". `passing` throws `::not-a-draft` for anything but a
+      draft, because in D1 the mask is the only thing that could answer and only a draft
+      has one. D4 either widens `passing` to read the model's check names for a sealed
+      value or builds that constant where it merges the metadata; either is fine, but the
+      docstring's "a question about a draft and nothing else" has to move if the first is
+      chosen.
+
+- [ ] **D1 — nothing but `seal` writes a verdict yet.** `run-draft-checks!` records what
+      it ran and is the only caller; the inlined groups at `assoc`, `merge` and the two
+      constructors work on sealed values, which have no mask, and `run-checks!` is what
+      they still use. D2 adds `check`/`check!` on top of `run-draft-checks!` and D5 makes
+      `seal` select by the mask instead of by the dirty-key set. Until D5, a check whose
+      bit is already set is still re-run at seal: the mask is written but not yet read.
+
+- [ ] **D1 — a type may declare at most 64 checks, and at most 20 fields.** The verdict
+      mask is one long, so a 65th check would alias the first and a value could seal on a
+      check that never ran; that is `::too-many-checks` at macroexpansion
+      (`reject-too-many-checks!`). The written-field mask has the same width and cannot
+      reach it, because a 21st field makes `->Type` a function of 21 parameters and
+      Clojure refuses more than 20 -- with the message "Can't specify more than 20
+      params", which says nothing about fields. If the field ceiling ever matters, refuse
+      it in the macro with a message that names it.
 
 - [ ] **C1 — `:io-deps` and `:certificates` compile only empty.** The sections are part of
       the form before they are part of the library, so a populated one throws

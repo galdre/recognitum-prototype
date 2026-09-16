@@ -283,15 +283,12 @@
     (is (= 'TooManyChecks (:record e)))
     (is (= 65 (:count e)))
     (is (= 64 (:limit e))))
-  (testing "and neither does one with more fields than the written-field mask can hold"
-    (let [e (compile-data (list 'recognitum.core/defrecord 'TooManyFields (n-fields 65) {}))]
-      (is (= ::rec/too-many-fields (:error e)))
-      (is (= 65 (:count e)))
-      (is (= 64 (:limit e)))))
-  (testing "the widths themselves are fine"
+  (testing "the full width itself is fine"
     (is (nil? (compiles (list 'recognitum.core/defrecord 'WideChecks
-                              (n-fields 1) {:checks (n-checks 64)}))))
-    (is (nil? (compiles (list 'recognitum.core/defrecord 'WideFields (n-fields 64) {}))))))
+                              (n-fields 1) {:checks (n-checks 64)})))))
+  (testing "the written-field mask has the same width and nothing can reach it: a type of
+            21 fields has a positional constructor of 21 parameters, and Clojure allows 20"
+    (is (some? (compiles (list 'recognitum.core/defrecord 'WideFields (n-fields 21) {}))))))
 
 (deftest the-highest-bit-still-answers
   ;; 64 checks over one field: the last of them owns the sign bit, which is where an
