@@ -28,7 +28,9 @@
 
   A draft also records which of its checks currently pass. That record is a mutable field:
   the draft's data is immutable, but which checks have been run against that data is not
-  part of the data. See [[passing]]."
+  part of the data. See [[passing]]. [[check]] and [[check!]] run one named check against a
+  draft and answer the question rather than handing back a value -- the verdict goes in the
+  mask, and a check the mask already says passes is not run again."
   (:refer-clojure :exclude [defrecord])
   (:require
    [potemkin :as p]))
@@ -214,6 +216,15 @@
     fails now must stop counting as passed, and without a clear there would be no way to
     un-pass anything."))
 
+(defn draft-model!
+  "The model for the draft `d`, or a throw naming the operation that wanted one. Everything
+  that reads or writes a verdict wants a draft specifically: the mask is the only thing that
+  could answer, and only a draft has one."
+  [what d]
+  (or (draft-model d)
+      (throw (ex-info (format "%s expects a draft, and %s is not one" what (pr-str d))
+                      {:error ::not-a-draft :value d}))))
+
 (defn passing
   "The set of check names currently passing on the draft `d`.
 
@@ -225,11 +236,9 @@
   A question about a draft and nothing else: a sealed value has no mask, because it has no
   state to be in other than valid."
   [d]
-  (if-let [model (draft-model d)]
-    (let [m (verdict-mask d)]
-      (into #{} (keep-indexed (fn [i c] (when (bit-test m i) (:name c)))) (:checks model)))
-    (throw (ex-info (format "passing expects a draft, and %s is not one" (pr-str d))
-                    {:error ::not-a-draft :value d}))))
+  (let [model (draft-model! "passing" d)
+        m     (verdict-mask d)]
+    (into #{} (keep-indexed (fn [i c] (when (bit-test m i) (:name c)))) (:checks model))))
 
 (defn run-draft-checks!
   "Run the checks at `idxs` against the draft `d`, writing each verdict into its mask as it
@@ -254,6 +263,91 @@
                             (conj acc (failure-entry c ret (dep-values c d)))))))
                     [] idxs)]
     (when (seq fs) (checks-failed! model fs))))
+
+(defn check-id
+  "The index of the check named `cname` on this type -- the bit it owns in a draft's mask.
+
+  A name the type does not declare is refused rather than answered: a check that does not
+  exist has no verdict, and returning one would be inventing an answer to a question about
+  nothing."
+  [model cname]
+  (or (get (:check-ids model) cname)
+      (throw (ex-info (format "%s declares no check named %s -- its checks are %s"
+                              (:name model) (pr-str cname) (pr-str (mapv :name (:checks model))))
+                      {:error ::unknown-check :record (:name model) :check cname
+                       :checks (mapv :name (:checks model))}))))
+
+(defn- unwritten-deps
+  "The fields `check` names that `d` has never been written to, in arglist order."
+  [model d check]
+  (let [missing (set ((:draft-missing model) d))]
+    (filterv missing (:deps check))))
+
+(defn- missing-field!
+  "A check cannot judge a field nobody wrote. \"Never written\" and \"written to nil\" are
+  different things everywhere else here, and the sentinel that tells them apart must not
+  reach a check body -- a check handed it would be judging the library's internals, and a
+  verdict recorded from that would be a verdict about nothing."
+  [model check ks]
+  (throw (ex-info (format "%s cannot run %s: it names %s, which %s never written"
+                          (:name model) (pr-str (:name check)) (pr-str (vec ks))
+                          (if (next ks) "were" "was"))
+                  {:error ::missing-field :record (:name model) :check (:name check)
+                   :key (first ks) :keys (vec ks)})))
+
+(defn- establish
+  "Answer what the check at `i` says about `d`, running it only if its verdict does not
+  already say it passes, and recording what it returned.
+
+  `check` means *establish this*, not *run exactly this*. A set bit says this check passed
+  against exactly this data -- a write cleared the bit of everything naming the field it
+  wrote -- so there is nothing left to learn and the check is not called. A failure is not
+  retained in the same way: nothing about a `false` bit distinguishes \"failed\" from \"not
+  yet run\", which is why a later call runs it again and produces the failure again."
+  [model d i]
+  (if (bit-test (verdict-mask d) i)
+    true
+    (let [c (nth (:checks model) i)]
+      (when-let [ks (seq (unwritten-deps model d c))]
+        (missing-field! model c ks))
+      (let [ret ((:run-draft model) i d)]
+        (record-verdict! d i (true? ret))
+        ret))))
+
+(defn check
+  "Run the check `cname` against the draft `d`: `true` if it passes, and whatever the check
+  returned if it does not.
+
+  Not a draft -- none of these return one. The verdict goes in `d`'s mask, which is what
+  frees the return value to be the answer to the question that was asked, and `true` means
+  passed here exactly as it does for a check itself.
+
+  Running a check runs whatever it depends on that is not already passing, so this
+  establishes the check rather than merely calling it: one already passing costs nothing,
+  and one whose bit a write cleared runs again. (A pure check depends on fields, which are
+  read rather than run; when an io-dep is what a check names, this is where the fetch it is
+  gated behind happens.)
+
+  Failures are not retained. What this returns is the failure; a later call re-runs anything
+  not passing and produces it again."
+  [d cname]
+  (let [model (draft-model! "check" d)]
+    (establish model d (check-id model cname))))
+
+(defn check!
+  "[[check]], insisting on the answer: `true`, or one `:check-failed` carrying the failure
+  under the check's name, alongside its docstring, the fields it declared and their values,
+  and what it returned -- the same report every other entry point throws.
+
+  The work is the same work, so a check already passing costs nothing here either."
+  [d cname]
+  (let [model (draft-model! "check!" d)
+        i     (check-id model cname)
+        ret   (establish model d i)]
+    (if (true? ret)
+      true
+      (let [c (nth (:checks model) i)]
+        (checks-failed! model [(failure-entry c ret (dep-values c d))])))))
 
 (defn model-of
   "The model for `x`, whether `x` is a validated instance or the type itself."
@@ -1005,6 +1099,10 @@
                                 (let [{:keys [name doc deps]} (nth parsed i)]
                                   {:name name :doc doc :deps deps :pred (cvar i)}))
                               (range nchecks))
+          ;; check name -> its index, which is its bit in a draft's verdict mask. Built
+          ;; here because a check is named from outside by name and reached from inside by
+          ;; index, and a scan of `:checks` per call would be the only alternative.
+          :check-ids   ~(into {} (map-indexed (fn [i c] [(:name c) i])) parsed)
           :index       ~index
           :independent ~independent
           :tag         '~tagsym

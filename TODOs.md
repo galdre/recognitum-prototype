@@ -58,7 +58,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 - [x] **D1. The verdict mask.** An `^:unsynchronized-mutable` field on the draft. Set on pass,
       clear on failure. `assoc` seeds the new draft by `and`-ing the parent's mask against the
       invalidation mask for the written field. Snapshot, so versions diverge.
-- [ ] **D2. `check` / `check!`.** Return `true` or failure data; none return a draft. Running a
+- [x] **D2. `check` / `check!`.** Return `true` or failure data; none return a draft. Running a
       check runs whatever it depends on that is not already passing.
 - [ ] **D3. Certificates.** The `:certificates` section, holding derived from the mask, and the
       built-in certificate covering every check. `certify` / `certify!`.
@@ -137,12 +137,46 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       docstring's "a question about a draft and nothing else" has to move if the first is
       chosen.
 
-- [ ] **D1 — nothing but `seal` writes a verdict yet.** `run-draft-checks!` records what
-      it ran and is the only caller; the inlined groups at `assoc`, `merge` and the two
+- [ ] **D1 — the mask is written but barely read.** `run-draft-checks!` records what
+      it ran and `seal` is its only caller; the inlined groups at `assoc`, `merge` and the two
       constructors work on sealed values, which have no mask, and `run-checks!` is what
-      they still use. D2 adds `check`/`check!` on top of `run-draft-checks!` and D5 makes
-      `seal` select by the mask instead of by the dirty-key set. Until D5, a check whose
-      bit is already set is still re-run at seal: the mask is written but not yet read.
+      they still use. D2 landed `check`/`check!` alongside `run-draft-checks!` rather than
+      on top of it -- one check answered rather than a group run to a throw is a different
+      shape -- so a second writer of verdicts exists, and `establish` is the only reader of
+      the mask so far. D5 makes `seal` select by the mask instead of by the dirty-key set;
+      until then a check whose bit is already set is still re-run at seal, so work `check`
+      did on a draft is not yet saved at the seal, only guaranteed to agree with it.
+
+- [ ] **D2 — `check` and `check!` refuse a sealed value, as `passing` does.** Both throw
+      `::not-a-draft` for anything but a draft, which is `SPEC.md`'s framing ("Running
+      checks on a draft") and matches `passing`. But a sealed value is one every check
+      passed on, so `true` is an honest answer there too, and D4's uniform `meta` wants the
+      same constant for the same reason. Whoever widens `passing` for D4 should widen these
+      alongside it or leave all three narrow deliberately -- the one thing to avoid is
+      `passing` answering for a sealed value while `check` throws on one.
+
+- [ ] **D2 — a check naming a field never written throws `::missing-field`, which
+      `SPEC.md` does not say.** The spec's table gives `check` two outcomes, `true` or the
+      failure data, and says nothing about an incomplete draft -- but running checks early
+      on an incomplete value is the whole point of the facility, so the case is reachable
+      by design. Running the check would hand its body `recognitum.core/unset`, an opaque
+      `Object` no author can recognise, while the failure report would claim it was given
+      `nil` (`dep-values` goes through `get`, which returns the default for an unwritten
+      field). So it reports `:missing-field` naming the check and every field it is waiting
+      on, in arglist order, before the body is called. `certify` (D3) and `check-all` (E3)
+      have the same case and should answer the same way.
+
+- [ ] **D2 — `check` returns the check's own return value, not the failure report.**
+      `SPEC.md` says "the failing check's data", and the check contract says what a check
+      returns *is* the failure data, so `check` hands back exactly that. The richer report
+      -- docstring, declared fields and their values, return value -- is what `check!`
+      throws. D3 has to decide the same thing for `certify`, whose `{check-name
+      failure-data}` could plausibly be either; making it match the `:failures` map of a
+      thrown `:check-failed` would be the other reading.
+
+- [ ] **D2 — the README documents neither `check` nor `check!`.** F1 owns the README, and
+      the draft-level facility is the half of the library it says least about. The four-way
+      table C0 left for F1 is in the same position.
 
 - [ ] **D1 — a type may declare at most 64 checks, and at most 20 fields.** The verdict
       mask is one long, so a 65th check would alias the first and a value could seal on a
