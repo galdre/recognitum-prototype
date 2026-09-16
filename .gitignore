@@ -1,0 +1,7 @@
+/.cpcache/
+/.clj-kondo/.cache/
+/.lsp/
+/target/
+/classes/
+.nrepl-port
+*.hprof

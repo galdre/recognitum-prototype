@@ -1,0 +1,125 @@
+# TODOs
+
+Drift inventory taken 2026-09-15, before the project layout existed. Every observation below
+was verified by running the code.
+
+The four drift items have since been adjudicated by galdre; their rulings are recorded inline
+below. In every case the code is right and the prose is wrong, which is worth noting: the docs
+drifted off the code, not the reverse.
+
+## Blocking
+
+- [x] `dev/prototype/demo.clj:60` references `prototype.validated_record.Draft`, which does not
+      exist — drafts are generated per model (`prototype.heist.HeistDraft`). The namespace does
+      not compile. It is the only file that fails to load.
+  - [x] Once it loads, confirm the rest of the demo still says what it claims to say. It has not
+        run since drafts became per-model, so nothing downstream of line 60 is verified.
+
+## Drift: resolved, pending fix
+
+Ground truth below is galdre's, given 2026-09-15. The code is correct in every case; the prose
+is what needs to move.
+
+### 1. Field predicates must not run on draft writes — SPEC
+
+Code is correct. A draft is unvalidated by definition; `seal` is where validation happens.
+A previous agent deviated from spec here, was made to fix the code, and left the prose behind.
+
+- [x] `src/prototype/validated_record.clj:4-7` — ns docstring claimed predicates run on every
+      write "including inside a draft". Delete the claim.
+- [x] `README.md:35` — "They run on every write to that field." Scope it to validated values.
+      `README.md:87` already states the rule correctly.
+- [x] `dev/prototype/demo.clj:50` — section header `--- per-field checks still fire INSIDE a
+      draft ---`. The demo demonstrates the opposite of its own heading.
+- [x] `CONSIDERATIONS.md:156-158` — **deleted the rationale.** It explains the deferral as a
+      performance fix ("Deferring them to seal fixed the quadratic in a loop"). That is not why.
+      The deferral is the spec; the quadratic is a side effect.
+  - [ ] Still open: audit the rest of `CONSIDERATIONS.md` for other invented rationale. Every other bullet
+        in §12 records a gap; this one alone narrates a decision, which is why it stands out.
+
+### 2. `seal` — BY DESIGN, and the contract is extensional
+
+A value returned from `seal` is validated exactly as if every field predicate and every
+invariant had been rerun. That equivalence is the guarantee. Checking only touched keys is an
+implementation strategy that preserves it, not a weakening of it:
+
+- an untouched field still holds the value it had in the validated source, which already
+  satisfied its predicate;
+- an invariant none of whose keys were touched reads only unchanged values, so its truth value
+  cannot have moved.
+
+Code is correct (`validated_record.clj:190-192`): field predicates for the dirty keys, then the
+invariants depending on them. `:draft-dirty-keys` is the touched set.
+
+- [x] `src/prototype/validated_record.clj:181-182` — the comment described the strategy
+      ("values were checked by the write that set them") and never states the guarantee. It is
+      also false on its own terms, since draft writes check nothing (see #1). Replace it with
+      the equivalence.
+- [ ] The equivalence holds only if every invariant declares its `:keys` accurately. A predicate
+      reading a key it did not declare can be skipped at seal, and the guarantee fails silently.
+      `README.md:39-40` states the obligation; nothing enforces it. Decide whether it stays an
+      obligation or becomes a check.
+- Not drift: `CONSIDERATIONS.md` §14's note that seal rechecks a key written back to its
+  original value is a fair efficiency observation. The contract is extensional, so a cheaper
+  sound strategy is permitted. (An earlier draft of this file called it inverted. It is not.)
+
+### 3. `dissoc` — SETTLED
+
+Declared fields stay permanent: `dissoc` refuses them and the error proposes the rewrite.
+Undeclared keys dissoc normally. Refuse-vs-replace decided in favor of refuse — callers do the
+rewrite themselves, and the message tells them how.
+
+- [x] Declared field throws `:cannot-dissoc`, carrying *"use (assoc m :cuts nil) if its
+      predicate admits nil"* and an `:instead` form in the ex-data (`no-dissoc!`).
+- [x] Undeclared key removes from a draft's ext map, and is the ordinary map no-op on a
+      validated value, which cannot be holding one. `clean` still strips in bulk.
+- [x] `README.md` prose, the `:cannot-dissoc` row, the `clean` section, and the demo heading
+      all match the behavior.
+
+### 4. `#Heist{…}` prints like a readable literal but is not — FUTURE WORK
+
+Ruled: acknowledged, deferred. `CONSIDERATIONS.md` §8 already records the absent reader literal
+as deliberate.
+
+- [ ] Future work, not drift: either a real reader literal, or a printed form that does not
+      imply one.
+
+## Stale
+
+- [ ] `bench/prototype/bench2.clj` decomposes a draft implementation that no longer exists. It
+      benchmarks `conj` onto `(def dirty #{:take})` and `assoc` onto a map backing; the current
+      draft is real fields plus an ext map plus a bitmask. The breakdown rows measure nothing
+      that runs. Rewrite against the current internals or delete.
+- [ ] Four benchmark files accumulated rather than replaced. Only `bench4.clj` shares predicates
+      between both sides, so only its comparison is apples-to-apples — and the `README.md` table
+      comes from it. Decide what `bench.clj`, `bench2.clj`, and `bench3.clj` are still for.
+- [ ] `README.md` performance table has no recorded provenance — no machine, no JVM, no date, no
+      pointer to `bench4`. Re-measure and record, or caveat it.
+
+## Dead references
+
+- [ ] `src/prototype/validated_record.clj` requires `clojure.set` and `clojure.string`; neither
+      is used.
+- [ ] `draft` and `seal` referred but unused: `dev/prototype/demo.clj`, `dev/prototype/heist.clj`,
+      `bench/prototype/bench4.clj`.
+- [ ] `(:import (prototype.heist Heist))` unused: `dev/prototype/demo.clj`,
+      `bench/prototype/bench3.clj`.
+
+## Unverified claims
+
+- [ ] `clean` and `:extraneous-keys` are documented in `README.md` but exercised by neither
+      `demo.clj` nor `ownership_test.clj`. (Both work — spot-checked at inventory time.)
+- [ ] A `revising` body returning a sealed value instead of a draft throws a bare
+      `NullPointerException`, not an `ex-info`. Decide whether that is a supported mistake worth
+      a real error.
+
+## Post-migration
+
+- [ ] No `clojure.test` suite. `test/` exists and `clojure -X:test` runs; there is nothing in it.
+      The demo scripts are the current correctness story — `CONSIDERATIONS.md` §14 says so.
+- [ ] `dev/prototype/ownership_test.clj` is named like a test but is a `println` script. Rename,
+      or convert it into the real suite it is impersonating.
+- [ ] Namespace root is still `prototype.*`. Decide the real name before anything depends on it.
+- [ ] Not a git repo. Nothing here has history, so an agent reading it cold cannot tell spec from
+      accident — and will reconstruct a rationale rather than admit it does not know. That is how
+      §12 got written.
