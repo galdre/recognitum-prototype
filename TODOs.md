@@ -27,7 +27,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       over a single field, and the optional docstring position. Exactly one arity. Replaces
       `:valid` metadata and the invariants vector. The field → checks index comes from arglists
       rather than declared `:keys`.
-- [ ] **B2. Compile-time resolution.** A symbol that is not a declared field, a keyword that is
+- [x] **B2. Compile-time resolution.** A symbol that is not a declared field, a keyword that is
       not a declared io-dep, a name used for both a check and an io-dep — each a compile error
       naming the offender. (Cycles wait for E1, when io-deps can name each other.)
 - [ ] **B3. The check contract.** `true` passed, anything else failure data. Exceptions
@@ -118,6 +118,16 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 - [ ] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
       the `:invalid-field` / `:invariant-violated` errors.** None of those exist. F1 owns the
       README; this is a note that it is now wrong rather than merely dated.
+
+- [ ] **B2 — the io-dep half of the resolution has no end-to-end path yet.** `resolve-deps`
+      takes the set of declared io-deps and `reject-duplicate-names!` takes their names, but
+      the macro passes `#{}` and `#{}` because there is no `:io-deps` section until E1. So the
+      reachable macro-level behaviour is that every keyword in an arglist is unresolvable; a
+      keyword resolving against a declared io-dep, and a name declared as both a check and an
+      io-dep, are covered by calling those two fns directly in `recognitum.resolution-test`.
+      E1 should replace the `io-deps #{}` binding in `defrecord` with the declared set, pass
+      the io-dep names to `reject-duplicate-names!`, resolve each io-dep's own arglist through
+      `resolve-deps` with `:what :io-dep`, and add the end-to-end cases.
 
 - [ ] **A1 — the README performance table was not re-measured.** The bench runs and its
       numbers sit inside the run-to-run spread the table already warns about, but qualified

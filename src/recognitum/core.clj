@@ -282,6 +282,68 @@
 
 ;;; ------------------------------------------ Macro ------------------------------------------
 
+(defn unknown-dependency!
+  "Report an arglist entry that names nothing this type declares."
+  [{:keys [record what fields io-deps] cname :name} entry]
+  (let [kind (name what)]
+    (throw (ex-info (cond
+                      (symbol? entry)
+                      (format "%s %s %s names %s, which is not a field of %s -- its fields are %s"
+                              record kind (pr-str cname) (pr-str entry) record
+                              (pr-str (vec (keys fields))))
+
+                      (keyword? entry)
+                      (format "%s %s %s names %s, which is not an io-dep of %s -- %s"
+                              record kind (pr-str cname) (pr-str entry) record
+                              (if (seq io-deps)
+                                (str "its io-deps are " (pr-str io-deps))
+                                "it declares no io-deps"))
+
+                      :else
+                      (format (str "%s %s %s names %s: an arglist entry is a symbol naming a field "
+                                   "or a keyword naming an io-dep, and nothing else")
+                              record kind (pr-str cname) (pr-str entry)))
+                    (assoc {:error ::unknown-dependency
+                            :record record
+                            :dependency entry
+                            :fields (vec (keys fields))
+                            :io-deps io-deps}
+                           what cname)))))
+
+(defn resolve-deps
+  "Resolve one arglist into the dependency keys it names, in the order it names them.
+
+  The arglist is the dependency declaration, so this is where a declaration either means
+  something or the form stops compiling. An entry is a symbol naming a field of this type,
+  which resolves to that field's key, or a keyword naming an io-dep of this type, which is
+  already its own name. Anything else -- a destructuring form, a rest arg, a parameter named
+  `_` -- would be a dependency the macro could not resolve to anything, and is refused with
+  the offender named.
+
+  `ctx` is `{:record :what :name :fields :io-deps}`: the type, `:check` or `:io-dep`, the
+  name of the thing being resolved, an ordered map of field symbol -> field key, and the set
+  of io-dep names. Checks and io-deps are resolved the same way, because they declare
+  dependencies the same way."
+  [{:keys [fields io-deps] :as ctx} args]
+  (mapv (fn [entry]
+          (cond
+            (symbol? entry)  (or (get fields entry) (unknown-dependency! ctx entry))
+            (keyword? entry) (if (contains? io-deps entry)
+                               entry
+                               (unknown-dependency! ctx entry))
+            :else            (unknown-dependency! ctx entry)))
+        args))
+
+(defn reject-duplicate-names!
+  "A keyword in an arglist means an io-dep and a check never appears in one, so the two
+  namespaces only collide where a single name is declared in both places -- at which point
+  the reader of an arglist could no longer tell what it is looking at. Refuse it."
+  [tname check-names io-dep-names]
+  (when-let [dup (some (set io-dep-names) check-names)]
+    (throw (ex-info (format "%s declares %s as both a check and an io-dep"
+                            tname (pr-str dup))
+                    {:error ::duplicate-name :record tname :name dup}))))
+
 (defn- parse-check
   "One entry of the `:checks` map -> `{:name :doc :args :fn}`.
 
@@ -327,6 +389,11 @@
   something it did not name, and the field -> checks index the macro derives from those
   arglists cannot disagree with the code. Exactly one arity: the arity is the dependency set.
 
+  Every entry in an arglist is resolved here, while the macro runs: a symbol names a field
+  of this type and a keyword names an io-dep of this type. One that names neither is a
+  compile error naming the offender, so a dependency either means something or the form does
+  not compile -- there is no way to write a check indexed under a key no write can produce.
+
   A field becomes a key qualified by the namespace this form is written in -- a `Heist`
   defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
   `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
@@ -358,10 +425,21 @@
         ctor-with (fn [i x] `(new ~tname ~@(assoc fsyms i x) ~mtasym))
         tagsym    (symbol key-ns (str tname))
         ;; ---- the checks ----
+        ;; Ordered, so a rejected arglist can name the fields it could have named in the
+        ;; order they were declared rather than in hash order. `array-map` built this way
+        ;; stays one at any size; `into` an empty one would not.
+        fieldmap  (apply array-map (interleave fsyms ks))
+        ;; `:io-deps` arrives in E1. Until then a type declares none, so every keyword in an
+        ;; arglist is unresolvable -- which is what it should be, and is reported as an
+        ;; unknown io-dep rather than as a stray symbol.
+        io-deps   #{}
         parsed    (mapv (fn [[cname form]]
                           (let [c (parse-check tname cname form)]
-                            (assoc c :deps (mapv #(if (symbol? %) (qkey %) %) (:args c)))))
+                            (assoc c :deps (resolve-deps {:record tname :what :check :name cname
+                                                          :fields fieldmap :io-deps io-deps}
+                                                         (:args c)))))
                         (seq checks))
+        _         (reject-duplicate-names! tname (map :name parsed) io-deps)
         nchecks   (count parsed)
         cvar      (fn [i] (symbol (str tname "--check-" i)))
         deps-of   (fn [i] (:deps (nth parsed i)))
