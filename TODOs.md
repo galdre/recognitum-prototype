@@ -170,8 +170,9 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
 
 ## Deferred during implementation
 
-- [ ] **G2 — `postwalk` over an `:io-limited` sealed value throws where the step's
-      acceptance line said it returns the value.** `clojure.walk/walk` rebuilds a record
+- [x] **G2 — `postwalk` over an `:io-limited` sealed value throws where the step's
+      acceptance line said it returns the value.** Superseded by H1 in the implementation
+      sequence, which is the walk-of-our-own this asks about. `clojure.walk/walk` rebuilds a record
       as `(reduce (fn [r x] (conj r (inner x))) form form)` -- one `conj` per entry,
       each of which is a direct write to a sealed value. On `Heist`, which is the type
       `SPEC.md`'s example names and which is `:io-limited`, the first io-limited field
