@@ -20,13 +20,19 @@
    ::take non-neg-int?
    ::cuts cuts-map?
 
+   ;; Checks have no ordering among themselves -- every one of them runs, on whatever the
+   ;; fields happen to hold -- so a check spanning two fields sees the shapes the checks
+   ;; over those fields are rejecting in the same pass. It restates what it needs rather
+   ;; than assuming it: a throw would be a bug in the check, not a verdict about the data.
    ::cuts-sum-to-take
    ("the cuts add up to the take"
-    [take cuts] (= take (reduce + 0 (vals cuts))))
+    [take cuts] (and (non-neg-int? take) (cuts-map? cuts)
+                     (= take (reduce + 0 (vals cuts)))))
 
    ::only-crew-get-cuts
    ("only crew get a cut"
-    [crew cuts] (every? crew (keys cuts)))})
+    [crew cuts] (and (crew-set? crew) (cuts-map? cuts)
+                     (every? crew (keys cuts))))})
 
 (def italian-job
   (drafting [h Heist]

@@ -107,6 +107,10 @@
   ;; in this library is one function call away from being bypassed.
   (is (= ::rec/check-failed (:error (err #(heist/->Heist "" :not-a-set -999 "garbage"))))
       "the forging attempt that used to succeed")
+  (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts
+          ::heist/cuts-sum-to-take ::heist/only-crew-get-cuts]
+         (vec (keys (:failures (err #(heist/->Heist "" :not-a-set -999 "garbage"))))))
+      "and it is told everything that is wrong with it, not the first thing")
   (is (nil? (resolve 'recognitum.heist/->HeistDraft))
       "and the draft type's raw factory is unmapped"))
 

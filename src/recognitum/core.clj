@@ -6,6 +6,12 @@
   is derived from the form rather than declared alongside it, and cannot disagree with
   what the body actually does.
 
+  A check returns `true` -- exactly `true` -- to pass; anything else is a failure, and what
+  it returned is the failure data. An exception is neither: a throw is a bug in the check
+  rather than a verdict about the data, so it propagates untouched. Nothing stops at the
+  first failure either -- every entry point runs everything it was asked to run and throws
+  once with all of it, keyed by check name in declaration order.
+
   A write to a validated value runs the checks naming the field written, so such a value
   is never observable in an invalid state. A draft is not a validated value: writes into
   it check nothing, which is what lets a multi-step update pass through states no single
@@ -55,31 +61,39 @@
   [model k]
   (when-not (contains? (:field-set model) k) (unknown-key! model k)))
 
-(defn check-failed!
-  "Report `check` failing. `vals` is what it was given, keyed by the dependency it was given
-  for, in arglist order; `ret` is what it returned, which is the failure data."
-  [model check ret vals]
-  (throw (ex-info (format "%s failed %s%s: given %s it returned %s"
-                          (:name model) (:name check)
-                          (if-let [d (:doc check)] (str " (" d ")") "")
-                          (pr-str vals) (pr-str ret))
-                  {:error ::check-failed
-                   :record (:name model)
-                   :failures (array-map (:name check)
-                                        {:doc      (:doc check)
-                                         :values   vals
-                                         :returned ret})})))
+(defn dep-values
+  "What a check was given, keyed by the dependency it was given for, in arglist order.
+  Built only where a failure is about to be reported -- the passing path never has to say."
+  [check x]
+  (apply array-map (mapcat (fn [d] [d (get x d)]) (:deps check))))
 
-(defn run-check!
-  "Run the check at index `i` against `x`, through the type's own generated runner -- which
-  reads the fields it needs directly rather than looking them up. Only the failure path pays
-  for a lookup, to say what the check was given."
-  [model run i x]
-  (let [ret (try (run i x) (catch Throwable _ false))]
-    (when-not ret
-      (let [c (nth (:checks model) i)]
-        (check-failed! model c ret
-                       (into (array-map) (map (fn [d] [d (get x d)])) (:deps c)))))))
+(defn failure-entry
+  "The `[check-name report]` pair for a check that did not return `true`. `ret` is what it
+  returned, which is the failure data; `vals` is what it was given."
+  [check ret vals]
+  [(:name check) {:doc (:doc check) :values vals :returned ret}])
+
+(defn- failure-str [[cname {:keys [doc values returned]}]]
+  (format "%s%s: given %s it returned %s"
+          cname (if doc (str " (" doc ")") "") (pr-str values) (pr-str returned)))
+
+(defn checks-failed!
+  "Throw one `:check-failed` carrying every failure in `fs`, which is [[failure-entry]] pairs
+  in the order the checks ran -- declaration order, everywhere they are run from. `fs` may
+  hold `nil` where a check passed, so a call site can emit one expression per check and let
+  this work out which of them happened.
+
+  The map is `array-map` applied to the pairs rather than conj-ed together one at a time:
+  conj past the eighth entry would promote it to a hash map and lose the very order it is
+  reporting in."
+  [model fs]
+  (let [fs (into [] (remove nil?) fs)]
+    (throw (ex-info (str (:name model) " failed "
+                         (when (next fs) (str (count fs) " checks -- "))
+                         (apply str (interpose "; " (map failure-str fs))))
+                    {:error ::check-failed
+                     :record (:name model)
+                     :failures (apply array-map (into [] cat fs))}))))
 
 (defn checks-for
   "The indices of the checks naming any of `ks`, in declaration order."
@@ -87,9 +101,24 @@
   (into (sorted-set) (mapcat (:index model)) ks))
 
 (defn run-checks!
-  "Run the checks at `idxs` against `x`, in the order `idxs` yields them."
+  "Run the checks at `idxs` against `x`, through the type's own generated runner -- which
+  reads the fields each check needs directly rather than looking them up. Only the failure
+  path pays for a lookup, to say what the check was given.
+
+  Every one of them runs: a failure does not stop the pass, and what comes back is one throw
+  carrying all of them. Only `true` passes, and nothing is caught -- a check that throws is a
+  bug in the check rather than a verdict about the data, and \"we could not determine whether
+  this is valid\" is a different claim from \"this is invalid\"."
   [model run x idxs]
-  (doseq [i idxs] (run-check! model run i x)))
+  (let [cs (:checks model)
+        fs (reduce (fn [acc i]
+                     (let [ret (run i x)]
+                       (if (true? ret)
+                         acc
+                         (let [c (nth cs i)]
+                           (conj acc (failure-entry c ret (dep-values c x)))))))
+                   [] idxs)]
+    (when (seq fs) (checks-failed! model fs))))
 
 (def ^:dynamic *audit-invariant-keys*
   "Inert. Dependencies are read off each check's arglist now, and the body cannot reach a
@@ -394,6 +423,15 @@
   compile error naming the offender, so a dependency either means something or the form does
   not compile -- there is no way to write a check indexed under a key no write can produce.
 
+  A check passes by returning `true` and nothing else; whatever else it returns is the
+  failure data, reported under the check's name alongside its docstring and the fields it
+  declared. Checks have no ordering among themselves and every one of them runs, so a
+  check spanning two fields sees whatever those fields hold, including shapes the checks
+  over them are rejecting in the same pass -- it restates what it needs rather than
+  assuming an earlier check stopped anything. An exception is not caught: it is a bug in
+  the check rather than a claim about the data, and \"we could not determine whether this
+  is valid\" is not \"this is invalid\".
+
   A field becomes a key qualified by the namespace this form is written in -- a `Heist`
   defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
   `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
@@ -449,13 +487,27 @@
         index     (reduce (fn [idx i] (reduce #(update %1 %2 (fnil conj []) i) idx (deps-of i)))
                           {} (range nchecks))
         independent (filterv #(empty? (deps-of %)) (range nchecks))
-        ;; Run check `i` over the given expressions, which are locals or direct field reads.
-        ;; The value map is built only where it is about to be reported.
-        run-check (fn [i argvs]
-                    `(let [r# (try (~(cvar i) ~@argvs) (catch Throwable _# false))]
-                       (when-not r#
-                         (check-failed! ~model-sym (nth (:checks ~model-sym) ~i) r#
-                                        (array-map ~@(interleave (deps-of i) argvs))))))]
+        ;; Run the checks at `idxs` over the expressions `argvs-of` gives for each -- locals
+        ;; or direct field reads, so evaluating one twice costs nothing. Every check in the
+        ;; group is called before any verdict is read, because a failure does not stop the
+        ;; pass; then every one that did not return `true` is reported together. Nothing is
+        ;; caught, so a check that throws leaves the `let` before there is anything to
+        ;; report, which is the contract: a throw is a bug rather than a verdict. The value
+        ;; maps are built only inside the branch that is about to throw.
+        run-group (fn [idxs argvs-of]
+                    (when (seq idxs)
+                      (let [rs (mapv #(gensym (str "r" % "-")) idxs)]
+                        `(let [~@(mapcat (fn [i r] [r `(~(cvar i) ~@(argvs-of i))]) idxs rs)]
+                           (when-not (and ~@(map (fn [r] `(true? ~r)) rs))
+                             (checks-failed!
+                              ~model-sym
+                              [~@(map (fn [i r]
+                                        `(when-not (true? ~r)
+                                           (failure-entry (nth (:checks ~model-sym) ~i) ~r
+                                                          (array-map
+                                                           ~@(interleave (deps-of i)
+                                                                         (argvs-of i))))))
+                                      idxs rs)]))))))]
     `(do
        (declare ~model-sym)
        ~@(map (fn [i] `(def ~(with-meta (cvar i) {:private true}) ~(:fn (nth parsed i))))
@@ -471,11 +523,10 @@
          (~'assoc [_# ~ksym ~vsym]
            (case ~ksym
              ~@(mapcat (fn [j k]
-                         [k `(do ~@(map (fn [i]
-                                          (run-check i (map (fn [d]
-                                                              (if (= d k) vsym (key->sym d)))
-                                                            (deps-of i))))
-                                        (get index k))
+                         [k `(do ~(run-group (get index k)
+                                             (fn [i] (map (fn [d]
+                                                            (if (= d k) vsym (key->sym d)))
+                                                          (deps-of i))))
                                  ~(ctor-with j vsym))])
                        (range n) ks)
              (unknown-key! ~model-sym ~ksym)))
@@ -596,7 +647,7 @@
        (defn ~(symbol (str "->" tname))
          ~(str "Construct a validated " tname " from its fields, in declaration order.")
          [~@fsyms]
-         ~@(map (fn [i] (run-check i (map key->sym (deps-of i)))) (range nchecks))
+         ~(run-group (range nchecks) (fn [i] (map key->sym (deps-of i))))
          (new ~tname ~@fsyms nil))
 
        (defn ~(symbol (str "map->" tname))

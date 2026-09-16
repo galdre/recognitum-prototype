@@ -30,7 +30,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 - [x] **B2. Compile-time resolution.** A symbol that is not a declared field, a keyword that is
       not a declared io-dep, a name used for both a check and an io-dep — each a compile error
       naming the offender. (Cycles wait for E1, when io-deps can name each other.)
-- [ ] **B3. The check contract.** `true` passed, anything else failure data. Exceptions
+- [x] **B3. The check contract.** `true` passed, anything else failure data. Exceptions
       propagate rather than becoming failures. Every entry point runs everything it was asked to
       and collects all failures, keyed by check name in declaration order, built with
       `array-map`.
@@ -102,22 +102,35 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       `:keys`, which no longer exist; its coverage is replaced by
       `checks-test/a-check-body-cannot-read-a-field-it-did-not-name`, which shows the class of
       bug does not compile rather than that a proxy catches it. B4 removes the rest.
-- [ ] **B1 — declaration order is lost past eight checks.** The reader hands the macro a
+- [x] **B1 — declaration order is lost past eight checks.** The reader hands the macro a
       `PersistentHashMap` once a map literal passes eight pairs, so for a ninth check onward
       the order the macro sees is hash order, not source order. `SPEC.md`'s "the order the
       checks are written in the form, which the macro sees before a map literal would lose
       it" is true only up to eight. It is stable, just not the written order. B3 owns the
       ordered failure map and should decide whether that is acceptable or whether the section
-      needs another shape.
-- [ ] **B1 — a cross-field check runs on fields its own type has already rejected.** With
+      needs another shape. Ruled in B3: acceptable as it stands, see the B3 entry below.
+- [x] **B1 — a cross-field check runs on fields its own type has already rejected.** With
       checks unified, `SPEC.md` says pure checks run ungated and exceptions propagate, so
       `::cuts-sum-to-take` over a `cuts` that is the string `"garbage"` would throw rather
       than report. B1 preserves the old behaviour — declaration order plus stop-at-first
       failure, with a throw read as a failure — so nothing is exposed yet. B3 takes both of
-      those away at once and has to say what happens then.
+      those away at once and has to say what happens then. Ruled in B3: the check is at fault
+      and must be total over what it names, since checks have no ordering among themselves.
+      `recognitum.heist`'s two cross-field checks now restate the shapes they need.
 - [ ] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
       the `:invalid-field` / `:invariant-violated` errors.** None of those exist. F1 owns the
       README; this is a note that it is now wrong rather than merely dated.
+
+- [ ] **B3 — `SPEC.md` says failures come back "in declaration order", which is true only
+      up to eight checks.** Ruled acceptable rather than fixed: the reader hands the macro a
+      `PersistentHashMap` once a map literal passes eight pairs, so past that the order the
+      macro sees is hash order. What B3 guarantees, and what `contract_test` pins, is the
+      weaker invariant that holds at every size — the failures are reported in the order the
+      model records its checks in, built with `array-map` so nothing promotes and reorders
+      them, and that order is the written one up to eight. Fixing it properly means `:checks`
+      taking a shape the reader preserves (a vector of pairs, say), which changes the
+      definition form and belongs to whoever revisits C1, not here. Until then `SPEC.md`'s
+      sentence overclaims by one clause.
 
 - [ ] **B2 — the io-dep half of the resolution has no end-to-end path yet.** `resolve-deps`
       takes the set of declared io-deps and `reject-duplicate-names!` takes their names, but
