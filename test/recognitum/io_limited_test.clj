@@ -389,18 +389,177 @@
 
 ;;; ------------------------------------ declaring it ------------------------------------
 
-(deftest the-option-takes-a-boolean-and-nothing-else
-  (testing "it is read where the form is written, so a value that is not a literal boolean
-            would be truthy whatever it later evaluated to"
+;; The option is read where the form is written, and it takes a literal `true` or `false`
+;; or a symbol naming a var holding one. These are the vars the types and the refused forms
+;; below are written against. They are public because a form compiled in another namespace
+;; names them qualified, which is the whole point of the qualified case.
+
+(def limit-io
+  "A var holding the option's value, read when the types below are compiled."
+  true)
+
+(def leave-it-open
+  "The same, holding the other boolean."
+  false)
+
+(def unset-io "A var holding nil, which is not a boolean." nil)
+
+(def io-as-a-string "A var holding a string, which is not a boolean either." "true")
+
+;; The option written as an unqualified symbol naming a var in this namespace. Its crew is
+;; read by an IO-bound check, so a direct write to it on a sealed value is refused -- the
+;; declaration has to do the work, not merely be recorded.
+(rec/defrecord ViaVar
+  [name crew]
+  {:options {:io-limited limit-io}
+   :checks
+   {::vname ([name] (string? name))
+    ::vcrew-is-known ([::vroster crew] (= (set vroster) (set crew)))}
+   :io-deps
+   {::vroster ([crew] (do (note! ::vroster) (roster/fetch-roster crew)))}})
+
+;; The same, named by its qualified symbol.
+(rec/defrecord ViaQualifiedVar
+  [name crew]
+  {:options {:io-limited recognitum.io-limited-test/limit-io}
+   :checks
+   {::qname ([name] (string? name))
+    ::qcrew-is-known ([::qroster crew] (= (set qroster) (set crew)))}
+   :io-deps
+   {::qroster ([crew] (do (note! ::qroster) (roster/fetch-roster crew)))}})
+
+;; And a var holding false, which limits nothing, exactly as the literal does not.
+(rec/defrecord ViaFalseVar
+  [name crew]
+  {:options {:io-limited leave-it-open}
+   :checks
+   {::fname ([name] (string? name))
+    ::fcrew-is-known ([::froster crew] (= (set froster) (set crew)))}
+   :io-deps
+   {::froster ([crew] (do (note! ::froster) (roster/fetch-roster crew)))}})
+
+(defn- compiled-model
+  "Compile `form` in the scratch namespace and hand back the model of the type `sym` names
+  there. Two evaluations rather than one, so the type is interned before it is read back."
+  [form sym]
+  (binding [*ns* @scratch]
+    (eval form)
+    (internal/model-of (eval sym))))
+
+(deftest the-option-takes-a-literal-boolean
+  (is (nil? (compiles '(recognitum.core/defrecord Yes [a] {:options {:io-limited true}}))))
+  (is (nil? (compiles '(recognitum.core/defrecord No [a] {:options {:io-limited false}}))))
+  (is (true? (:io-limited (internal/model-of Job))))
+  (is (false? (:io-limited (internal/model-of Unlimited)))))
+
+(deftest the-option-takes-a-var-holding-a-boolean
+  (testing "the model carries what the var held, not the symbol that named it"
+    (is (= {:io-limited true} (:options (internal/model-of ViaVar))))
+    (is (true? (:io-limited (internal/model-of ViaVar)))))
+  (testing "and the type is limited for real, not merely recorded as limited"
+    (is (= #{::crew} (:io-limited-keys (internal/model-of ViaVar))))
+    (let [v (->ViaVar "A Job" #{:charlie :lyle})]
+      (is (rec/sealed? v))
+      (let [e (err #(assoc v ::crew #{:charlie}))]
+        (is (= ::rec/io-limited (:error e)))
+        (is (= [::crew] (:keys e))))
+      (testing "while a field no IO-bound check reaches is written as before"
+        (is (= "Another" (::name (assoc v ::name "Another")))))
+      (testing "and drafting is where that write belongs"
+        (is (rec/sealed? (rec/drafting [d v] (assoc d ::crew #{:charlie}))))))))
+
+(deftest a-var-holding-false-limits-nothing
+  (is (= {:io-limited false} (:options (internal/model-of ViaFalseVar))))
+  (is (false? (:io-limited (internal/model-of ViaFalseVar))))
+  (is (= #{} (:io-limited-keys (internal/model-of ViaFalseVar))))
+  (let [f (->ViaFalseVar "A Job" #{:charlie :lyle})]
+    (is (rec/sealed? (assoc f ::crew #{:charlie})))
+    (testing "the checks still decide what such a write produces"
+      (is (= ::rec/check-failed (:error (err #(assoc f ::crew #{:nobody}))))))))
+
+(deftest a-qualified-symbol-resolves-to-the-var-its-namespace-names
+  (is (= {:io-limited true} (:options (internal/model-of ViaQualifiedVar))))
+  (is (= #{::crew} (:io-limited-keys (internal/model-of ViaQualifiedVar))))
+  (is (= ::rec/io-limited
+         (:error (err #(assoc (->ViaQualifiedVar "A Job" #{:charlie}) ::crew #{:lyle})))))
+  (testing "including from a namespace that has not referred it"
+    (is (true? (:io-limited
+                (compiled-model
+                 '(recognitum.core/defrecord Elsewhere
+                    [a] {:options {:io-limited recognitum.io-limited-test/limit-io}})
+                 'Elsewhere))))
+    (is (false? (:io-limited
+                 (compiled-model
+                  '(recognitum.core/defrecord ElsewhereOpen
+                     [a] {:options {:io-limited recognitum.io-limited-test/leave-it-open}})
+                  'ElsewhereOpen))))))
+
+(deftest a-symbol-that-does-not-resolve-does-not-compile
+  (let [form '(recognitum.core/defrecord Nowhere
+                [a] {:options {:io-limited no-such-flag} :checks {:scratch/a int?}})
+        e    (compile-data form)]
+    (is (= ::rec/malformed-option (:error e)))
+    (is (= 'Nowhere (:record e)))
+    (is (= :io-limited (:option e)))
+    (is (= 'no-such-flag (:value e)))
+    (testing "and the message says which case it was"
+      (let [m (compile-message form)]
+        (is (re-find #":io-limited" m))
+        (is (re-find #"does not resolve" m))
+        (is (re-find #"no-such-flag" m))))))
+
+(deftest a-symbol-that-resolves-to-something-other-than-a-var-does-not-compile
+  (let [form '(recognitum.core/defrecord Classy
+                [a] {:options {:io-limited String} :checks {:scratch/a int?}})
+        e    (compile-data form)]
+    (is (= ::rec/malformed-option (:error e)))
+    (is (= 'String (:value e)))
+    (let [m (compile-message form)]
+      (is (re-find #":io-limited" m))
+      (is (re-find #"not a var" m)))))
+
+(deftest a-var-whose-value-is-not-a-boolean-does-not-compile
+  (testing "nil is not a boolean, whatever it is truthy about"
+    (let [form '(recognitum.core/defrecord Unset
+                  [a] {:options {:io-limited recognitum.io-limited-test/unset-io}
+                       :checks  {:scratch/a int?}})
+          e    (compile-data form)]
+      (is (= ::rec/malformed-option (:error e)))
+      (is (= 'recognitum.io-limited-test/unset-io (:value e)))
+      (let [m (compile-message form)]
+        (is (re-find #":io-limited" m))
+        (is (re-find #"holds" m))
+        (is (re-find #"nil" m))
+        (is (re-find #"not a boolean" m)))))
+  (testing "and neither is a string"
+    (let [form '(recognitum.core/defrecord Stringly
+                  [a] {:options {:io-limited recognitum.io-limited-test/io-as-a-string}
+                       :checks  {:scratch/a int?}})
+          e    (compile-data form)]
+      (is (= ::rec/malformed-option (:error e)))
+      (let [m (compile-message form)]
+        (is (re-find #"holds" m))
+        (is (re-find #"not a boolean" m))))))
+
+(deftest a-form-that-is-neither-a-boolean-nor-a-symbol-does-not-compile
+  (testing "a call is evaluated nowhere: the option is read where it is written"
+    (let [form '(recognitum.core/defrecord Called
+                  [a] {:options {:io-limited (io-enabled?)} :checks {:scratch/a int?}})
+          e    (compile-data form)]
+      (is (= ::rec/malformed-option (:error e)))
+      (is (= '(io-enabled?) (:value e)))
+      (let [m (compile-message form)]
+        (is (re-find #":io-limited" m))
+        (is (re-find #"is neither" m)))))
+  (testing "nor is a string, a keyword, a map or a number one of the two"
     (let [e (compile-data '(recognitum.core/defrecord Maybe
                              [a] {:options {:io-limited "yes"} :checks {:scratch/a int?}}))]
       (is (= ::rec/malformed-option (:error e)))
       (is (= 'Maybe (:record e)))
       (is (= :io-limited (:option e)))
       (is (= "yes" (:value e))))
-    (let [m (compile-message '(recognitum.core/defrecord Maybe2
-                                [a] {:options {:io-limited (= 1 1)}}))]
-      (is (re-find #":io-limited" m))))
-  (testing "both booleans compile"
-    (is (nil? (compiles '(recognitum.core/defrecord Yes [a] {:options {:io-limited true}}))))
-    (is (nil? (compiles '(recognitum.core/defrecord No [a] {:options {:io-limited false}}))))))
+    (doseq [v [:yes {} 1]]
+      (let [e (compile-data (list 'recognitum.core/defrecord 'Odd
+                                  '[a] {:options {:io-limited v}}))]
+        (is (= ::rec/malformed-option (:error e)) (pr-str v))
+        (is (= v (:value e)) (pr-str v))))))
