@@ -19,15 +19,15 @@
 ;;; ------------------------------- a draft validates nothing -------------------------------
 
 (deftest writes-into-a-draft-are-unchecked
-  (let [d (assoc (rec/draft job) :take "nope")]
+  (let [d (assoc (rec/draft job) ::heist/take "nope")]
     (is (rec/draft? d))
-    (is (= "nope" (:take d)) "the bad value is simply there"))
+    (is (= "nope" (::heist/take d)) "the bad value is simply there"))
   (testing "seal is where it fails"
-    (is (= ::rec/invalid-field (:error (err #(rec/seal (assoc (rec/draft job) :take "nope"))))))))
+    (is (= ::rec/invalid-field (:error (err #(rec/seal (assoc (rec/draft job) ::heist/take "nope"))))))))
 
 (deftest a-draft-may-pass-through-states-no-single-write-could
   (testing "either write alone throws on a validated value"
-    (is (= ::rec/invariant-violated (:error (err #(assoc job :take 3500))))))
+    (is (= ::rec/invariant-violated (:error (err #(assoc job ::heist/take 3500))))))
   (testing "but the pair is fine inside one drafting"
     (is (instance? Heist (rec/drafting [x job] (heist/add-member x :napster 500))))))
 
@@ -44,15 +44,15 @@
 (deftest dissoc-removes-one-undeclared-key-from-a-draft
   (is (instance? Heist (rec/drafting [x job] (-> x (assoc :getaway-car "mini") (dissoc :getaway-car)))))
   (testing "a declared field is still permanent"
-    (is (= ::rec/cannot-dissoc (:error (err #(dissoc (rec/draft job) :cuts))))))
+    (is (= ::rec/cannot-dissoc (:error (err #(dissoc (rec/draft job) ::heist/cuts))))))
   (testing "and removing an absent undeclared key allocates nothing"
     (let [d (rec/draft job)]
       (is (identical? d (dissoc d :never-there))))))
 
 (deftest seal-reports-a-field-never-written
-  (let [e (err #(rec/drafting [x Heist] (assoc x :name "X")))]
+  (let [e (err #(rec/drafting [x Heist] (assoc x ::heist/name "X")))]
     (is (= ::rec/missing-field (:error e)))
-    (is (contains? #{:crew :take :cuts} (:key e)))))
+    (is (contains? #{::heist/crew ::heist/take ::heist/cuts} (:key e)))))
 
 ;;; --------------------------- "never written" is not "written to nil" ---------------------------
 
@@ -62,24 +62,24 @@
   [])
 
 (deftest nil-is-a-legal-value-when-the-predicate-admits-it
-  (let [n (rec/drafting [x Note] (merge x {:title "t" :body nil}))]
-    (is (nil? (:body n)))
-    (is (= [:title :body] (keys n)) "the field is present, holding nil"))
+  (let [n (rec/drafting [x Note] (merge x {::title "t" ::body nil}))]
+    (is (nil? (::body n)))
+    (is (= [::title ::body] (keys n)) "the field is present, holding nil"))
   (testing "leaving it unwritten is a different thing entirely"
-    (is (= ::rec/missing-field (:error (err #(rec/drafting [x Note] (assoc x :title "t"))))))))
+    (is (= ::rec/missing-field (:error (err #(rec/drafting [x Note] (assoc x ::title "t"))))))))
 
 ;;; --------------------------------------- drafting ---------------------------------------
 
 (deftest drafting-builds-from-the-type-itself
   (let [h (rec/drafting [x Heist]
-            (merge x {:name "A" :crew #{:x} :take 1 :cuts {:x 1}}))]
+            (merge x {::heist/name "A" ::heist/crew #{:x} ::heist/take 1 ::heist/cuts {:x 1}}))]
     (is (instance? Heist h))
-    (is (= "A" (:name h))))
+    (is (= "A" (::heist/name h))))
   (testing "and from an explicit draft of the type, which once did not work"
     (let [h (rec/drafting [x (rec/draft Heist)]
-              (merge x {:name "B" :crew #{:x} :take 1 :cuts {:x 1}}))]
+              (merge x {::heist/name "B" ::heist/crew #{:x} ::heist/take 1 ::heist/cuts {:x 1}}))]
       (is (instance? Heist h))
-      (is (= "B" (:name h))))))
+      (is (= "B" (::heist/name h))))))
 
 (deftest drafting-is-re-entrant
   (testing "standalone, the inner form seals"
@@ -92,8 +92,8 @@
                    (heist/rename inner "The Sequel")))]
       (is (true? @seen))
       (is (instance? Heist h))
-      (is (= "The Sequel" (:name h)))
-      (is (= 3250 (:take h))))))
+      (is (= "The Sequel" (::heist/name h)))
+      (is (= 3250 (::heist/take h))))))
 
 (deftest seal-is-idempotent
   ;; A sealed value is a fixed point of seal, so seal is a projection: seal . seal = seal.
@@ -101,8 +101,8 @@
   (let [once (rec/seal (rec/draft job))]
     (is (identical? once (rec/seal once))))
   (testing "which lets a drafting body end in a call that may already have sealed"
-    (is (= 3250 (:take (rec/drafting [x job] (heist/promote job :lyle 250)))))
-    (is (= "S"  (:name (rec/drafting [x job] (rec/seal (heist/rename x "S")))))))
+    (is (= 3250 (::heist/take (rec/drafting [x job] (heist/promote job :lyle 250)))))
+    (is (= "S"  (::heist/name (rec/drafting [x job] (rec/seal (heist/rename x "S")))))))
   (testing "but a value that is neither a draft nor sealed is still refused"
     (is (= ::rec/cannot-seal (:error (err #(rec/seal {:a 1})))))
     (is (= ::rec/cannot-seal (:error (err #(rec/drafting [x job] {:a 1})))))))
@@ -121,9 +121,9 @@
 
 (deftest a-failed-drafting-returns-nothing-and-changes-nothing
   (is (thrown? clojure.lang.ExceptionInfo
-               (rec/drafting [x job] (assoc x :take 9999))))
-  (is (= 3000 (:take job)))
-  (is (= {:charlie 1000 :lyle 1000 :left-ear 1000} (:cuts job))))
+               (rec/drafting [x job] (assoc x ::heist/take 9999))))
+  (is (= 3000 (::heist/take job)))
+  (is (= {:charlie 1000 :lyle 1000 :left-ear 1000} (::heist/cuts job))))
 
 ;;; ------------------------------------ the seal contract ------------------------------------
 

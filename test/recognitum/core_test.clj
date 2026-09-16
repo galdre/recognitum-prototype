@@ -20,37 +20,37 @@
 ;;; ----------------------------------------- reading -----------------------------------------
 
 (deftest reads-like-a-map
-  (is (= 3000 (:take job)))
-  (is (= 3000 (get job :take)))
+  (is (= 3000 (::heist/take job)))
+  (is (= 3000 (get job ::heist/take)))
   (is (nil? (get job :nope)))
   (is (= ::missing (get job :nope ::missing)))
-  (is (= ["The Italian Job" 3000] (let [{:keys [name take]} job] [name take])))
-  (is (= [:name :crew :take :cuts] (keys job)))
+  (is (= ["The Italian Job" 3000] (let [{::heist/keys [name take]} job] [name take])))
+  (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts] (keys job)))
   (is (= 4 (count job)))
-  (is (contains? job :cuts))
-  (is (= {:name "The Italian Job"
-          :crew #{:charlie :lyle :left-ear}
-          :take 3000
-          :cuts {:charlie 1000 :lyle 1000 :left-ear 1000}}
+  (is (contains? job ::heist/cuts))
+  (is (= {::heist/name "The Italian Job"
+          ::heist/crew #{:charlie :lyle :left-ear}
+          ::heist/take 3000
+          ::heist/cuts {:charlie 1000 :lyle 1000 :left-ear 1000}}
          (into {} job))))
 
 (deftest carries-meta
   (let [m (with-meta job {:src :test})]
     (is (= {:src :test} (meta m)))
     (is (instance? Heist m))
-    (is (= 3000 (:take m)))
+    (is (= 3000 (::heist/take m)))
     (is (nil? (meta job)) "with-meta does not mutate the original")))
 
 ;;; ----------------------------------------- writing -----------------------------------------
 
 (deftest assoc-checks-the-field
-  (let [h (assoc job :name "The Sequel")]
+  (let [h (assoc job ::heist/name "The Sequel")]
     (is (instance? Heist h))
-    (is (= "The Sequel" (:name h)))
-    (is (= "The Italian Job" (:name job)) "the original is untouched"))
-  (let [e (err #(assoc job :take "lots"))]
+    (is (= "The Sequel" (::heist/name h)))
+    (is (= "The Italian Job" (::heist/name job)) "the original is untouched"))
+  (let [e (err #(assoc job ::heist/take "lots"))]
     (is (= ::rec/invalid-field (:error e)))
-    (is (= :take (:key e)))
+    (is (= ::heist/take (:key e)))
     (is (= "lots" (:value e)))))
 
 (deftest assoc-rejects-a-key-the-type-does-not-declare
@@ -59,18 +59,18 @@
     (is (= :getaway-car (:key e)))))
 
 (deftest assoc-runs-the-invariants-that-depend-on-the-key
-  (let [e (err #(assoc job :take 4000))]
+  (let [e (err #(assoc job ::heist/take 4000))]
     (is (= ::rec/invariant-violated (:error e)))
     (is (= "the cuts add up to the take" (:invariant e)))
-    (is (= #{:take :cuts} (:depends-on e)))
-    (is (= #{:take :cuts} (set (keys (:values e))))
+    (is (= #{::heist/take ::heist/cuts} (:depends-on e)))
+    (is (= #{::heist/take ::heist/cuts} (set (keys (:values e))))
         "the failure reports the values the invariant read")))
 
 (deftest dissoc-refuses-a-declared-field
-  (let [e (err #(dissoc job :cuts))]
+  (let [e (err #(dissoc job ::heist/cuts))]
     (is (= ::rec/cannot-dissoc (:error e)))
-    (is (= :cuts (:key e)))
-    (is (= '(assoc m :cuts nil) (:instead e)) "and proposes the rewrite")))
+    (is (= ::heist/cuts (:key e)))
+    (is (= '(assoc m ::heist/cuts nil) (:instead e)) "and proposes the rewrite")))
 
 (deftest dissoc-of-an-undeclared-key-is-the-ordinary-no-op
   (is (identical? job (dissoc job :getaway-car))
@@ -81,7 +81,7 @@
 (deftest positional-constructor-validates
   (let [h (heist/->Heist "Job" #{:a} 10 {:a 10})]
     (is (instance? Heist h))
-    (is (= {:name "Job" :crew #{:a} :take 10 :cuts {:a 10}} (into {} h))))
+    (is (= {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10 ::heist/cuts {:a 10}} (into {} h))))
   (is (= ::rec/invalid-field      (:error (err #(heist/->Heist "" #{:a} 10 {:a 10})))))
   (is (= ::rec/invariant-violated (:error (err #(heist/->Heist "Job" #{:a} 99 {:a 10}))))
       "every invariant runs, since construction touches every field")
@@ -90,13 +90,13 @@
            (:arglists (meta (resolve 'recognitum.heist/->Heist)))))))
 
 (deftest map-constructor-validates
-  (is (instance? Heist (heist/map->Heist {:name "Job" :crew #{:a} :take 10 :cuts {:a 10}})))
+  (is (instance? Heist (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10 ::heist/cuts {:a 10}})))
   (is (= ::rec/missing-field
-         (:error (err #(heist/map->Heist {:name "Job" :crew #{:a} :take 10})))))
+         (:error (err #(heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))))
   (is (= ::rec/extraneous-keys
-         (:error (err #(heist/map->Heist {:name "Job" :crew #{:a} :take 10 :cuts {:a 10} :x 1})))))
+         (:error (err #(heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10 ::heist/cuts {:a 10} :x 1})))))
   (is (= ::rec/invalid-field
-         (:error (err #(heist/map->Heist {:name "" :crew #{:a} :take 10 :cuts {:a 10}}))))))
+         (:error (err #(heist/map->Heist {::heist/name "" ::heist/crew #{:a} ::heist/take 10 ::heist/cuts {:a 10}}))))))
 
 (deftest there-is-no-unvalidated-back-door
   ;; deftype interns a positional factory that checks nothing. If it survives, every guarantee
@@ -109,17 +109,17 @@
 ;;; ------------------------------------- merge is atomic -------------------------------------
 
 (deftest merge-applies-every-entry-before-checking-invariants
-  (let [h (merge job {:take 4000 :cuts {:charlie 2000 :lyle 1000 :left-ear 1000}})]
+  (let [h (merge job {::heist/take 4000 ::heist/cuts {:charlie 2000 :lyle 1000 :left-ear 1000}})]
     (is (instance? Heist h))
-    (is (= 4000 (:take h))))
+    (is (= 4000 (::heist/take h))))
   (testing "either key on its own breaks the invariant the pair satisfies"
-    (is (= ::rec/invariant-violated (:error (err #(assoc job :take 4000)))))))
+    (is (= ::rec/invariant-violated (:error (err #(assoc job ::heist/take 4000)))))))
 
 (deftest merge-still-checks-what-it-writes
   (is (= ::rec/invariant-violated
-         (:error (err #(merge job {:take 4000 :cuts {:charlie 1 :lyle 1 :left-ear 1}})))))
+         (:error (err #(merge job {::heist/take 4000 ::heist/cuts {:charlie 1 :lyle 1 :left-ear 1}})))))
   (is (= ::rec/unknown-field (:error (err #(merge job {:getaway-car "mini"})))))
-  (is (= ::rec/invalid-field (:error (err #(merge job {:name ""}))))))
+  (is (= ::rec/invalid-field (:error (err #(merge job {::heist/name ""}))))))
 
 ;;; ------------------------- only the applicable invariants run -------------------------
 
@@ -129,18 +129,18 @@
 
 (rec/defrecord Counted
   [^{:valid int?} a ^{:valid int?} b ^{:valid int?} c]
-  [{:doc "a is below b" :keys #{:a :b} :pred (counted (fn [m] (< (:a m) (:b m))))}])
+  [{:doc "a is below b" :keys #{::a ::b} :pred (counted (fn [m] (< (::a m) (::b m))))}])
 
-(def ^:private counted-base (rec/drafting [x Counted] (merge x {:a 1 :b 2 :c 3})))
+(def ^:private counted-base (rec/drafting [x Counted] (merge x {::a 1 ::b 2 ::c 3})))
 
 (deftest a-write-runs-only-the-invariants-declaring-that-key
   (reset! runs 0)
-  (assoc counted-base :c 99)
-  (is (zero? @runs) "no invariant declares :c")
-  (assoc counted-base :a 0)
-  (is (= 1 @runs) "one does declare :a"))
+  (assoc counted-base ::c 99)
+  (is (zero? @runs) "no invariant declares ::c")
+  (assoc counted-base ::a 0)
+  (is (= 1 @runs) "one does declare ::a"))
 
 (deftest merge-checks-the-invariants-once-not-once-per-key
   (reset! runs 0)
-  (merge counted-base {:a 1 :b 5})
+  (merge counted-base {::a 1 ::b 5})
   (is (= 1 @runs) "both keys feed the same invariant"))
