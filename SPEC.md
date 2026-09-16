@@ -81,10 +81,22 @@ A check is written in one of three forms:
 The shorthand takes a bare function and expands to a check over the single field its key names.
 `::name non-blank-string?` is `::name ([name] (non-blank-string? name))`.
 
-**The arglist is the dependency declaration.** Its symbols must be field names, and the check
-receives exactly those fields' values, positionally, in that order. Nothing else is in scope, so
-a check cannot depend on a field it did not name. Exactly one arity: the arity *is* the
-dependency set.
+**The arglist is the dependency declaration.** It holds two kinds of entry:
+
+- a **symbol**, naming a field of this type;
+- a **keyword**, naming an io-dep of this type.
+
+The body receives exactly those, positionally, in that order, and nothing else is in scope — so
+nothing can depend on something it did not name. Exactly one arity: the arity *is* the dependency
+set.
+
+The same rule governs io-dep fetch functions. There is no second way to declare a dependency
+anywhere in the definition.
+
+Every entry is resolved at macroexpansion. A symbol that is not a declared field, a keyword that
+is not a declared io-dep, a name used for both a check and an io-dep, or a cycle among io-deps is
+a compile error naming the offender. A keyword in an arglist always means an io-dep; check names
+never appear in arglists, so checks have no ordering among themselves.
 
 The macro derives a field → checks index from the arglists. That index drives which checks re-run
 on a write and which are invalidated on a draft.
@@ -102,23 +114,26 @@ must return booleans.
 ### IO dependencies
 
 `:io-deps` names functions that fetch something from outside the value — a database row, an
-upstream response. They are written exactly as checks are, arglist and all:
+upstream response. They are written exactly as checks are, arglist and all, and follow the same
+arglist rule:
 
 ```clojure
-::roster ("The crew roster on file." [crew] (fetch-roster crew))
+::roster    ("The crew roster on file." [crew] (fetch-roster crew))
+::vetted    ([::roster] (filter :vetted roster))
 ```
 
-A check depends on one by naming it in its arglist:
+An io-dep may name another, so fetches form a dependency graph and run in topological order.
+Cycles are rejected at macroexpansion.
+
+A check depends on one the same way:
 
 ```clojure
 ::only-crew-get-cuts ("Only crew get a cut."
                       [crew cuts ::roster] ...)
 ```
 
-So the arglist is the complete dependency declaration everywhere, for fetches as much as for
-checks, and it now spans both fields and IO. A check is IO-bound exactly when its arglist
-contains a keyword, which is visible where the check is written without consulting anything
-else.
+Anything is IO-bound exactly when its arglist contains a keyword, which is visible where it is
+written without consulting anything else.
 
 A fetch does not decide validity. It produces a value and the check judges it — an io-dep that
 finds nothing returns `nil`, and the check fails on `nil`, rather than the fetch reporting
@@ -129,8 +144,12 @@ established as well-formed, because the payload that triggers the query is the o
 trusting. Precisely:
 
 - Pure checks run first, ungated.
-- An io-dep fetches only once every pure check depending on a field in *its* arglist has passed.
-- An IO-bound check runs only once every io-dep it names has fetched.
+- An io-dep fetches once every pure check over the fields it names has passed, and every io-dep
+  it names has fetched.
+- An IO-bound check runs once every io-dep it names has fetched.
+
+The rule is recursive, so a fetch transitively waits on the fields of everything beneath it
+without that having to be stated anywhere.
 
 Because an io-dep declares its own fields, the gate is narrow: a fetch over `crew` waits on the
 checks covering `crew`, not on the whole type. A malformed field nothing IO touches does not
@@ -312,8 +331,6 @@ keyword lookup.
 
 ## Open
 
-- **Whether an io-dep may name another io-dep** in its arglist, which would make fetch ordering
-  a topological sort rather than a single phase.
 - **Whether a fetch can batch across values.** The signature is per-value, so validating a
   collection of 100 means 100 fetches. Batched hydration is the shape Metabase already uses for
   this, and the io-dep signature is the hard thing to change later.
