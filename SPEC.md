@@ -139,6 +139,10 @@ A fetch does not decide validity. It produces a value and the check judges it â€
 finds nothing returns `nil`, and the check fails on `nil`, rather than the fetch reporting
 failure itself.
 
+Nothing is specified about what a fetch returns. Its only consumers are the checks naming it,
+declared in the same form, so there is no contract to document and nothing to keep in sync at a
+distance.
+
 **Shape gates IO.** Nothing reaches a database until the values it will carry there are
 established as well-formed, because the payload that triggers the query is the one least worth
 trusting. Precisely:
@@ -331,9 +335,10 @@ keyword lookup.
 
 ## Open
 
-- **Whether a fetch can batch across values.** The signature is per-value, so validating a
-  collection of 100 means 100 fetches. Batched hydration is the shape Metabase already uses for
-  this, and the io-dep signature is the hard thing to change later.
+- **Whether anything ever validates a collection in one call.** Everything is per-value today,
+  so a caller validating 100 values does 100 fetches and the N+1 is theirs, as it would be
+  without this library. A collection-level entry point would change that, and the io-dep
+  signature is the hard thing to revisit afterwards.
 - **The failure-accumulation shape.** What `check` and `certify` return on failure, and whether
   failures live on the draft so a caller can collect all problems in one pass rather than one
   per round trip.
