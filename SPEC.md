@@ -18,30 +18,36 @@ garbage into one does not produce one, and there is no constructor that skips th
 (rec/defrecord Heist
   [name crew take cuts]
 
-  {::name  non-blank-string?
-   ::crew  crew-set?
-   ::take  non-neg-int?
-   ::cuts  cuts-map?
+  {:options {:io-limited true}
 
-   ::cuts-sum-to-take
-   ("The cuts add up to the take."
-    [take cuts] (= take (reduce + 0 (vals cuts))))
+   :checks
+   {::name  non-blank-string?
+    ::crew  crew-set?
+    ::take  non-neg-int?
+    ::cuts  cuts-map?
 
-   ::only-crew-get-cuts
-   ("Only crew get a cut."
-    [crew cuts] (every? crew (keys cuts)))}
+    ::cuts-sum-to-take
+    ("The cuts add up to the take."
+     [take cuts] (= take (reduce + 0 (vals cuts))))
 
-  {::shape  #{::name ::crew ::take ::cuts}
-   ::payout #{::cuts-sum-to-take ::only-crew-get-cuts}}
+    ::only-crew-get-cuts
+    ("Only crew get a cut."
+     [crew cuts ::roster] (every? (into crew roster) (keys cuts)))}
+
+   :io-deps
+   {::roster (fn [h] (fetch-roster h))}
+
+   :certificates
+   {::shape  #{::name ::crew ::take ::cuts}
+    ::payout #{::cuts-sum-to-take ::only-crew-get-cuts}}}
 
   some.ns/SomeProtocol
   (fiddlesticks [h x] ...)
   (bananas [h] ...))
 ```
 
-Five positions: the type name, the fields, the checks, the certificates, and protocol
-implementations. Certificates may be omitted — a map in the fourth position is certificates, a
-symbol begins the protocol implementations.
+Three positions: the type name, the fields, and a definition map, followed by protocol
+implementations. Every section of the definition map is optional.
 
 `rec/defrecord` shadows `clojure.core/defrecord`. Consumers alias rather than refer, so both
 kinds coexist in one namespace.
@@ -59,8 +65,8 @@ a key **qualified by the defining namespace** — `:recognitum.heist/name`, not 
 
 ### Checks
 
-A map of check name to check. Names are namespace-qualified keywords, unique within the type,
-and are what failures report.
+`:checks` maps a check name to a check. Names are namespace-qualified keywords, unique within the
+type, and are what failures report.
 
 A check is written in one of three forms:
 
@@ -93,9 +99,33 @@ on a write and which are invalidated on a draft.
 A function whose last expression is truthy but not `true` will be read as a failure. Predicates
 must return booleans.
 
+### IO dependencies
+
+`:io-deps` names functions that fetch something from outside the value — a database row, an
+upstream response. A check depends on one by naming it in its arglist:
+
+```clojure
+::only-crew-get-cuts ("Only crew get a cut."
+                      [crew cuts ::roster] ...)
+```
+
+The arglist remains the complete dependency declaration; it now spans both fields and IO. A
+check is IO-bound exactly when its arglist contains a keyword, which is visible where the check
+is written without consulting anything else.
+
+A fetch does not decide validity. It produces a value and the check judges it — an io-dep that
+finds nothing returns `nil`, and the check fails on `nil`, rather than the fetch reporting
+failure itself.
+
+**No io-dep ever runs until every pure check has passed.** Shape gates IO rather than sitting
+beside it. Nothing reaches a database until the value is established as well-formed, which is
+the point: the payload that triggers the query is the one you least want to trust. Sealing is
+therefore two-phase — every pure check, then, only if they all pass, the IO ones.
+
 ### Certificates
 
-A map of certificate name to a set of check names. Certificates are a **draft-level** facility:
+`:certificates` maps a certificate name to a set of check names. Certificates are a
+**draft-level** facility:
 they name a subset of checks you can run early, before the value is complete.
 
 They do not change what a sealed value guarantees. `seal` enforces every check on the type,
@@ -200,23 +230,24 @@ the ordinary no-op.
 
 ### Draft-only writes
 
-A type may be configured so that direct `assoc` and `merge` on a sealed value throw, requiring
-writes to go through `drafting`.
+`:options {:io-limited true}` makes direct `assoc` and `merge` on a sealed value throw for any
+field an IO-bound check depends on, requiring those writes to go through `drafting`. Fields no
+IO check reaches are unaffected — declaring io-deps is what makes that distinction computable.
 
-This exists because checks may perform IO. A check that queries a database, run on every bare
-`assoc`, means business logic makes a query per write. Under `drafting`, N writes cost one round
-of checks at seal instead of N.
-
-It is also useful without IO: it makes the impl-layer convention enforceable rather than merely
-recommended.
+A check that queries a database, run on every bare `assoc`, means business logic makes a query
+per write. Under `drafting`, N writes cost one round of checks at seal instead of N.
 
 ## Printing and reading
 
-A sealed value prints with a namespace-qualified tag:
+A sealed value prints with a namespace-qualified tag, and the printed map drops the namespace
+that tag already carries:
 
 ```clojure
-(pr-str heist)   ;=> "#recognitum.heist/Heist{...}"
+(pr-str heist)   ;=> "#recognitum.heist/Heist{:name \"The Italian Job\", :take 3000, ...}"
 ```
+
+The reader accepts both forms: bare keys, which it qualifies from the tag, and fully qualified
+keys, which it takes as given.
 
 The tag is the key `clojure.edn` wants. `(rec/data-readers)` supplies the map:
 
@@ -259,13 +290,12 @@ keyword lookup.
 
 ## Open
 
-- **Distinguishing IO checks from pure ones.** The batching argument for draft-only writes rests
-  on some checks being expensive. Nothing in the syntax says which.
-- **Whether `assoc` can be per-check-aware** while the draft-only flag stays per-type.
-- **Where the draft-only flag is written** in the definition.
+- **Whether io-deps should declare their own field dependencies by arglist**, as checks do,
+  rather than receiving the whole record. Doing so would make io-dep invalidation on a draft
+  computable and keep a single rule for dependencies throughout.
+- **Whether an io-dep is fetched once per pass** and shared across every check naming it, and
+  whether a fetched value is retained on a draft or re-fetched each time.
 - **The failure-accumulation shape.** What `check` and `certify` return on failure, and whether
   failures live on the draft so a caller can collect all problems in one pass rather than one
   per round trip.
-- **The printed form under namespaced keys.** `#recognitum.heist/Heist` plus a map whose every
-  key carries the same namespace is redundant; whether the printed map drops the namespace and
-  the reader re-qualifies is unresolved.
+- **What `:options` holds besides `:io-limited`.**
