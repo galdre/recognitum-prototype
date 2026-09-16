@@ -147,6 +147,18 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       constructing one by hand has to work at it. Re-run the bench; if any row moves by more
       than the recorded spread, re-record the README table with provenance.
 
+### H — later, low priority
+
+- [ ] **H1. `recognitum.walk`.** `clojure.walk/walk` is a plain `cond`: on `IRecord` it does
+      `(reduce conj form form)`, one write per entry, with no protocol or multimethod to
+      intercept. So `postwalk` over an `:io-limited` sealed value throws `::io-limited`, and
+      over any sealed value it runs checks per entry. Provide a namespace identical to
+      `clojure.walk` in every way except that a sealed recognitum value is walked as a draft —
+      opened, rebuilt, sealed once at the end — and a draft is walked as itself. Same public
+      names (`walk`, `prewalk`, `postwalk`, `keywordize-keys`, `stringify-keys`,
+      `prewalk-replace`, `postwalk-replace`, `macroexpand-all`), so a consumer swaps the require
+      and nothing else. Nothing needs it yet.
+
 ### F — reconcile
 
 - [x] **F1. README, demo, bench** to the new syntax. The demo should illustrate io-deps against
