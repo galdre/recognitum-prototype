@@ -148,6 +148,11 @@ different claim from "this is invalid". Folding it into failure would have the t
 something it does not know. An author who wants it treated as a failure catches it inside the
 fetch — that direction loses no information, and the reverse is not recoverable.
 
+An io-dep is an ordinary function, and nothing in the library needs real infrastructure to
+demonstrate one. The example model fakes its fetches in process — an in-memory table stands in
+for the database — which is enough to show a fetch resolving, the gate keeping a malformed value
+away from it, deduplication across repeated arguments, and a check judging what comes back.
+
 #### Singular and batched fetches
 
 A fetch may be written either way:

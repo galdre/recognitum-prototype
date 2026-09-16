@@ -69,7 +69,9 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### E — IO
 
-- [ ] **E1. `:io-deps`, singular form.** Arglists as everywhere else, io-deps nameable by other
+- [ ] **E1. `:io-deps`, singular form.** Fake the IO in `dev/` — an in-memory table standing in
+      for a database is enough, and nothing here should need a real one to be exercised or
+      tested. Arglists as everywhere else, io-deps nameable by other
       io-deps, topological fetch order, cycles rejected at compile time. The gate: an io-dep
       fetches once the pure checks over the fields it names have passed and every io-dep it names
       has fetched. Fetched values cached for one validation call and no longer. Argument tuples
@@ -83,7 +85,9 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### F — reconcile
 
-- [ ] **F1. README, demo, bench** to the new syntax. The bench's hand-rolled side needs the same
+- [ ] **F1. README, demo, bench** to the new syntax. The demo should illustrate io-deps against
+      the faked in-memory source from E1: a fetch resolving, the gate refusing to query on a
+      malformed value, deduplication, and a check judging the result. The bench's hand-rolled side needs the same
       checks written out by hand again, or the comparison stops being apples-to-apples.
 - [ ] **F2. Re-measure and re-record the performance table.** Checks called with direct field
       access rather than keyword lookup is the change most likely to move it.
