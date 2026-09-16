@@ -1,11 +1,11 @@
-(ns prototype.heist
+(ns recognitum.heist
   "A heist: a crew, a take, and how the take is split.
 
   Two cross-field invariants, both of which a single `assoc` necessarily breaks —
   which is the whole reason drafts exist."
   (:require
    [clojure.string :as str]
-   [prototype.validated-record :refer [defvalidated drafting]]))
+   [recognitum.core :refer [defvalidated drafting]]))
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))

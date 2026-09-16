@@ -1,10 +1,10 @@
-(ns prototype.bench
+(ns recognitum.bench
   "defrecord + hand-rolled validation vs. the library, sharing one set of predicates
   and invariants so the validation work is provably identical on both sides."
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
-   [prototype.validated-record :refer [defvalidated drafting]]))
+   [recognitum.core :refer [defvalidated drafting]]))
 
 ;;; ---- the validation code, used by BOTH implementations ----
 

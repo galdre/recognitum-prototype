@@ -9,7 +9,7 @@ not a `Heist`, and `assoc`-ing garbage into a `Heist` does not produce a `Heist`
 ## Defining a type
 
 ```clojure
-(require '[prototype.validated-record :refer [defvalidated drafting draft seal clean]])
+(require '[recognitum.core :refer [defvalidated drafting draft seal clean]])
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
@@ -240,14 +240,14 @@ and reads go through it, so leave it out of production. A predicate that asks fo
 ```
 clojure -X:test                                        # the suite
 clojure -X:test-audit                                  # the suite, every invariant audited
-clojure -M:dev -e "(require 'prototype.demo)(prototype.demo/run)"
-clojure -M:bench -e "(require 'prototype.bench)(prototype.bench/run)"
+clojure -M:dev -e "(require 'recognitum.demo)(recognitum.demo/run)"
+clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"
 ```
 
 ## What it costs
 
 Against a plain `defrecord` carrying the same predicates and invariants written by hand, so the
-validation work is identical on both sides (`bench/prototype/bench.clj`). Criterium
+validation work is identical on both sides (`bench/recognitum/bench.clj`). Criterium
 `quick-benchmark` on an AMD Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-15:
 
 | | hand-rolled | this library |
@@ -263,5 +263,5 @@ Run-to-run spread is real: the two-invariant row moved between 1.0× and 1.2× a
 runs on an idle machine. Re-measure rather than trust these to three figures.
 
 ```
-clojure -M:bench -e "(require 'prototype.bench)(prototype.bench/run)"
+clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"
 ```

@@ -9,8 +9,8 @@ drifted off the code, not the reverse.
 
 ## Blocking
 
-- [x] `dev/prototype/demo.clj:60` references `prototype.validated_record.Draft`, which does not
-      exist — drafts are generated per model (`prototype.heist.HeistDraft`). The namespace does
+- [x] `dev/recognitum/demo.clj:60` references `recognitum.core.Draft`, which does not
+      exist — drafts are generated per model (`recognitum.heist.HeistDraft`). The namespace does
       not compile. It is the only file that fails to load.
   - [x] Once it loads, confirm the rest of the demo still says what it claims to say. It has not
         run since drafts became per-model, so nothing downstream of line 60 is verified.
@@ -25,11 +25,11 @@ is what needs to move.
 Code is correct. A draft is unvalidated by definition; `seal` is where validation happens.
 A previous agent deviated from spec here, was made to fix the code, and left the prose behind.
 
-- [x] `src/prototype/validated_record.clj:4-7` — ns docstring claimed predicates run on every
+- [x] `src/recognitum/core.clj:4-7` — ns docstring claimed predicates run on every
       write "including inside a draft". Delete the claim.
 - [x] `README.md:35` — "They run on every write to that field." Scope it to validated values.
       `README.md:87` already states the rule correctly.
-- [x] `dev/prototype/demo.clj:50` — section header `--- per-field checks still fire INSIDE a
+- [x] `dev/recognitum/demo.clj:50` — section header `--- per-field checks still fire INSIDE a
       draft ---`. The demo demonstrates the opposite of its own heading.
 - [x] `CONSIDERATIONS.md:156-158` — **deleted the rationale.** It explains the deferral as a
       performance fix ("Deferring them to seal fixed the quadratic in a loop"). That is not why.
@@ -52,7 +52,7 @@ implementation strategy that preserves it, not a weakening of it:
 Code is correct (`validated_record.clj:190-192`): field predicates for the dirty keys, then the
 invariants depending on them. `:draft-dirty-keys` is the touched set.
 
-- [x] `src/prototype/validated_record.clj:181-182` — the comment described the strategy
+- [x] `src/recognitum/core.clj:181-182` — the comment described the strategy
       ("values were checked by the write that set them") and never states the guarantee. It is
       also false on its own terms, since draft writes check nothing (see #1). Replace it with
       the equivalence.
@@ -60,7 +60,7 @@ invariants depending on them. `:draft-dirty-keys` is the touched set.
       a check, off by default. `*audit-invariant-keys*` runs each invariant against a proxy
       recording its key reads and throws `:undeclared-invariant-key` on one it does not declare.
       Zero cost when off; `README.md` has a "Checking your `:keys`" section.
-  - [x] `prototype.audit-test` exercises it: the silent hole, the catch at construction, an
+  - [x] `recognitum.audit-test` exercises it: the silent hole, the catch at construction, an
         honest type passing, a whole-map read abstaining, and the binding not leaking.
   - [x] `clojure -X:test-audit` runs the entire suite under the audit, so every type it builds
         is checked. Verified non-redundant: mis-declaring `Heist`'s "only crew get a cut" passes
@@ -95,7 +95,7 @@ as deliberate.
 - [x] Four benchmark files collapsed to one. `bench2` measured a draft implementation that no
       longer exists (dirty set, map backing); `bench3` duplicated `bench4`'s batch shapes with a
       baseline that did no validation; `bench.clj` compared against an unvalidated defrecord,
-      which is not a question anyone is asking. Deleted. `bench4` renamed `prototype.bench`.
+      which is not a question anyone is asking. Deleted. `bench4` renamed `recognitum.bench`.
 - [x] `README.md` performance table regenerated on this machine, with CPU, JVM, OS, date, and
       the command recorded, plus a note that run-to-run spread is real.
 - [x] Dropped README's closing advice to hold a draft open across a tight loop. Measured, it is
@@ -105,13 +105,13 @@ as deliberate.
 
 ## Dead references
 
-- [x] Dropped `clojure.set` and `clojure.string` from `src/prototype/validated_record.clj`.
+- [x] Dropped `clojure.set` and `clojure.string` from `src/recognitum/core.clj`.
 - [x] Dropped the unused `draft`/`seal` refers from `demo.clj`, `heist.clj`, and `bench.clj`,
-      and the unused `(:import (prototype.heist Heist))` from `demo.clj`.
+      and the unused `(:import (recognitum.heist Heist))` from `demo.clj`.
 
 ## Unverified claims
 
-- [x] `clean` and `:extraneous-keys` are now covered by `prototype.draft-test`, along with the
+- [x] `clean` and `:extraneous-keys` are now covered by `recognitum.draft-test`, along with the
       `dissoc` rules and the unset-vs-nil distinction.
 - [x] A `drafting` body returning a sealed value threw a bare `NullPointerException`. Ruled: it
       is not a mistake. `seal` is now idempotent — an already-sealed value passes through, so
@@ -131,10 +131,10 @@ as deliberate.
       writes, un-refusing extraneous-key detection, and silently disabling the audit are each
       caught. Now 32 tests / 270 assertions, and `clojure -X:test-audit` runs them all under the
       invariant `:keys` audit.
-- [x] `dev/prototype/ownership_test.clj` deleted. Everything it showed was already covered by
-      `prototype.draft-test` except construction from an explicit draft of the type — a case its
+- [x] `dev/recognitum/ownership_test.clj` deleted. Everything it showed was already covered by
+      `recognitum.draft-test` except construction from an explicit draft of the type — a case its
       own comments flagged as a past regression — which is now folded in.
-- [ ] Namespace root is still `prototype.*`. Decide the real name before anything depends on it.
+- [ ] Namespace root is still `recognitum.*`. Decide the real name before anything depends on it.
 - [x] Now a git repo. Nothing before the migration has history, so an agent reading the early
       state cold could not tell spec from accident, and reconstructed a rationale rather than
       admit it did not know. That is how the invented performance rationale got written.

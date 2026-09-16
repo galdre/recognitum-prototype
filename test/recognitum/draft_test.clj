@@ -1,13 +1,13 @@
-(ns prototype.draft-test
+(ns recognitum.draft-test
   "Drafts, `drafting`, and what `seal` guarantees."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
-   [prototype.audit-fixture :as fixture]
-   [prototype.heist :as heist]
-   [prototype.validated-record :as v])
+   [recognitum.audit-fixture :as fixture]
+   [recognitum.heist :as heist]
+   [recognitum.core :as rec])
   (:import
-   (prototype.heist Heist)
-   (prototype.validated_record Invariant)))
+   (recognitum.heist Heist)
+   (recognitum.core Invariant)))
 
 (def job heist/italian-job)
 
@@ -19,64 +19,64 @@
 ;;; ------------------------------- a draft validates nothing -------------------------------
 
 (deftest writes-into-a-draft-are-unchecked
-  (let [d (assoc (v/draft job) :take "nope")]
-    (is (v/draft? d))
+  (let [d (assoc (rec/draft job) :take "nope")]
+    (is (rec/draft? d))
     (is (= "nope" (:take d)) "the bad value is simply there"))
   (testing "seal is where it fails"
-    (is (= ::v/invalid-field (:error (err #(v/seal (assoc (v/draft job) :take "nope"))))))))
+    (is (= ::rec/invalid-field (:error (err #(rec/seal (assoc (rec/draft job) :take "nope"))))))))
 
 (deftest a-draft-may-pass-through-states-no-single-write-could
   (testing "either write alone throws on a validated value"
-    (is (= ::v/invariant-violated (:error (err #(assoc job :take 3500))))))
+    (is (= ::rec/invariant-violated (:error (err #(assoc job :take 3500))))))
   (testing "but the pair is fine inside one drafting"
-    (is (instance? Heist (v/drafting [x job] (heist/add-member x :napster 500))))))
+    (is (instance? Heist (rec/drafting [x job] (heist/add-member x :napster 500))))))
 
 ;;; ---------------------------------------- sealing ----------------------------------------
 
 (deftest seal-reports-keys-the-type-does-not-declare
-  (let [e (err #(v/drafting [x job] (assoc x :getaway-car "mini")))]
-    (is (= ::v/extraneous-keys (:error e)))
+  (let [e (err #(rec/drafting [x job] (assoc x :getaway-car "mini")))]
+    (is (= ::rec/extraneous-keys (:error e)))
     (is (= [:getaway-car] (:keys e)))))
 
 (deftest clean-strips-them-instead
-  (is (instance? Heist (v/drafting [x job] (-> x (assoc :getaway-car "mini") v/clean)))))
+  (is (instance? Heist (rec/drafting [x job] (-> x (assoc :getaway-car "mini") rec/clean)))))
 
 (deftest dissoc-removes-one-undeclared-key-from-a-draft
-  (is (instance? Heist (v/drafting [x job] (-> x (assoc :getaway-car "mini") (dissoc :getaway-car)))))
+  (is (instance? Heist (rec/drafting [x job] (-> x (assoc :getaway-car "mini") (dissoc :getaway-car)))))
   (testing "a declared field is still permanent"
-    (is (= ::v/cannot-dissoc (:error (err #(dissoc (v/draft job) :cuts))))))
+    (is (= ::rec/cannot-dissoc (:error (err #(dissoc (rec/draft job) :cuts))))))
   (testing "and removing an absent undeclared key allocates nothing"
-    (let [d (v/draft job)]
+    (let [d (rec/draft job)]
       (is (identical? d (dissoc d :never-there))))))
 
 (deftest seal-reports-a-field-never-written
-  (let [e (err #(v/drafting [x Heist] (assoc x :name "X")))]
-    (is (= ::v/missing-field (:error e)))
+  (let [e (err #(rec/drafting [x Heist] (assoc x :name "X")))]
+    (is (= ::rec/missing-field (:error e)))
     (is (contains? #{:crew :take :cuts} (:key e)))))
 
 ;;; --------------------------- "never written" is not "written to nil" ---------------------------
 
-(v/defvalidated Note
+(rec/defvalidated Note
   [^{:valid string?}                            title
    ^{:valid (fn [x] (or (nil? x) (string? x)))} body]
   [])
 
 (deftest nil-is-a-legal-value-when-the-predicate-admits-it
-  (let [n (v/drafting [x Note] (merge x {:title "t" :body nil}))]
+  (let [n (rec/drafting [x Note] (merge x {:title "t" :body nil}))]
     (is (nil? (:body n)))
     (is (= [:title :body] (keys n)) "the field is present, holding nil"))
   (testing "leaving it unwritten is a different thing entirely"
-    (is (= ::v/missing-field (:error (err #(v/drafting [x Note] (assoc x :title "t"))))))))
+    (is (= ::rec/missing-field (:error (err #(rec/drafting [x Note] (assoc x :title "t"))))))))
 
 ;;; --------------------------------------- drafting ---------------------------------------
 
 (deftest drafting-builds-from-the-type-itself
-  (let [h (v/drafting [x Heist]
+  (let [h (rec/drafting [x Heist]
             (merge x {:name "A" :crew #{:x} :take 1 :cuts {:x 1}}))]
     (is (instance? Heist h))
     (is (= "A" (:name h))))
   (testing "and from an explicit draft of the type, which once did not work"
-    (let [h (v/drafting [x (v/draft Heist)]
+    (let [h (rec/drafting [x (rec/draft Heist)]
               (merge x {:name "B" :crew #{:x} :take 1 :cuts {:x 1}}))]
       (is (instance? Heist h))
       (is (= "B" (:name h))))))
@@ -86,9 +86,9 @@
     (is (instance? Heist (heist/promote job :lyle 250))))
   (testing "nested, it passes the draft through and only the outer form seals"
     (let [seen (atom nil)
-          h    (v/drafting [x job]
+          h    (rec/drafting [x job]
                  (let [inner (heist/promote x :lyle 250)]
-                   (reset! seen (v/draft? inner))
+                   (reset! seen (rec/draft? inner))
                    (heist/rename inner "The Sequel")))]
       (is (true? @seen))
       (is (instance? Heist h))
@@ -97,31 +97,31 @@
 
 (deftest seal-is-idempotent
   ;; A sealed value is a fixed point of seal, so seal is a projection: seal . seal = seal.
-  (is (identical? job (v/seal job)))
-  (let [once (v/seal (v/draft job))]
-    (is (identical? once (v/seal once))))
+  (is (identical? job (rec/seal job)))
+  (let [once (rec/seal (rec/draft job))]
+    (is (identical? once (rec/seal once))))
   (testing "which lets a drafting body end in a call that may already have sealed"
-    (is (= 3250 (:take (v/drafting [x job] (heist/promote job :lyle 250)))))
-    (is (= "S"  (:name (v/drafting [x job] (v/seal (heist/rename x "S")))))))
+    (is (= 3250 (:take (rec/drafting [x job] (heist/promote job :lyle 250)))))
+    (is (= "S"  (:name (rec/drafting [x job] (rec/seal (heist/rename x "S")))))))
   (testing "but a value that is neither a draft nor sealed is still refused"
-    (is (= ::v/cannot-seal (:error (err #(v/seal {:a 1})))))
-    (is (= ::v/cannot-seal (:error (err #(v/drafting [x job] {:a 1})))))))
+    (is (= ::rec/cannot-seal (:error (err #(rec/seal {:a 1})))))
+    (is (= ::rec/cannot-seal (:error (err #(rec/drafting [x job] {:a 1})))))))
 
 (deftest sealed?-distinguishes-the-two
-  (is (true?  (v/sealed? job)))
-  (is (false? (v/sealed? (v/draft job))))
-  (is (false? (v/sealed? {})))
-  (is (false? (v/draft? job)))
-  (is (true?  (v/draft? (v/draft job)))))
+  (is (true?  (rec/sealed? job)))
+  (is (false? (rec/sealed? (rec/draft job))))
+  (is (false? (rec/sealed? {})))
+  (is (false? (rec/draft? job)))
+  (is (true?  (rec/draft? (rec/draft job)))))
 
 (deftest a-draft-made-outside-any-drafting-is-adopted
-  (is (instance? Heist (v/drafting [x (v/draft job)] (heist/rename x "S"))))
+  (is (instance? Heist (rec/drafting [x (rec/draft job)] (heist/rename x "S"))))
   (testing "or can be sealed by hand"
-    (is (instance? Heist (v/seal (heist/rename (v/draft job) "S"))))))
+    (is (instance? Heist (rec/seal (heist/rename (rec/draft job) "S"))))))
 
 (deftest a-failed-drafting-returns-nothing-and-changes-nothing
   (is (thrown? clojure.lang.ExceptionInfo
-               (v/drafting [x job] (assoc x :take 9999))))
+               (rec/drafting [x job] (assoc x :take 9999))))
   (is (= 3000 (:take job)))
   (is (= {:charlie 1000 :lyle 1000 :left-ear 1000} (:cuts job))))
 
@@ -131,9 +131,9 @@
   ;; The guarantee is not "seal ran the checks it selected" but "the result is valid as if
   ;; every check had run". Assert the second directly: seal's key selection is the thing
   ;; under test, so re-running everything is the only honest oracle.
-  (let [model     (v/model-of job)
+  (let [model     (rec/model-of job)
         changeset (fn [i] {:op :add-member :who (keyword (str "m" i)) :cut (* 10 (inc i))})
-        history   (reductions (fn [h i] (v/drafting [x h] (heist/apply-changeset x (changeset i))))
+        history   (reductions (fn [h i] (rec/drafting [x h] (heist/apply-changeset x (changeset i))))
                               job (range 25))]
     (doseq [[i h] (map-indexed vector history)]
       (is (instance? Heist h))

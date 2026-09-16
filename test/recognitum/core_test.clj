@@ -1,12 +1,12 @@
-(ns prototype.validated-record-test
+(ns recognitum.core-test
   "Reads and writes on a validated value: which checks run, which do not, and what they throw."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
-   [prototype.audit-fixture :as fixture]
-   [prototype.heist :as heist]
-   [prototype.validated-record :as v])
+   [recognitum.audit-fixture :as fixture]
+   [recognitum.heist :as heist]
+   [recognitum.core :as rec])
   (:import
-   (prototype.heist Heist)))
+   (recognitum.heist Heist)))
 
 (def job heist/italian-job)
 
@@ -49,18 +49,18 @@
     (is (= "The Sequel" (:name h)))
     (is (= "The Italian Job" (:name job)) "the original is untouched"))
   (let [e (err #(assoc job :take "lots"))]
-    (is (= ::v/invalid-field (:error e)))
+    (is (= ::rec/invalid-field (:error e)))
     (is (= :take (:key e)))
     (is (= "lots" (:value e)))))
 
 (deftest assoc-rejects-a-key-the-type-does-not-declare
   (let [e (err #(assoc job :getaway-car "mini"))]
-    (is (= ::v/unknown-field (:error e)))
+    (is (= ::rec/unknown-field (:error e)))
     (is (= :getaway-car (:key e)))))
 
 (deftest assoc-runs-the-invariants-that-depend-on-the-key
   (let [e (err #(assoc job :take 4000))]
-    (is (= ::v/invariant-violated (:error e)))
+    (is (= ::rec/invariant-violated (:error e)))
     (is (= "the cuts add up to the take" (:invariant e)))
     (is (= #{:take :cuts} (:depends-on e)))
     (is (= #{:take :cuts} (set (keys (:values e))))
@@ -68,7 +68,7 @@
 
 (deftest dissoc-refuses-a-declared-field
   (let [e (err #(dissoc job :cuts))]
-    (is (= ::v/cannot-dissoc (:error e)))
+    (is (= ::rec/cannot-dissoc (:error e)))
     (is (= :cuts (:key e)))
     (is (= '(assoc m :cuts nil) (:instead e)) "and proposes the rewrite")))
 
@@ -82,28 +82,28 @@
   (let [h (heist/->Heist "Job" #{:a} 10 {:a 10})]
     (is (instance? Heist h))
     (is (= {:name "Job" :crew #{:a} :take 10 :cuts {:a 10}} (into {} h))))
-  (is (= ::v/invalid-field      (:error (err #(heist/->Heist "" #{:a} 10 {:a 10})))))
-  (is (= ::v/invariant-violated (:error (err #(heist/->Heist "Job" #{:a} 99 {:a 10}))))
+  (is (= ::rec/invalid-field      (:error (err #(heist/->Heist "" #{:a} 10 {:a 10})))))
+  (is (= ::rec/invariant-violated (:error (err #(heist/->Heist "Job" #{:a} 99 {:a 10}))))
       "every invariant runs, since construction touches every field")
   (testing "it takes the declared fields and nothing else"
     (is (= '([name crew take cuts])
-           (:arglists (meta (resolve 'prototype.heist/->Heist)))))))
+           (:arglists (meta (resolve 'recognitum.heist/->Heist)))))))
 
 (deftest map-constructor-validates
   (is (instance? Heist (heist/map->Heist {:name "Job" :crew #{:a} :take 10 :cuts {:a 10}})))
-  (is (= ::v/missing-field
+  (is (= ::rec/missing-field
          (:error (err #(heist/map->Heist {:name "Job" :crew #{:a} :take 10})))))
-  (is (= ::v/extraneous-keys
+  (is (= ::rec/extraneous-keys
          (:error (err #(heist/map->Heist {:name "Job" :crew #{:a} :take 10 :cuts {:a 10} :x 1})))))
-  (is (= ::v/invalid-field
+  (is (= ::rec/invalid-field
          (:error (err #(heist/map->Heist {:name "" :crew #{:a} :take 10 :cuts {:a 10}}))))))
 
 (deftest there-is-no-unvalidated-back-door
   ;; deftype interns a positional factory that checks nothing. If it survives, every guarantee
   ;; in this library is one function call away from being bypassed.
-  (is (= ::v/invalid-field (:error (err #(heist/->Heist "" :not-a-set -999 "garbage"))))
+  (is (= ::rec/invalid-field (:error (err #(heist/->Heist "" :not-a-set -999 "garbage"))))
       "the forging attempt that used to succeed")
-  (is (nil? (resolve 'prototype.heist/->HeistDraft))
+  (is (nil? (resolve 'recognitum.heist/->HeistDraft))
       "and the draft type's raw factory is unmapped"))
 
 ;;; ------------------------------------- merge is atomic -------------------------------------
@@ -113,13 +113,13 @@
     (is (instance? Heist h))
     (is (= 4000 (:take h))))
   (testing "either key on its own breaks the invariant the pair satisfies"
-    (is (= ::v/invariant-violated (:error (err #(assoc job :take 4000)))))))
+    (is (= ::rec/invariant-violated (:error (err #(assoc job :take 4000)))))))
 
 (deftest merge-still-checks-what-it-writes
-  (is (= ::v/invariant-violated
+  (is (= ::rec/invariant-violated
          (:error (err #(merge job {:take 4000 :cuts {:charlie 1 :lyle 1 :left-ear 1}})))))
-  (is (= ::v/unknown-field (:error (err #(merge job {:getaway-car "mini"})))))
-  (is (= ::v/invalid-field (:error (err #(merge job {:name ""}))))))
+  (is (= ::rec/unknown-field (:error (err #(merge job {:getaway-car "mini"})))))
+  (is (= ::rec/invalid-field (:error (err #(merge job {:name ""}))))))
 
 ;;; ------------------------- only the applicable invariants run -------------------------
 
@@ -127,11 +127,11 @@
 
 (defn- counted [pred] (fn [m] (swap! runs inc) (pred m)))
 
-(v/defvalidated Counted
+(rec/defvalidated Counted
   [^{:valid int?} a ^{:valid int?} b ^{:valid int?} c]
   [{:doc "a is below b" :keys #{:a :b} :pred (counted (fn [m] (< (:a m) (:b m))))}])
 
-(def ^:private counted-base (v/drafting [x Counted] (merge x {:a 1 :b 2 :c 3})))
+(def ^:private counted-base (rec/drafting [x Counted] (merge x {:a 1 :b 2 :c 3})))
 
 (deftest a-write-runs-only-the-invariants-declaring-that-key
   (reset! runs 0)

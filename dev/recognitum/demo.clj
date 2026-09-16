@@ -1,7 +1,7 @@
-(ns prototype.demo
+(ns recognitum.demo
   (:require
-   [prototype.heist :as heist]
-   [prototype.validated-record :as v :refer [drafting]]))
+   [recognitum.heist :as heist]
+   [recognitum.core :as v :refer [drafting]]))
 
 (defn- show [label f]
   (print (format "%-50s" label))

@@ -4,19 +4,19 @@
         potemkin/potemkin   {:mvn/version "0.4.9"}}
 
  :aliases
- {;; The example model (prototype.heist) and the demo scripts.
-  ;;   clojure -M:dev -e "(require 'prototype.demo)(prototype.demo/run)"
+ {;; The example model (recognitum.heist) and the demo scripts.
+  ;;   clojure -M:dev -e "(require 'recognitum.demo)(recognitum.demo/run)"
   :dev {:extra-paths ["dev"]}
 
   ;; Benchmark: the library against the same validation written by hand.
-  ;;   clojure -M:bench -e "(require 'prototype.bench)(prototype.bench/run)"
+  ;;   clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"
   :bench {:extra-paths ["dev" "bench"]
           :extra-deps {criterium/criterium {:mvn/version "0.4.6"}}}
 
   ;;   clojure -X:test
-  ;; prototype.validated-record-test  reads, writes, merge, dissoc
-  ;; prototype.draft-test             drafts, drafting, and what seal guarantees
-  ;; prototype.audit-test             the invariant :keys audit
+  ;; recognitum.core-test   reads, writes, constructors, merge, dissoc
+  ;; recognitum.draft-test   drafts, drafting, and what seal guarantees
+  ;; recognitum.audit-test   the invariant :keys audit
   :test {:extra-paths ["dev" "test"]
          :extra-deps {io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}

@@ -1,5 +1,5 @@
-(ns prototype.validated-record
-  "Prototype: a record-like type that carries proof of its own validation.
+(ns recognitum.core
+  "A record-like type that carries proof of its own validation.
 
   A write to a validated value checks that field's predicate and every invariant
   depending on it, so such a value is never observable in an invalid state. A draft is
