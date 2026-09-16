@@ -89,6 +89,11 @@
           (fn [] (heist/add-member job :handsome-rob 500)))
     (show "...while its first write alone is refused"
           (fn [] (assoc job ::heist/crew (conj (::heist/crew job) :handsome-rob))))
+    (show "begin-revision -- unsealed, so a draft comes back"
+          (fn [] (let [d (heist/begin-revision job "The Turin Job")]
+                   {:draft? (rec/draft? d) :sealed? (rec/sealed? d) :name (::heist/name d)})))
+    (show "revise -- it finishes that change, and seals"
+          (fn [] (heist/revise job "The Turin Job" :lyle 250)))
 
     (section "draft writes are unchecked; seal is where it fails")
     (show "drafting + assoc ::heist/take \"nope\""

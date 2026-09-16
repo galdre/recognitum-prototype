@@ -35,11 +35,28 @@
   a sealed `Heist` the same body runs against a draft the wrapper opened and the result is
   sealed on the way out. So `add-member`, which passes through two states no single write
   to a sealed value could produce, needs no `drafting` form of its own -- and
-  `total-payout`, which hands back a number, passes through untouched."
+  `total-payout`, which hands back a number, passes through untouched. `begin-revision` is
+  the exception that names the rule: it marks its return `unsealed`, so the wrapper unwraps
+  the marker instead of sealing, and `revise` is what that is for -- it calls the inner
+  stage on its own draft receiver and hands the finished draft back bare."
   (rename       [h nm]        "Retitle the job.")
   (add-member   [h who cut]   "Put `who` on the crew with `cut`, and raise the take to fund it.")
   (promote      [h who bonus] "Raise `who`'s cut by `bonus`, and the take with it.")
-  (total-payout [h]           "What the cuts come to."))
+  (total-payout [h]           "What the cuts come to.")
+  (begin-revision [h title]
+    "Open a revision under `title` and hand the draft back unsealed.
+
+    The first of the two stages: the caller asked to start a revision, not to finish one,
+    so this opts its return out of the seal. Called on a sealed `Heist` what comes back is
+    a free draft, owned by nothing, to keep working on and seal when the revision is
+    actually done; called on a draft it is the same body with nothing to opt out of.")
+  (revise [h title who bonus]
+    "Retitle the job and promote `who` by `bonus`, in one finished value.
+
+    The second stage: inside a method body the receiver is a draft, so `begin-revision`
+    hits the draft-side implementation, whose wrapper unwraps the marker and hands back the
+    draft this body goes on writing to. Returned bare, so the wrapper seals it -- called on
+    a sealed `Heist` this answers with a sealed `Heist`."))
 
 (rec/defrecord Heist
   [name crew take cuts]
@@ -106,7 +123,11 @@
         (assoc ::cuts (update (::cuts h) who + bonus))
         (assoc ::take (+ (::take h) bonus))))
 
-  (total-payout [h] (reduce + 0 (vals (::cuts h)))))
+  (total-payout [h] (reduce + 0 (vals (::cuts h))))
+
+  (begin-revision [h title] (rec/unsealed (assoc h ::name title)))
+
+  (revise [h title who bonus] (-> (begin-revision h title) (promote who bonus))))
 
 (def italian-job
   (drafting [h Heist]
