@@ -212,30 +212,72 @@ whether or not it belongs to a certificate.
 A draft is an unvalidated working copy. Writes into it check nothing. It exists so a multi-step
 update can pass through states no single write could produce.
 
-A draft tracks which checks currently pass:
+### The verdict mask
 
-- Drafting from a sealed value starts with every check passed.
+A draft records which of its checks currently pass. The record is a mutable field — the draft's
+*data* is immutable, but which checks have been run against that data is not part of the data.
+
+- Drafting from a sealed value starts with every check passing.
 - Drafting from the type starts with none.
-- A write clears every check whose arglist mentions the written field.
-- Running a check sets its bit if it passes.
+- Running a check sets its bit when it passes and clears it when it fails. Clearing is what makes
+  re-running a check meaningful: a check that passed earlier and fails now must stop counting as
+  passed, and without that there would be no way to un-pass anything.
+- A write seeds the new draft's mask from the old one, clearing exactly the checks whose arglists
+  mention the written field — one bitwise `and` against an invalidation mask the macro computes
+  from the index.
+
+The seed is a snapshot, so versions diverge rather than share. Checking `x'` says nothing about
+`x`, and checking `x` says nothing about `x'`.
+
+A draft is single-owner, as a transient is, and the mask is why that matters rather than merely
+being conventional.
+
+Verdicts are cached; the evidence behind them is not. io-deps are fetched within a validation
+call and gone when it returns, so what a draft carries is that a check passed, never what it
+consulted to decide. A verdict for a check that consulted IO is point-in-time, which is what the
+certificate contract already says.
+
+### Certificates on a draft
 
 **Certificate-holding is derived, not asserted.** A draft holds a certificate when every check in
 it currently passes. Overlapping certificates work without coordination, and running individual
 checks can complete a certificate incidentally.
 
-Certificates are point-in-time by contract, do not survive serialization, and take no part in
-`=` or `hash`.
+Certificates do not survive serialization and take no part in `=` or `hash`.
 
 ### Running checks on a draft
 
-| | |
+| | returns |
 |---|---|
-| `(check d ::check-name)` | run one check; does not throw |
-| `(check! d ::check-name)` | run one check; throws on failure |
-| `(certify d ::cert-name)` | run every check in a certificate; does not throw |
-| `(certify! d ::cert-name)` | run every check in a certificate; throws on failure |
+| `(check d ::check-name)` | `true`, or the failing check's data |
+| `(check! d ::check-name)` | `true`, or throws |
+| `(certify d ::cert-name)` | `true`, or `{check-name failure-data}` for those that failed |
+| `(certify! d ::cert-name)` | `true`, or throws |
 
-All four take and return a draft.
+None of them return a draft. The verdict goes in the mask, so the return value is free to be the
+answer to the question asked. `true` means passed, as it does for a check itself.
+
+Running a check runs whatever it depends on that is not already passing — an IO-bound check
+cannot run before its pure prerequisites, and the mask makes satisfied prerequisites free. So
+`check` means *establish this*, not *run exactly this*.
+
+Failures are not retained. The call that finds one returns it; a later call re-runs anything not
+passing and produces it again.
+
+### Metadata
+
+`meta` on a draft returns its metadata with the library's own keys merged over the top:
+
+```clojure
+(meta d)
+;=> {:user-key 1
+;    :recognitum.core/passed       #{::name ::crew ::cuts-sum-to-take}
+;    :recognitum.core/certificates #{::shape}}
+```
+
+Merging over rather than under is deliberate. `with-meta` is public, so anything a user could
+set, a user could forge; keys the library writes last cannot be overridden by anything a caller
+passes in.
 
 ### `drafting`
 
@@ -263,6 +305,12 @@ them instead; `dissoc` removes one.
 
 `seal` returns a value validated exactly as if every check had been run. It runs the checks that
 are not currently passing — work done incrementally on the draft is not repeated.
+
+It collects every failure rather than throwing on the first, and throws once carrying all of
+them. That costs nothing when everything passes, since every check runs in that case anyway; the
+extra work happens only when it is about to throw, which is where it is worth doing. The gate
+makes it two-phase: collect all pure failures and throw if there are any, otherwise fetch and
+collect the IO ones.
 
 `seal` is idempotent. An already-sealed value passes through unchanged, so `seal` is a projection
 and a sealed value is a fixed point of it. Anything that is neither a draft nor sealed throws
@@ -367,10 +415,11 @@ keyword lookup.
 ## Open
 
 - **The bulk validation entry point.** Batched fetches exist to serve one, but nothing calls
-  them yet. Its shape is downstream of the failure question below: validating a hundred values
-  cannot throw on the first bad one without defeating the point, so it has to return per-value
-  results.
-- **The failure-accumulation shape.** What `check` and `certify` return on failure, and whether
-  failures live on the draft so a caller can collect all problems in one pass rather than one
-  per round trip.
+  them yet. It cannot throw on the first bad value without defeating itself, so it returns
+  per-value results — whether it also offers partial success, handing back the values that
+  sealed alongside failures for those that did not, is the open part.
+- **Whether a sealed value reports anything through `meta`.** On a draft the keys carry
+  information; on a sealed value every check passes by definition, so they would be constant.
+- **The order failures are reported in.** Checks come from a map literal, which does not preserve
+  declaration order past eight entries, though the macro can.
 - **What `:options` holds besides `:io-limited`.**
