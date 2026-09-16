@@ -191,7 +191,11 @@ so far, or the options if it is still open. None is implemented.
       duplicate (`passed`, `certificates`) and widen them to answer for a sealed value too (all
       checks, all certificates), which closes three deferred notes about whether they should;
       or remove them, since `(::recognitum.core/passed (meta d))` already answers and two
-      spellings of one question is surface. Ruling pending.
+      spellings of one question is surface. **Ruled 2026-09-16: rename to match the `meta`
+      keys — `passed` and `certificates` — and they answer for both forms.** Correction from
+      galdre, same day: `meta` was never meant to be *the* uniform interface; the ruling was
+      only that it must unforgeably carry the information. An agent extended that into
+      "therefore the functions stay draft-only," which was never asked for.
 
 - [ ] **Groups of mixed types are allowed.** Ruled by galdre: the contract is "recognitum
       types," and `check-all`/`certify-all` over drafts of more than one type should work. The
