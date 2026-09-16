@@ -108,6 +108,25 @@
                          (assoc ::b/cuts (assoc (::b/cuts x) :m0 10))
                          (assoc ::b/take (+ (::b/take x) 10)))))))
 
+(deftest a-merge-onto-a-sealed-value-stays-within-its-multiple
+  ;; The row the README table has the library losing, and the one where the comparison is
+  ;; closest to being about bookkeeping rather than work: both sides run each applicable
+  ;; check once at the end, over the same values, so whatever separates them is what the
+  ;; library does around the checks. What it was doing was building a sorted set per write
+  ;; out of the field -> checks index, and an intermediate map of the entries to construct
+  ;; the new value through -- neither of them a question the type had not already answered
+  ;; when it compiled.
+  ;;
+  ;; The bound is tighter than the rows above because nothing here is amortized over a
+  ;; batch: what the library pays beyond the checks it pays once per merge and shows up
+  ;; whole, and it is not a shape megamorphic call sites cost much -- this row reads about
+  ;; a tenth higher in the suite than in the benchmark where the drafting rows read double.
+  ;; So a quarter above parity is room for a busy machine; half again is a data structure
+  ;; per write, back again.
+  (within? "merge two fields onto a sealed value" 1.4
+           (ratio #(b/m-merge b/r {:take 3000 :cuts b/valid-cuts})
+                  #(merge b/h {::b/take 3000 ::b/cuts b/valid-cuts}))))
+
 ;;; ------------------------- what a call with nothing pending still owes -------------------------
 
 (def ^:private runs (atom []))
