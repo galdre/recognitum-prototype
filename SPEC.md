@@ -90,8 +90,8 @@ The body receives exactly those, positionally, in that order, and nothing else i
 nothing can depend on something it did not name. Exactly one arity: the arity *is* the dependency
 set.
 
-The same rule governs io-dep fetch functions. There is no second way to declare a dependency
-anywhere in the definition.
+The same rule governs io-dep fetch functions, which may additionally be written in a batched
+form. There is no second way to declare a dependency anywhere in the definition.
 
 Every entry is resolved at macroexpansion. A symbol that is not a declared field, a keyword that
 is not a declared io-dep, a name used for both a check and an io-dep, or a cycle among io-deps is
@@ -135,13 +135,44 @@ A check depends on one the same way:
 Anything is IO-bound exactly when its arglist contains a keyword, which is visible where it is
 written without consulting anything else.
 
-A fetch does not decide validity. It produces a value and the check judges it — an io-dep that
-finds nothing returns `nil`, and the check fails on `nil`, rather than the fetch reporting
-failure itself.
+A fetch does not decide validity. It produces a value; the checks naming it decide what that
+value means. `nil` is not a failure, or a success — it is whatever the checks say it is.
 
 Nothing is specified about what a fetch returns. Its only consumers are the checks naming it,
 declared in the same form, so there is no contract to document and nothing to keep in sync at a
 distance.
+
+An exception from a fetch propagates. A check that throws is a bug; a fetch that throws is
+usually the database being unreachable, and "we could not determine whether this is valid" is a
+different claim from "this is invalid". Folding it into failure would have the type assert
+something it does not know. An author who wants it treated as a failure catches it inside the
+fetch — that direction loses no information, and the reverse is not recoverable.
+
+#### Singular and batched fetches
+
+A fetch may be written either way:
+
+```clojure
+::roster ([crew] (fetch-roster crew))                  ; singular
+::roster ([[crew] :as rows] (fetch-rosters rows))      ; batched
+```
+
+The batched form binds the collection of argument tuples with `:as`, and the two are told apart
+by the reader rather than by convention: `[[crew] :as rows]` is not a legal function arglist, so
+the macro knows at expansion time which it has. (`[[crew]]` alone *is* legal, which is why the
+`:as` is required. `:as` is unqualified and io-dep names are namespaced, so it cannot be mistaken
+for a dependency.)
+
+The library deduplicates in both cases. Distinct argument tuples are computed once, and a result
+is distributed to every value sharing a tuple — a hundred values referencing five dashboards do
+five fetches' worth of work either way. What the batched form adds is that those five arrive in
+one call.
+
+The return shapes differ accordingly: a singular fetch returns the value; a batched fetch returns
+a map keyed by the argument tuple, `{[crew] result, [crew2] result2}`. Keying by the tuple rather
+than aligning positionally is what lets the library do the deduplication rather than the author.
+
+Checks are never batched. A check judges one value.
 
 **Shape gates IO.** Nothing reaches a database until the values it will carry there are
 established as well-formed, because the payload that triggers the query is the one least worth
@@ -335,10 +366,10 @@ keyword lookup.
 
 ## Open
 
-- **Whether anything ever validates a collection in one call.** Everything is per-value today,
-  so a caller validating 100 values does 100 fetches and the N+1 is theirs, as it would be
-  without this library. A collection-level entry point would change that, and the io-dep
-  signature is the hard thing to revisit afterwards.
+- **The bulk validation entry point.** Batched fetches exist to serve one, but nothing calls
+  them yet. Its shape is downstream of the failure question below: validating a hundred values
+  cannot throw on the first bad one without defeating the point, so it has to return per-value
+  results.
 - **The failure-accumulation shape.** What `check` and `certify` return on failure, and whether
   failures live on the draft so a caller can collect all problems in one pass rather than one
   per round trip.
