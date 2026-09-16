@@ -190,6 +190,17 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       a var holding `nil`; an unresolvable symbol; a call. Do not edit TODOs.md or SPEC.md;
       report. Done c2fbc73. The generic option-value rule is gone; each known option owns its value rule. One edge left: a symbol naming a local (the option written inside a `let`) is reported as "does not resolve in <ns>", which is correct but does not say "that is a local."
 
+- [ ] **I4. Demonstrate `unsealed` in `heist.clj`, in two stages.** Add two protocol methods to
+      the example `Heist`. An inner one — `begin-revision` or similar — opens the change and
+      returns `(unsealed draft)` on purpose, so a caller gets a free draft to keep working on.
+      An outer one — `revise` or similar — calls the inner one on its (draft) receiver, which
+      the draft-side wrapper unwraps to a draft, continues the change, and returns the draft
+      bare, so the outer wrapper seals it. Called on a sealed `Heist`, the outer returns a
+      sealed `Heist`; called directly, the inner returns a draft. Show both in the demo. Tests
+      in protocol_test or a heist example test: the inner returns a draft, the outer returns a
+      sealed value, and the outer's result reflects the inner's change. Do not edit TODOs.md
+      or SPEC.md; report.
+
 ### H — later, low priority
 
 - [ ] **H2. Raise or name the limits.** The verdict mask is one `long`, so a type may declare
@@ -859,11 +870,11 @@ so far, or the options if it is still open. None is implemented.
       is not a thing a reader can type. Nothing keeps the two in step beyond both
       compiling, so if they diverge in substance the suite will not notice. Ruled by galdre 2026-09-16: two audiences, two artifacts. Accepted as is.
 
-- [ ] **F1 — `unsealed` is documented but demonstrated nowhere.** The README's "Protocol
+- [x] **F1 — `unsealed` is documented but demonstrated nowhere.** The README's "Protocol
       implementations" section writes it out and `recognitum.protocol-test` covers it, but
       no method on `Heist` opts out of the seal, so the demo has nothing to print. A method
       handing back a free draft would be the example -- `begin-revision`, in the shape the
-      README already gives.
+      README already gives. Ruled by galdre 2026-09-16: demonstrate it in heist.clj, two stages. Queued as I4.
 
 - [ ] **F1 — the `:test` alias now carries `bench` and criterium.**
       `recognitum.example-test` runs the hand-rolled side of the benchmark against the
