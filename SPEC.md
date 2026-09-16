@@ -210,6 +210,29 @@ they name a subset of checks you can run early, before the value is complete.
 They do not change what a sealed value guarantees. `seal` enforces every check on the type,
 whether or not it belongs to a certificate.
 
+## Telling values apart
+
+`defrecord` generates two types, so `instance?` no longer asks the question people usually mean.
+`of-type?` asks it:
+
+```clojure
+(rec/of-type? Heist x)     ; a Heist, sealed or draft
+```
+
+| | |
+|---|---|
+| `(rec/of-type? Heist x)` | either form of `Heist` |
+| `(instance? Heist x)` | a sealed `Heist`, specifically |
+| `(rec/draft? x)` | any draft, of any type |
+| `(rec/sealed? x)` | any sealed value, of any type |
+
+"A draft of `Heist`" composes from two of them, which is the right amount of spelling-out for
+something that specific. `of-type?` is a function rather than a generated per-type predicate, so
+nothing is interned into the defining namespace that could collide with a hand-written one.
+
+It is false for anything unregistered, including the type object itself — a class is not a value
+of its type.
+
 ## Protocol implementations
 
 Trailing forms in the definition are protocol implementations, written once and installed on both
@@ -228,7 +251,8 @@ cannot produce an invalid one whatever it does inside, and the same body serves 
 unchanged — the re-entrancy that `drafting` already provides, applied without anyone asking for
 it.
 
-Inside the body, the receiver is a draft in both cases.
+Inside the body, the receiver is a draft in both cases — so a body asking `(instance? Heist h)`
+would surprise itself, and wants `(rec/of-type? Heist h)` instead.
 
 **Only a draft of this type is sealed on the way out.** Most protocol methods return something
 else entirely — a number, a string, a boolean — and those pass through untouched. A method
