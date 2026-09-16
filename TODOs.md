@@ -91,15 +91,16 @@ as deliberate.
 
 ## Stale
 
-- [ ] `bench/prototype/bench2.clj` decomposes a draft implementation that no longer exists. It
-      benchmarks `conj` onto `(def dirty #{:take})` and `assoc` onto a map backing; the current
-      draft is real fields plus an ext map plus a bitmask. The breakdown rows measure nothing
-      that runs. Rewrite against the current internals or delete.
-- [ ] Four benchmark files accumulated rather than replaced. Only `bench4.clj` shares predicates
-      between both sides, so only its comparison is apples-to-apples — and the `README.md` table
-      comes from it. Decide what `bench.clj`, `bench2.clj`, and `bench3.clj` are still for.
-- [ ] `README.md` performance table has no recorded provenance — no machine, no JVM, no date, no
-      pointer to `bench4`. Re-measure and record, or caveat it.
+- [x] Four benchmark files collapsed to one. `bench2` measured a draft implementation that no
+      longer exists (dirty set, map backing); `bench3` duplicated `bench4`'s batch shapes with a
+      baseline that did no validation; `bench.clj` compared against an unvalidated defrecord,
+      which is not a question anyone is asking. Deleted. `bench4` renamed `prototype.bench`.
+- [x] `README.md` performance table regenerated on this machine, with CPU, JVM, OS, date, and
+      the command recorded, plus a note that run-to-run spread is real.
+- [x] Dropped README's closing advice to hold a draft open across a tight loop. Measured, it is
+      backwards: `revising` does not break even against direct `assoc` on a bare field until
+      ~N=40 (N=5: 297 vs 625 ns; N=50: 2897 vs 2629 ns). And for a field carrying invariants the
+      comparison does not exist — direct `assoc` throws, which is the whole reason drafts exist.
 
 ## Dead references
 

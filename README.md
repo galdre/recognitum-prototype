@@ -220,25 +220,27 @@ and reads go through it, so leave it out of production. A predicate that asks fo
 clojure -X:test                                        # the suite
 clojure -X:test-audit                                  # the suite, every invariant audited
 clojure -M:dev -e "(require 'prototype.demo)(prototype.demo/run)"
-clojure -M:bench -e "(require 'prototype.bench4)(prototype.bench4/run)"
+clojure -M:bench -e "(require 'prototype.bench)(prototype.bench/run)"
 ```
 
 ## What it costs
 
-Measured against a plain `defrecord` with the same predicates and invariants written by hand:
+Against a plain `defrecord` carrying the same predicates and invariants written by hand, so the
+validation work is identical on both sides (`bench/prototype/bench.clj`). Criterium
+`quick-benchmark` on an AMD Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-15:
 
 | | hand-rolled | this library |
 |---|---|---|
-| read a field | 4 ns | 5 ns |
-| write, no invariants on the key | 17 ns | 33 ns |
-| write, two invariants on the key | 302 ns | 362 ns |
-| `merge` two keys | 865 ns | 578 ns |
-| construct | 1215 ns | 1154 ns |
-| 15 writes in one `revising` | 690 ns | 1231 ns |
+| read a field | 2.1 ns | 1.9 ns |
+| write, no invariants on the key | 19.9 ns | 31.4 ns |
+| write, two invariants on the key | 246 ns | 305 ns |
+| `merge` two keys | 933 ns | 604 ns |
+| construct | 1478 ns | 1410 ns |
+| 15 writes in one `revising` | 862 ns | 1220 ns |
 
-Reads are effectively free. Where real validation happens the difference disappears, and `merge`
-and construction come out ahead — the library only checks the invariants a change could actually
-break, which is tedious enough to hand-roll that most code doesn't.
+Run-to-run spread is real: the two-invariant row moved between 1.0× and 1.2× across consecutive
+runs on an idle machine. Re-measure rather than trust these to three figures.
 
-The worst case is a bare write to a field with nothing to validate: 16 ns of overhead. If you are
-doing that in a tight loop, hold one draft open across the loop and seal once.
+```
+clojure -M:bench -e "(require 'prototype.bench)(prototype.bench/run)"
+```

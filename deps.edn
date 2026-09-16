@@ -8,8 +8,8 @@
   ;;   clojure -M:dev -e "(require 'prototype.demo)(prototype.demo/run)"
   :dev {:extra-paths ["dev"]}
 
-  ;; Benchmarks. bench4 is the one that shares predicates between both sides.
-  ;;   clojure -M:bench -e "(require 'prototype.bench4)(prototype.bench4/run)"
+  ;; Benchmark: the library against the same validation written by hand.
+  ;;   clojure -M:bench -e "(require 'prototype.bench)(prototype.bench/run)"
   :bench {:extra-paths ["dev" "bench"]
           :extra-deps {criterium/criterium {:mvn/version "0.4.6"}}}
 
