@@ -42,11 +42,11 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### C — the definition form
 
-- [ ] **C1. The definition map.** Wrap the checks in `{:options … :checks … :io-deps …
-      :certificates …}`, all sections optional. Only `:checks` is populated at this point.
 - [ ] **C0. `of-type?`.** True for either form of a registered type; false for anything
       unregistered, including the type object itself. Needed before C2, since a wrapped body
       receives a draft and `instance?` stops meaning what an author expects.
+- [ ] **C1. The definition map.** Wrap the checks in `{:options … :checks … :io-deps …
+      :certificates …}`, all sections optional. Only `:checks` is populated at this point.
 - [ ] **C2. Protocol implementations.** One body installed on both types. The draft impl runs it
       as written; the sealed impl opens a draft, runs it, and seals the result only if the body
       returned a draft of this type — anything else passes through, which is most protocol
