@@ -81,6 +81,36 @@ A check is written in one of three forms:
 The shorthand takes a bare function and expands to a check over the single field its key names.
 `::name non-blank-string?` is `::name ([name] (non-blank-string? name))`.
 
+### Shape checks
+
+**A check named after a field is that field's shape check.** `::name`, whether written as the
+shorthand or as `::name ([name] …)`, is the check that says what a well-formed `name` is. The
+naming convention is the declaration; nothing else marks it.
+
+A shape check names exactly its own field, and nothing else — `::name ([name crew] …)` is a
+compile error. That is what keeps the dependency structure a two-level graph: shape checks
+depend on nothing, every other check depends only on shape checks, and no ordering among checks
+ever needs computing.
+
+A field with no shape check has no declared shape. Checks naming it run against whatever it
+holds, and have to be total over anything. That is the author's choice, made loudly.
+
+**Every other check waits on the shape checks of the fields it names.** `::cuts-sum-to-take
+[take cuts]` runs only once `::take` and `::cuts` have passed, so it receives well-formed input by
+construction and restates nothing. A throw from it is therefore a genuine bug in the check,
+which is what the check contract already says a throw is.
+
+A check whose gate has not passed does not run and is not reported. The shape failure is the
+actionable one; "did not run because `cuts` is not a map" adds nothing to "`cuts` is not a map".
+
+### Unset fields
+
+A field that has not been written reads as `nil`, everywhere, exactly as it would on a
+`defrecord` whose field was never set. There is no sentinel and no "never written" state distinct
+from `nil`. A draft opened from the type starts with every field `nil`; whether `nil` is
+acceptable there is the shape check's business and nothing else's; a field with no shape check
+seals as `nil`.
+
 **The arglist is the dependency declaration.** It holds two kinds of entry:
 
 - a **symbol**, naming a field of this type;
@@ -179,11 +209,13 @@ than aligning positionally is what lets the library do the deduplication rather 
 
 Checks are never batched. A check judges one value.
 
-**Shape gates IO.** Nothing reaches a database until the values it will carry there are
+**Shape gates everything.** Nothing reaches a database until the values it will carry there are
 established as well-formed, because the payload that triggers the query is the one least worth
-trusting. Precisely:
+trusting — and, one level up, no cross-field check runs on a field its shape check has rejected.
+The same rule, three levels:
 
-- Pure checks run first, ungated.
+- Shape checks run first, ungated.
+- Every other pure check runs once the shape checks of the fields it names have passed.
 - An io-dep fetches once every pure check over the fields it names has passed, and every io-dep
   it names has fetched.
 - An IO-bound check runs once every io-dep it names has fetched.
@@ -346,9 +378,10 @@ passing and produces it again.
 Every one of them checks everything it was asked to check and reports every failure. None stops
 at the first.
 
-Failures come back keyed by check name, in declaration order — the order the checks are written
-in the form, which the macro sees before a map literal would lose it. Built with `array-map`
-rather than as a literal, so insertion order holds at any size.
+Failures come back keyed by check name, in phase order — shape checks, then the other pure
+checks, then the IO-bound ones — and in declaration order within a phase. Built with `array-map`
+rather than as a literal, so insertion order holds at any size. Shape failures first is the
+order you fix them in anyway.
 
 ### Checking many drafts at once
 
@@ -421,9 +454,9 @@ collect the IO ones.
 and a sealed value is a fixed point of it. Anything that is neither a draft nor sealed throws
 `:cannot-seal`.
 
-A field never written is reported as `:missing-field`. `nil` is a legal value where a check
-accepts it — "never written" and "written to nil" are different things, and a field no check
-mentions still has to be written.
+A field never written reads as `nil` and is judged as `nil` by its shape check. There is no
+separate notion of a missing field: absence is `nil`, as on a `defrecord`, and a field with no
+shape check seals holding it.
 
 ## Constructing
 
@@ -434,7 +467,8 @@ Both generated constructors validate:
 (map->Heist {::name "The Italian Job" ::crew #{:charlie :lyle} ...})
 ```
 
-`map->Heist` rejects an undeclared key and reports an omitted one as `:missing-field`.
+`map->Heist` rejects an undeclared key. An omitted one is `nil`, as it would be on a `defrecord`,
+and the shape check says whether that is acceptable.
 
 There is no unvalidated constructor. The positional factory `deftype` would intern is replaced,
 and the draft type's is unmapped.
@@ -503,7 +537,6 @@ Everything throws `ex-info` with an `:error` key to dispatch on.
 | `:check-failed` | a check returned something other than `true` |
 | `:unknown-field` | `assoc` of a key the type does not declare |
 | `:extraneous-keys` | sealing a draft holding undeclared keys |
-| `:missing-field` | sealing a value with a field never written |
 | `:cannot-dissoc` | `dissoc` of a declared field |
 | `:cannot-seal` | sealing something neither a draft nor sealed |
 
