@@ -12,12 +12,13 @@
   reaches for `empty` when it does not find that marker and hands back a
   `PersistentArrayMap` where a value went in.
 
-  `AbstractRecord` is the same mechanism with the record's answers: `equiv` and `equals`
-  compare nothing until the classes match, `hasheq` and `hashCode` mix the class in, `empty`
-  refuses as a record's does, and the two markers are present. Everything else is
-  `AbstractMap`'s -- `IPersistentMap`, `Associative`, `ILookup`, `Counted`, `Seqable`,
-  `IFn`, `IObj`, `java.util.Map`, iteration -- and the six-method contract is unchanged, so
-  `def-record-type` takes the same body `def-map-type` does.
+  `AbstractRecord` is the same mechanism with the record's answers: `equiv` compares nothing
+  until the classes match and `hasheq` mixes the class in, `.equals` and `.hashCode` are
+  `APersistentMap`'s map contract as a record's are, `empty` refuses as a record's does, and
+  the two markers are present. Everything else is `AbstractMap`'s -- `IPersistentMap`,
+  `Associative`, `ILookup`, `Counted`, `Seqable`, `IFn`, `IObj`, `java.util.Map`, iteration
+  -- and the six-method contract is unchanged, so `def-record-type` takes the same body
+  `def-map-type` does.
 
   Nothing here is part of the library's surface. It is a namespace rather than a block
   inside `recognitum.core` because it is a template and reads as one."
@@ -103,17 +104,15 @@
              (hash-unordered-coll (or (seq this) ()))))
 
   Object
-  ;; `equals` requires the class too, so the Java-level answer matches the Clojure one
-  ;; rather than leaving the claim true under `=` and false under `.equals`; `hashCode`
-  ;; mixes the class in to stay consistent with it.
+  ;; `emit-defrecord` leaves both of these to `APersistentMap`'s map contract, class-blind:
+  ;; at the Java level a record is a bare map with the same entries, symmetrically, and
+  ;; hashes as one. The class-aware answer lives in `equiv` and `hasheq` above, which is
+  ;; where `=` and `hash` read it; here the baseline rules, so these are the record's.
   (hashCode [this]
-    (bit-xor (.hashCode (.getName (class this)))
-             (clojure.lang.Util/hash (into {} this))))
+    (clojure.lang.APersistentMap/mapHash this))
 
   (equals [this x]
-    (or (identical? this x)
-        (and (identical? (class this) (class x))
-             (clojure.lang.Util/equals (into {} this) (into {} x)))))
+    (clojure.lang.APersistentMap/mapEquals this x))
 
   (toString [this]
     (str (into {} this)))

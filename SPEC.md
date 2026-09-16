@@ -19,18 +19,17 @@ not record is a defect.
 **Deliberate deviations:** two generated types rather than one; checks run on every write;
 `dissoc` of a declared field refused; undeclared keys refused on a sealed value; field keys
 qualified by the defining namespace; a namespace-qualified print tag, because the reader's
-record-literal path needs a static `create` a `deftype` cannot supply; the library's keys merged
-over `meta`; `.equals` and `.hashCode` requiring the class, where a record leaves both to
-`APersistentMap`'s map contract and so answers `true` to a bare map at the Java level; a value
-being callable as a function of its keys, which the template supplies and `defrecord` does not;
-and everything under Drafts, Certificates and IO dependencies, which `defrecord` has no
-counterpart for.
+record-literal path needs a static `create` a `deftype` cannot supply; the library's keys
+merged over `meta`; a value being callable as a function of its keys, which the template
+supplies and `defrecord` does not; and everything under Drafts, Certificates and IO
+dependencies, which `defrecord` has no counterpart for.
 
 **The generated types are records**, not maps wearing a record's shape. Both are built on
 `recognitum.collections/AbstractRecord` rather than `potemkin.collections/AbstractMap`: they
 carry `clojure.lang.IRecord` and `java.io.Serializable` and not `clojure.lang.MapEquivalence`,
-`equiv` and `equals` compare the class before they compare an entry, `hasheq` and `hashCode` mix
-the class in, and `empty` refuses as a record's does.
+`equiv` compares the class before it compares an entry and `hasheq` mixes the class in, while
+`.equals` and `.hashCode` follow the map contract as a record's do, and `empty` refuses as a
+record's does.
 
 That is what makes "a bare map with the right keys is not a `Heist`" true under `=` rather than
 only in prose, and what makes `(= (->A 1) (->B 1))` false for two unrelated types holding the
