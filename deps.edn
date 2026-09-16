@@ -14,10 +14,15 @@
           :extra-deps {criterium/criterium {:mvn/version "0.4.6"}}}
 
   ;;   clojure -X:test
-  ;; recognitum.checks-test  the :checks map and the arglist as the dependency list
-  ;; recognitum.core-test    reads, writes, constructors, merge, dissoc
-  ;; recognitum.draft-test   drafts, drafting, and what seal guarantees
-  :test {:extra-paths ["dev" "test"]
+  ;; recognitum.checks-test   the :checks map and the arglist as the dependency list
+  ;; recognitum.core-test     reads, writes, constructors, merge, dissoc
+  ;; recognitum.draft-test    drafts, drafting, and what seal guarantees
+  ;; recognitum.example-test  the example model, the demo and the bench
+  ;; `bench` is on the path, and criterium with it, because recognitum.example-test runs
+  ;; the hand-rolled side of the comparison against the library's and insists the two
+  ;; agree. Nothing here calls the benchmark itself.
+  :test {:extra-paths ["dev" "test" "bench"]
          :extra-deps {io.github.cognitect-labs/test-runner
-                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                      criterium/criterium {:mvn/version "0.4.6"}}
          :exec-fn cognitect.test-runner.api/test}}}
