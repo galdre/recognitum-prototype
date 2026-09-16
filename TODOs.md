@@ -226,6 +226,20 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       messages are user-visible and should go first. Do not add a test scanning for the old
       words. Do not edit TODOs.md or SPEC.md; report. Done 7d8ab96: 103 sites to 0; the two emitted messages now say "external validation(s)" and "shape validation", each pinned by a test; the generated `map->Type` docstring too. Adjectival "IO-bound" kept in eight predicate sentences. "pure check" left as is — it draws the pure/IO line, which no ruled name does.
 
+- [ ] **I7. Exceptions documented where they are thrown.** (a) Every public function that can
+      throw gets a closing docstring paragraph naming each `:error` it can throw, when, and the
+      ex-data keys — including the generated `->Type`/`map->Type`. (b) README's Errors section
+      replaces the keyword table with the one shape: every throw is an `ex-info` with `:error`
+      to dispatch on and `:record` naming the type; failures are a map keyed by check name in
+      phase order, the same map `check` returns; what each operation throws is in its
+      docstring. Compile-time refusals are not documented there. (c) A test that, for each
+      public var, every `:error` keyword the implementation can throw from it appears in that
+      var's docstring — positive, programmatic, over metadata — with a comment above it saying
+      it is a candidate for deletion. (d) Audit that every throw carries `:error` and, where a
+      type is involved, `:record`; fix stragglers (the batch-shape errors, `:not-a-value`).
+      (e) Fold in the deferred note: a test that a protocol method with a `^long` parameter
+      compiles and runs on both types, and works with `recur`. Do not edit TODOs.md; report.
+
 ### H — later, low priority
 
 - [ ] **H2. Raise or name the limits.** The verdict mask is one `long`, so a type may declare
@@ -299,14 +313,15 @@ so far, or the options if it is still open. None is implemented.
       same rule a single `certify` already applies, and burying it among per-value failures is
       how a typo hides.
 
-- [ ] **How exceptions are documented.** The keyword tables in README and SPEC answer "what
-      keywords exist"; the reader's question is "what can this call throw, and what is in it."
-      Galdre: a table is the wrong mechanism. Direction: each function's docstring names what it
-      throws and the ex-data keys, so `(doc check)` answers; a README section organised by
-      operation rather than by keyword. Compile-time refusals and typo-catchers
-      (`:unknown-check`) are not worth documenting in a table at all. Undecided in shape.
+- [x] **How exceptions are documented.** Ruled 2026-09-16, three parts, queued as I7: each
+      public function's docstring says what it throws and what the ex-data carries; the README
+      drops the keyword table and describes the one shape (`ex-info`, `:error`, `:record`, the
+      keyed failure map) and points at the docstrings; a test that every `:error` a function can
+      throw appears in its docstring — positive, over var metadata — marked in a comment as a
+      candidate for deletion.
 
-- [ ] **README gaps from the exception audit.** Once the documentation shape settles:
+- [x] **README gaps from the exception audit.** Subsumed by I7: the batch-shape errors and
+      `:not-a-value` get documented in the docstrings of the functions that throw them. Once the documentation shape settles:
       `:malformed-batch` and `:incomplete-batch` (a batched fetch returned the wrong shape) get
       documented; `:not-a-value` (checking something that is not a recognitum value) gets
       documented. `:unknown-certificate` no longer exists — one verb, one refusal
@@ -327,11 +342,11 @@ so far, or the options if it is still open. None is implemented.
 
 ## Deferred during implementation
 
-- [ ] **I2 — a type hint on a method parameter now rides onto a `loop` binding.**
+- [x] **I2 — a type hint on a method parameter now rides onto a `loop` binding.**
       `recurrable-body` interleaves the non-receiver args verbatim, so `^long n` on a method
       parameter becomes `^long n` on the loop binding. Legal, and usually wanted, but a
       primitive hint on a loop binding is stricter than on a fn parameter, and no test in the
-      suite has a hinted method parameter. Untested rather than known-good.
+      suite has a hinted method parameter. Untested rather than known-good. Folded into I7(e).
 
 - [x] **G2 — `postwalk` over an `:io-limited` sealed value throws where the step's
       acceptance line said it returns the value.** Superseded by H1 in the implementation
