@@ -5,8 +5,9 @@
   `defrecord` whose field was never set. There is no sentinel and no \"never written\"
   state distinct from `nil`: a draft opened from the type starts with every field `nil`,
   `keys` answers with every declared key whatever has been written, and every check
-  receives `nil` for a field nobody wrote. Whether `nil` is acceptable is the shape check's
-  business and nothing else's; a field with no shape check seals holding it.
+  receives `nil` for a field nobody wrote. Whether `nil` is acceptable is the shape
+  validation's business and nothing else's; a field with no shape validation seals
+  holding it.
 
   So `:missing-field` is gone. It was the library reporting on its own internals -- there
   was a sentinel a check must not be handed, and the error existed to keep it away from
@@ -28,7 +29,7 @@
    {::title ([title] (or (nil? title) (string? title)))
     ::body  ([body] (or (nil? body) (string? body)))}})
 
-;; The other half of the choice: a shape check that does not admit nil.
+;; The other half of the choice: a shape validation that does not admit nil.
 (rec/defrecord Strict
   [title]
   {:checks {::title string?}})
@@ -74,7 +75,7 @@
 (deftest a-field-no-check-names-seals-holding-nil
   (let [n (rec/seal (rec/draft Note))]
     (is (rec/sealed? n))
-    (is (nil? (::tags n)) "no shape check, no declared shape, nothing to fail")))
+    (is (nil? (::tags n)) "no shape validation, no declared shape, nothing to fail")))
 
 (deftest a-shape-check-that-refuses-nil-is-what-refuses-an-unwritten-field
   (let [e (err #(rec/seal (rec/draft Strict)))]
@@ -90,7 +91,7 @@
   (let [n (map->Note {::title "t"})]
     (is (rec/sealed? n))
     (is (= {::title "t" ::body nil ::tags nil} (into {} n))))
-  (testing "and the shape check is what decides whether that is acceptable"
+  (testing "and the shape validation is what decides whether that is acceptable"
     (let [e (err #(map->Strict {}))]
       (is (= ::rec/check-failed (:error e)))
       (is (= [::title] (keys (:failures e))))))

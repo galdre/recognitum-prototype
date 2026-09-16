@@ -141,7 +141,7 @@
       (show "(rec/check d ::heist/name)"     (fn [] (rec/check d ::heist/name)))
       (show "(rec/check d ::heist/cuts) -- never written, so nil, and judged as nil"
             (fn [] (rec/check d ::heist/cuts)))
-      (show "(rec/check d ::heist/cuts-sum-to-take) -- it waits on the shape checks"
+      (show "(rec/check d ::heist/cuts-sum-to-take) -- it waits on the shape validations"
             (fn [] (rec/check d ::heist/cuts-sum-to-take)))
       (show "(rec/check d ::heist/shape) -- one verb, a certificate name; take and cuts owed"
             (fn [] (rec/check d ::heist/shape)))
@@ -178,7 +178,7 @@
     (section "one fetch per validation call, however many things name it")
     (show "::vetted names ::roster, so a seal is two calls not three"
           (fn [] (watching #(drafting [h job] (heist/add-member h :handsome-rob 500)))))
-    (show "a write no IO-bound check reads fetches nothing"
+    (show "a write no external validation reads fetches nothing"
           (fn [] (watching #(drafting [h job] (heist/rename h "The Sequel")))))
     (show "and nothing is cached across calls"
           (fn [] (watching #(do (drafting [h job] (heist/add-member h :handsome-rob 500))
@@ -220,14 +220,14 @@
                       (catch clojure.lang.ExceptionInfo e (:instead (ex-data e))))))
     (show "which is how the write is spelled"
           (fn [] (drafting [h job] (assoc h ::heist/crew #{:charlie :lyle :left-ear}))))
-    (show "a field no IO-bound check reads is unaffected"
+    (show "a field no external validation reads is unaffected"
           (fn [] (assoc job ::heist/name "The Lavender Hill Mob")))
 
     (section "constructors, both validating")
     (show "(heist/->Heist \"Job\" #{:a} 10 {:a 10})" (fn [] (heist/->Heist "Job" #{:a} 10 {:a 10})))
     (show "->Heist with a bad field" (fn [] (heist/->Heist "" #{:a} 10 {:a 10})))
     (show "->Heist with everything wrong at once" (fn [] (heist/->Heist "" :not-a-set -1 "garbage")))
-    (show "map->Heist with a key left out -- it is nil, and the shape check says so"
+    (show "map->Heist with a key left out -- it is nil, and the shape validation says so"
           (fn [] (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))
     (show "a shape failure is the whole report -- what waits on it does not run"
           (fn [] (heist/->Heist "Job" #{:a} 10 "garbage")))
@@ -244,7 +244,7 @@
     (show "a literal that fails a single-field check"
           (fn [] (edn/read-string {:readers (rec/data-readers)}
                                   "#recognitum.heist/Heist{:name \"\" :crew #{:a} :take 1 :cuts {:a 1}}")))
-    (show "a literal that breaks a cross-field check"
+    (show "a literal that breaks an invariant validation"
           (fn [] (edn/read-string {:readers (rec/data-readers)}
                                   "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 9 :cuts {:a 1}}")))
 
