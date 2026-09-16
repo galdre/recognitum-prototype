@@ -1,12 +1,11 @@
 (ns recognitum.record-test
   "The generated types against `clojure.core/defrecord`, operation by operation.
 
-  `SPEC.md`'s baseline section says the first question about any behaviour is what
-  `defrecord` does for the same operation, and that an unrecorded difference is a defect.
-  So this file holds a twin: a real `defrecord` over the same two fields, and every
-  map-surface operation asked of both. Where the answers agree the assertion is written
-  once against both; where `SPEC.md` departs on purpose the test says so in its name and
-  pins each side separately.
+  The first question about any behaviour here is what `defrecord` does for the same
+  operation, and an unrecorded difference is a defect. So this file holds a twin: a real
+  `defrecord` over the same two fields, and every map-surface operation asked of both.
+  Where the answers agree the assertion is written once against both; where this library
+  departs on purpose the test says so in its name and pins each side separately.
 
   The six rows of the defects table live here -- `=` against a plain map and against an
   unrelated type, `hash`, `record?`, `empty`, `Serializable` -- and so does the consequence
@@ -49,9 +48,9 @@
 (defn- bare
   "`m` with the defining namespace dropped from its keys -- the twin's spelling of ours.
 
-  Namespace-qualified field keys are a recorded deviation of their own (`SPEC.md`,
-  \"Fields\"), pinned in `recognitum.qualified-keys-test`. Here it is noise, so it is
-  divided out rather than re-asserted at every line."
+  Namespace-qualified field keys are a recorded deviation of their own, pinned in
+  `recognitum.qualified-keys-test`. Here it is noise, so it is divided out rather than
+  re-asserted at every line."
   [m]
   (into {} (map (fn [[k v]] [(keyword (name k)) v])) m))
 
@@ -174,7 +173,7 @@
 ;;; ============================== the six defect rows ==============================
 
 (deftest a-bare-map-with-the-right-keys-is-not-a-value-of-the-type
-  ;; Row one, and the sentence SPEC.md opens with. Both directions, because the answer
+  ;; Row one, and the first thing this library claims. Both directions, because the answer
   ;; from the map's side is the map's to give: `APersistentMap.equiv` refuses any
   ;; `IPersistentMap` that does not carry `clojure.lang.MapEquivalence`, so the fix is the
   ;; absence of that marker rather than anything our own `equiv` could say.
@@ -275,7 +274,7 @@
 ;;; ============================== what the rows were for ==============================
 
 (deftest postwalk-hands-back-the-value-rather-than-a-plain-map
-  ;; The consequence SPEC.md calls the sharpest: without `IRecord`, `clojure.walk/walk`
+  ;; The sharpest consequence of the rows above: without `IRecord`, `clojure.walk/walk`
   ;; falls through to `(into (empty form) ...)` and the empty of a map type is a map. It
   ;; never asks for `empty` now, which is why the refusal above costs nothing here.
   (doseq [[what x] [["a sealed value" ours]
@@ -301,7 +300,7 @@
            (:error (err #(walk/postwalk (fn [x] (if (= x 10) :free x)) (->Ledger "zoe" 10))))))))
 
 (deftest postwalk-on-an-io-limited-value-refuses-rather-than-degrades
-  ;; `SPEC.md`'s example of the walk defect is the Heist, which is `:io-limited`, and
+  ;; The worked example of the walk defect is the Heist, which is `:io-limited`, and
   ;; `clojure.walk` rebuilds a record by `conj`-ing its entries back one at a time -- so
   ;; every io-limited field is written directly on a sealed value, which is the one thing
   ;; the option exists to refuse. It refuses, loudly and by name, which is a different
@@ -312,10 +311,10 @@
       (is (rec/of-type? Heist (walk/postwalk identity d)))
       (is (= d (walk/postwalk identity d))))))
 
-;;; ======================= where SPEC.md departs from defrecord =======================
+;;; ======================= where ours departs from defrecord =======================
 
 (deftest ours-departs-dissoc-of-a-declared-field-is-refused-where-a-defrecord-drops-to-a-map
-  ;; SPEC.md, "Reading and writing a sealed value": declared fields are permanent.
+  ;; A declared field is permanent: it cannot be taken off a value of the type.
   (is (= {:beta 2} (dissoc theirs :alpha)))
   (is (= clojure.lang.PersistentArrayMap (class (dissoc theirs :alpha))))
   (is (= ::rec/cannot-dissoc (:error (err #(dissoc ours ::alpha)))))
@@ -325,7 +324,7 @@
     (is (= ours (dissoc ours ::nope)))))
 
 (deftest ours-departs-an-undeclared-key-is-refused-on-a-sealed-value
-  ;; SPEC.md, "Undeclared keys": a draft accepts any key and sealing rejects what is left.
+  ;; A draft accepts any key, and sealing is where what is left over is rejected.
   (is (= {:alpha 1 :beta 2 :gamma 3} (into {} (assoc theirs :gamma 3))))
   (is (= (class theirs) (class (assoc theirs :gamma 3))))
   (is (= ::rec/unknown-field (:error (err #(assoc ours ::gamma 3)))))
@@ -335,8 +334,8 @@
       (is (= ::rec/extraneous-keys (:error (err #(rec/seal d))))))))
 
 (deftest ours-departs-meta-carries-the-librarys-keys-over-the-callers
-  ;; SPEC.md, "Metadata". A fresh defrecord has no metadata; ours always answers with what
-  ;; the value can show for itself, in both forms.
+  ;; A fresh defrecord has no metadata; ours always answers with what the value can show
+  ;; for itself, in both forms.
   (is (nil? (meta theirs)))
   (is (= #{::rec/passed ::rec/certificates} (set (keys (meta ours)))))
   (testing "and otherwise with-meta behaves the same on both"
@@ -359,11 +358,11 @@
 ;;; ======================= the same treatment for both types =======================
 
 (deftest str-is-the-identity-string-as-a-defrecords-is
-  ;; `SPEC.md`, "Printing and reading". A record overrides no `toString`, so `str` of one is
-  ;; `Object`'s -- class name, `@`, hex identity hash -- and both of ours answer in the same
-  ;; shape. `str` is what string concatenation and logging call implicitly, so the entries
-  ;; form would dump a whole collection field into every line that so much as mentions a
-  ;; value; the identity string is bounded, and the readable form is one `pr-str` away.
+  ;; A record overrides no `toString`, so `str` of one is `Object`'s -- class name, `@`, hex
+  ;; identity hash -- and both of ours answer in the same shape. `str` is what string
+  ;; concatenation and logging call implicitly, so the entries form would dump a whole
+  ;; collection field into every line that so much as mentions a value; the identity string
+  ;; is bounded, and the readable form is one `pr-str` away.
   (let [marker "tostring-marker"
         mine   (->Twin marker 2)
         twin   (->PlainTwin marker 2)]
@@ -383,7 +382,7 @@
       (is (.contains (pr-str mine) marker))
       (is (.startsWith (pr-str (rec/draft mine)) "#<Twin draft ")))))
 
-(deftest the-draft-type-is-the-sealed-type-in-everything-but-what-spec-names
+(deftest the-draft-type-is-the-sealed-type-in-everything-but-the-recorded-departures
   (let [d (rec/draft ours)]
     (doseq [[what x] [["sealed" ours] ["draft" d]]]
       (testing what

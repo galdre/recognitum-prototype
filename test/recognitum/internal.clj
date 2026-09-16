@@ -1,11 +1,11 @@
 (ns recognitum.internal
   "The library's internals, for the suite that tests them.
 
-  `recognitum.core`'s public surface is the vocabulary `SPEC.md` and `README.md` use, and
-  nothing else: the model map, the verdict mask and the macro's own parsing are private,
-  because a public name that hands out any of them is a way past the checks -- the model
-  carries an unvalidated draft -> sealed constructor, and writing the mask makes `seal`
-  believe a check that never ran.
+  `recognitum.core`'s public surface is the vocabulary a caller writes, and nothing else:
+  the model map, the verdict mask and the macro's own parsing are private, because a public
+  name that hands out any of them is a way past the checks -- the model carries an
+  unvalidated draft -> sealed constructor, and writing the mask makes `seal` believe a check
+  that never ran.
 
   Privacy in Clojure is advisory, and a var is reachable through itself whatever its
   metadata says. That is the whole of this namespace: one `#'` per internal the suite

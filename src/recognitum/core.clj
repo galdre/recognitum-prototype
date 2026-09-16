@@ -96,11 +96,12 @@
 (defn- internal
   "The form generated code refers to an internal of this namespace by: the var, dereferenced.
 
-  Everything `SPEC.md` does not name is private, and a macro expands into somebody else's
-  namespace -- where a qualified symbol naming a private var does not compile. That refusal
-  is the whole of what privacy is worth here: it is why `record-verdict!` being private
-  closes the door on writing a draft's verdict mask, and why `model-of` being private closes
-  the door on `:draft-seal`, which turns a draft into a sealed value and runs nothing.
+  Everything the public vocabulary does not name is private, and a macro expands into
+  somebody else's namespace -- where a qualified symbol naming a private var does not
+  compile. That refusal is the whole of what privacy is worth here: it is why
+  `record-verdict!` being private closes the door on writing a draft's verdict mask, and why
+  `model-of` being private closes the door on `:draft-seal`, which turns a draft into a
+  sealed value and runs nothing.
 
   The var itself stays reachable, as every var does -- privacy in Clojure is advisory -- so
   the expansion reaches it, emitting `@#'recognitum.core/checks-failed!` where it would
@@ -1545,7 +1546,7 @@
                     {:error ::duplicate-name :record tname :name dup}))))
 
 (def ^:private definition-sections
-  "The sections a definition map may hold, in the order `SPEC.md` writes them. Every one of
+  "The sections a definition map may hold, in the order the macro reads them. Every one of
   them is optional; an absent section is an empty one."
   [:options :checks :io-deps :certificates])
 

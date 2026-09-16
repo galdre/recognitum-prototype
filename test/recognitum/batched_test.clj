@@ -72,9 +72,9 @@
 
 ;;; ------------------------------------- the types -------------------------------------
 
-;; The shape SPEC.md writes, with the fetch batched. `::roster` names `crew` and nothing
-;; else, so the gate in front of it is the checks over `crew` alone, and two checks name it,
-;; so one call is what naming them is for.
+;; The shape `recognitum.io-deps-test` uses, with the fetch batched. `::roster` names
+;; `crew` and nothing else, so the gate in front of it is the checks over `crew` alone, and
+;; two checks name it, so one call is what naming them is for.
 (rec/defrecord Job
   [name crew cuts]
   {:checks

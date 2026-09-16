@@ -273,6 +273,6 @@
            (internal/parse-definition 'T {:io-deps {:t/r 'identity}}))
         "and a populated :io-deps is a section like any other, now that it means something")))
 
-(deftest the-sections-are-named-once-and-in-spec-order
+(deftest the-sections-are-named-once-and-in-reading-order
   (is (= [:options :checks :io-deps :certificates] (vec internal/definition-sections)))
   (is (= #{:io-limited} (set internal/known-options))))

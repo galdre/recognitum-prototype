@@ -74,9 +74,9 @@
 
 ;;; ------------------------------------- the types -------------------------------------
 
-;; The shape SPEC.md writes: a crew, cuts, and a roster fetched from outside. `::roster`
-;; names `crew` and nothing else, so the gate in front of it is the checks over `crew`
-;; alone -- a malformed `name`, which no fetch touches, holds up nothing.
+;; A crew, cuts, and a roster fetched from outside. `::roster` names `crew` and nothing
+;; else, so the gate in front of it is the checks over `crew` alone -- a malformed `name`,
+;; which no fetch touches, holds up nothing.
 (rec/defrecord Job
   [name crew cuts]
   {:checks

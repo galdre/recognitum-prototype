@@ -75,7 +75,7 @@
         (is (nil? t) (str "README block `" (first-line b) "` does not compile: "
                           (some-> t ex-message)))))))
 
-(deftest the-worked-example-is-the-one-the-spec-describes
+(deftest the-worked-example-shows-every-section
   (let [b (first (filter #(str/includes? % "defrecord") (code-blocks @readme)))]
     (doseq [section [":checks" ":io-deps" ":certificates" ":options"]]
       (is (str/includes? b section)
