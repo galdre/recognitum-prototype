@@ -83,6 +83,43 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 - [x] **E4. `:io-limited`.** Direct `assoc` and `merge` on a sealed value throw for any field an
       IO-bound check depends on; other fields unaffected.
 
+### G — the baseline is `defrecord`
+
+Both steps implement rulings recorded in `SPEC.md` after the first run: "Shape checks", "Unset
+fields", and "The baseline is `defrecord`". Read those sections before anything else.
+
+- [ ] **G1. Shape checks gate the rest, and unset is `nil`.** A check named after a field is that
+      field's shape check; it must name exactly that field, or the form does not compile. The
+      model marks shape checks structurally. Every other pure check gets a gate mask — the
+      shape-check bits of the fields it names — and runs only once those have passed; a check
+      whose gate has not passed neither runs nor appears in any failure map. Run order and
+      failure order become three phases: shape, other pure, IO, declaration order within each.
+      The `unset` sentinel is removed: a draft opened from the type starts with every field
+      `nil`, `(keys draft)` returns every declared key always, `map->Type` treats an omitted key
+      as `nil`, and every check receives `nil` for an unwritten field. `:missing-field`,
+      `:draft-missing`, `missing-values!`, and the pre-flight in `check-all` go, and the README
+      error table loses the row. `dev/recognitum/heist.clj`'s two cross-field checks lose their
+      `(and (non-neg-int? take) (cuts-map? cuts) …)` prefixes — they are the thing this fixes;
+      the gate now guarantees what they were restating. Existing tests that pin `:missing-field`
+      or partial `keys` on a draft are changed to the new behaviour, not deleted. The IO gate is
+      unchanged.
+
+- [ ] **G2. Emit a record, not a map type.** Replace `potemkin/def-map-type` for both generated
+      types with a hand-emitted type that behaves as `clojure.core/defrecord` does: implements
+      `clojure.lang.IRecord` so `record?` is true and `clojure.walk` rebuilds it with `conj`
+      rather than degrading it through `empty`; type-aware `equiv`, `equals`, `hasheq` and
+      `hashCode` — a value equals another value of the same type with the same fields, never a
+      plain map, never another type, and a draft never equals a sealed value; `empty` throws
+      `UnsupportedOperationException` as `defrecord`'s does; `java.io.Serializable`. Everything
+      the map surface provides today stays: `IPersistentMap`, `Associative`, `ILookup`, the
+      `IKeywordLookup` thunks, `Seqable`, `Counted`, `Iterable`, `IObj`, `print-method`.
+      Acceptance: `(clojure.walk/postwalk identity heist)` returns a `Heist`; the six rows in
+      `SPEC.md`'s defects table read as `defrecord`'s column. This is the largest single step —
+      it replaces the foundation both types stand on — so test the map surface exhaustively
+      against a `defrecord` twin before touching the emission. If potemkin is no longer
+      referenced afterwards, drop it from `deps.edn`. Re-run the bench; if any row moves by more
+      than the recorded spread, re-record the README table with provenance.
+
 ### F — reconcile
 
 - [x] **F1. README, demo, bench** to the new syntax. The demo should illustrate io-deps against
