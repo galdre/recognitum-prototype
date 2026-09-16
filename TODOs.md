@@ -315,8 +315,9 @@ so far, or the options if it is still open. None is implemented.
 - [x] **SPEC.md's future.** Walked 2026-09-16. What it holds that README lacks: the
       defrecord baseline and deviations, and the word `Serializable`. Everything else is either
       already in README or implementation reasoning not worth moving. Queued as I5. After I5
-      the spec has no content README lacks. CONSIDERATIONS.md is **not** retired — galdre:
-      "just holding."
+      the spec has no content README lacks. **Deleted 7c24c2f**, 2026-09-16; code citations of it
+      and of README.md removed in the commit after. CONSIDERATIONS.md is **not** retired —
+      galdre: "just holding."
 
 - [ ] **`run-checks!` per-call overhead** (perf, later). Reported by the merge-fix agent: per
       validation it builds three phase vectors, a failure set, a lazy `remove` over the pure
