@@ -180,6 +180,16 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       guard everything it guarded. Remove any reference to it elsewhere. Do not edit TODOs.md
       or SPEC.md; report.
 
+- [ ] **I3. `:io-limited` takes a literal boolean or a var.** The value check is specific to
+      `:io-limited`, not a rule over all options. Accept `true`, `false`, or a symbol that
+      `resolve`s at macroexpansion to a var whose value is a boolean — read the value then; a
+      later `alter-var-root` does not change a compiled type, and that is fine. A symbol that
+      does not resolve, a var holding a non-boolean, or any other form (a call, a keyword, a
+      map) is refused as `::malformed-option`, with a message that says which of those it was.
+      Tests: literal true/false; a same-namespace var; a qualified var from another namespace;
+      a var holding `nil`; an unresolvable symbol; a call. Do not edit TODOs.md or SPEC.md;
+      report.
+
 ### H — later, low priority
 
 - [ ] **H1. `recognitum.walk`.** `clojure.walk/walk` is a plain `cond`: on `IRecord` it does
@@ -797,14 +807,14 @@ so far, or the options if it is still open. None is implemented.
       means nothing), `:checks` (offending key -> the IO-bound checks reading it) and
       `:instead` (a `drafting` form). `io-limited!` is the only place this lives. 2026-09-16: `:io-limited` is in the README table; the spec table's future is in the exceptions-documentation discussion.
 
-- [ ] **E4 — an option must be written as a literal boolean, which `SPEC.md` does not
+- [x] **E4 — an option must be written as a literal boolean, which `SPEC.md` does not
       say.** `:options` is read while the macro runs, so `{:io-limited some-config}` or
       `{:io-limited (io-enabled?)}` would be on regardless of what it later evaluated to,
       `false` included -- a declaration meaning one thing to the macro and another to
       whoever reads it, which is the silent mis-declaration everything else here is
       arranged to prevent. `parse-definition` refuses anything but `true` or `false` as
       `::malformed-option`. If a future option wants a non-boolean value, that check is the
-      thing to widen, not to delete.
+      thing to widen, not to delete. Ruled by galdre 2026-09-16: the boolean rule belongs to `:io-limited`, not to options generically; and a symbol naming a var holding a boolean is accepted (the macro resolves it at expansion), so `(def is-io-limited true) … {:io-limited is-io-limited}` works. A call is still refused. Queued as step I3.
 
 - [x] **E4 — `:io-limited` appears in no example, no demo and no README.** The example
       model has no io-dep to limit (E1's deferral), so declaring the option there would say
