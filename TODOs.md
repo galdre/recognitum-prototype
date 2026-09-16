@@ -876,13 +876,13 @@ so far, or the options if it is still open. None is implemented.
       handing back a free draft would be the example -- `begin-revision`, in the shape the
       README already gives. Ruled by galdre 2026-09-16: demonstrate it in heist.clj, two stages. Queued as I4.
 
-- [ ] **F1 — the `:test` alias now carries `bench` and criterium.**
+- [x] **F1 — the `:test` alias now carries `bench` and criterium.**
       `recognitum.example-test` runs the hand-rolled side of the benchmark against the
       library's and insists the two agree on the same values, throws included, which is the
       only mechanical statement of "apples to apples" available. That means loading
       `recognitum.bench`, which requires criterium. Nothing in the suite calls
       `quick-benchmark`, so the cost is one dependency on the test classpath and nothing at
-      run time.
+      run time. galdre 2026-09-16: perfectly okay.
 
 - [x] **I1 — one verb leaves one refusal, so `::unknown-certificate` no longer exists.**
       `check` takes a check name or a certificate name and cannot tell which was meant, so a
