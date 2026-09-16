@@ -604,19 +604,27 @@ it.
 
 Against a plain `defrecord` carrying the same checks written by hand, so the validation work is
 identical on both sides (`bench/recognitum/bench.clj`). Criterium `quick-benchmark` on an AMD
-Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-16:
+Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-16, re-measured once the generated types
+became records:
 
 | | hand-rolled | this library |
 |---|---|---|
-| read a field | 2.2 ns | 2.3 ns |
-| write one field, no cross-field check on it | 16.5 ns | 10.4 ns |
-| write one field, two cross-field checks on it | 203 ns | 172 ns |
-| `merge` two fields | 814 ns | 1251 ns |
-| construct | 1358 ns | 1532 ns |
-| one rename in a `drafting` | 237 ns | 838 ns |
-| 15 renames in a `drafting` | 700 ns | 1294 ns |
-| one add-member (3 writes) in a `drafting` | 1384 ns | 1655 ns |
-| 15 add-members in a `drafting` | 4394 ns | 5007 ns |
+| read a field | 2.2 ns | 2.6 ns |
+| write one field, no cross-field check on it | 16.6 ns | 10.4 ns |
+| write one field, two cross-field checks on it | 198 ns | 172 ns |
+| `merge` two fields | 835 ns | 1518 ns |
+| construct | 1362 ns | 1895 ns |
+| one rename in a `drafting` | 260 ns | 890 ns |
+| 15 renames in a `drafting` | 704 ns | 1356 ns |
+| one add-member (3 writes) in a `drafting` | 1436 ns | 1892 ns |
+| 15 add-members in a `drafting` | 4463 ns | 5499 ns |
+
+Four rows read a fifth to a quarter higher than the table they replace, which is more than the
+spread below admits — so the previous template was re-measured on the same machine in the same
+sitting, alternating with this one, and read the same higher numbers. What moved was the
+machine, not the code: nothing in the record template is on any of these paths, and the rows it
+could plausibly have touched — a field read through the keyword thunk, a write through `assoc` —
+did not move at all.
 
 A write to a sealed value costs less than the hand-rolled twin, which is the arglists paying
 for themselves: the checks depending on the field are known when the type is compiled, and each

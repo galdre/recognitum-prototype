@@ -104,7 +104,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       or partial `keys` on a draft are changed to the new behaviour, not deleted. The IO gate is
       unchanged.
 
-- [ ] **G2. A record template of our own.** Every defect in `SPEC.md`'s baseline table is one
+- [x] **G2. A record template of our own.** Every defect in `SPEC.md`'s baseline table is one
       design decision in `potemkin.collections/AbstractMap`, which both generated types inherit:
       it implements `clojure.lang.MapEquivalence` (the marker `APersistentMap.equiv` consults, so
       a plain map equals us from *its* side and no `equiv` of ours can change that), its `equiv`
@@ -157,6 +157,36 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       access rather than keyword lookup is the change most likely to move it.
 
 ## Deferred during implementation
+
+- [ ] **G2 — `postwalk` over an `:io-limited` sealed value throws where the step's
+      acceptance line said it returns the value.** `clojure.walk/walk` rebuilds a record
+      as `(reduce (fn [r x] (conj r (inner x))) form form)` -- one `conj` per entry,
+      each of which is a direct write to a sealed value. On `Heist`, which is the type
+      `SPEC.md`'s example names and which is `:io-limited`, the first io-limited field
+      written throws `::io-limited`. That is the option doing exactly what it exists to
+      do: the alternative is a round of checks, and a fetch, per entry, silently. So the
+      refusal was pinned rather than worked around, and `SPEC.md`'s baseline section now
+      records it. What is left open is whether the library should offer a walk of its own
+      -- one that opens a draft, walks, and seals -- so that a value of an `:io-limited`
+      type can be rebuilt at all without the caller writing the `drafting` form by hand.
+      Nothing needs it yet; `clojure.walk` over the draft works today.
+
+- [ ] **G2 — `equiv`, `equals` and `hashCode` build a map per call.** `AbstractRecord`
+      is a template, so it cannot name the fields the way `emit-defrecord` does; it
+      compares and hashes through `(into {} this)`, which allocates. `AbstractMap` did
+      the same, so nothing regressed, and equality is on no benchmarked path. The fix,
+      if one is ever wanted, is not in the template at all: the macro knows the fields
+      and could emit a field-by-field `equiv`/`equals`/`hasheq` into each generated type,
+      where it would override the template's the way `cons` already does.
+
+- [ ] **G2 — `toString` is neither `defrecord`'s nor the print form.** potemkin's
+      template answers with the entries, `str` of a `defrecord` is `Object`'s identity
+      string, and `pr-str` of one of ours is `#recognitum.heist/Heist{...}`. The template
+      keeps potemkin's answer, which is the readable one of the three and what every
+      existing test expects, but a value whose `str` drops the tag its printed form
+      carries is a small lie. Making `toString` the print form is a two-line change in
+      the generated type, where the tag is in hand; it was left alone because `SPEC.md`
+      rules on printing and says nothing about `toString`.
 
 - [ ] **G1 — a check whose shape gate fails throws from `check`, where `SPEC.md` gives
       two outcomes.** The same position E1 took for a failing IO gate, and for the same

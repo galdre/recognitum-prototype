@@ -73,7 +73,7 @@
   the value can show for itself."
   (:refer-clojure :exclude [defrecord])
   (:require
-   [potemkin :as p]))
+   [recognitum.collections :as rc]))
 
 (def ^:private core-ns
   "This namespace's own name, for the expansions below to spell an internal with. Read here
@@ -1794,8 +1794,13 @@
       [[] false] impls))))
 
 (defmacro defrecord
-  "Define a validated map-like type with a real field per declared key, so reads and writes
-  are field access rather than map lookups.
+  "Define a validated record with a real field per declared key, so reads and writes are
+  field access rather than map lookups.
+
+  Both generated types are records rather than maps with a record's shape: `record?` holds,
+  `=` compares the class before it compares an entry, `hash` is type-aware, `empty` refuses,
+  and they serialize. See [[recognitum.collections/AbstractRecord]], which is the template
+  they are built on.
 
   Three positions: the type name, the fields, and a definition map of named sections --
 
@@ -2218,7 +2223,7 @@
        ~@(map (fn [j] `(def ~(with-meta (ivar j) {:private true}) ~(:fn (nth io-parsed j))))
               (range nio))
 
-       (p/def-map-type ~tname ~params
+       (rc/def-record-type ~tname ~params
          (~'get [_# ~ksym ~dsym]
            (case ~ksym ~@(interleave ks fsyms) ~dsym))
 
@@ -2300,7 +2305,7 @@
        ;; "never written" state to maintain and nothing to keep away from a check body;
        ;; which checks are still to run is read off the mask, and that is the whole of what
        ;; a write has to seed.
-       (p/def-map-type ~dname ~(into fsyms [extsym vdfield ownsym mtasym])
+       (rc/def-record-type ~dname ~(into fsyms [extsym vdfield ownsym mtasym])
          ;; A declared field is present whatever it holds, so `get` never reaches its
          ;; default for one -- which is what a record does.
          (~'get [_# ~ksym ~dsym]

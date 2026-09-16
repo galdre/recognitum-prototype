@@ -20,27 +20,31 @@ not record is a defect.
 `dissoc` of a declared field refused; undeclared keys refused on a sealed value; field keys
 qualified by the defining namespace; a namespace-qualified print tag, because the reader's
 record-literal path needs a static `create` a `deftype` cannot supply; the library's keys merged
-over `meta`; and everything under Drafts, Certificates and IO dependencies, which `defrecord` has
-no counterpart for.
+over `meta`; `.equals` and `.hashCode` requiring the class, where a record leaves both to
+`APersistentMap`'s map contract and so answers `true` to a bare map at the Java level; a value
+being callable as a function of its keys, which the template supplies and `defrecord` does not;
+and everything under Drafts, Certificates and IO dependencies, which `defrecord` has no
+counterpart for.
 
-**Defects, found by measuring against the baseline** — every one of these comes from
-`potemkin/def-map-type` building a generic map rather than a record, and every one is to be
-fixed:
+**The generated types are records**, not maps wearing a record's shape. Both are built on
+`recognitum.collections/AbstractRecord` rather than `potemkin.collections/AbstractMap`: they
+carry `clojure.lang.IRecord` and `java.io.Serializable` and not `clojure.lang.MapEquivalence`,
+`equiv` and `equals` compare the class before they compare an entry, `hasheq` and `hashCode` mix
+the class in, and `empty` refuses as a record's does.
 
-| operation | `defrecord` | today | consequence |
-|---|---|---|---|
-| `(= x plain-map)` | false | true | "a bare map with the right keys is not a `Heist`" is false under `=` |
-| `(= (->A 1) (->B 1))` | false | true | two unrelated types with the same fields are equal |
-| `hash` | type-aware | the map's | follows from the above |
-| `(record? x)` | true | false | `clojure.walk` does not recognise it as a record … |
-| `(empty x)` | throws | `{}` | … so `postwalk` rebuilds it as a plain map and hands that back |
-| `Serializable` | yes | no | |
+That is what makes "a bare map with the right keys is not a `Heist`" true under `=` rather than
+only in prose, and what makes `(= (->A 1) (->B 1))` false for two unrelated types holding the
+same fields. It is also what keeps `clojure.walk` honest: `walk` reaches for `empty` when it does
+not find `IRecord`, so `(clojure.walk/postwalk identity heist)` handed back a
+`PersistentArrayMap` — silently, through the most ordinary tool in the standard library — for as
+long as the types were built on a map template. The table of the six defects that came of that,
+measured against the baseline before they were fixed, is in this file's history.
 
-The `walk` consequence is the sharpest: `(clojure.walk/postwalk identity heist)` returns a
-`PersistentArrayMap` today, silently — the exact degradation the type exists to prevent, through
-the most ordinary tool in the standard library. The fix is to emit a record — implementing
-`IRecord`, type-aware `equiv` and `hasheq`, `empty` refusing, `Serializable` — rather than a map
-type, which `CONSIDERATIONS.md` already anticipated as "a real `emit-defrecord` fork".
+One walk does not round-trip. `walk` rebuilds a record by `conj`-ing its entries back one at a
+time, and on an `:io-limited` type each of those is the direct write to a sealed value the option
+refuses — so `postwalk` over one throws `:io-limited`, naming the fields and pointing at
+`drafting`, rather than quietly running a round of checks per entry. Loud is the point; the
+degradation the marker exists to stop was the silent kind.
 
 ## Defining a type
 
