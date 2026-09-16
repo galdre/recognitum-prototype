@@ -1,16 +1,13 @@
 (ns recognitum.draft-test
   "Drafts, `drafting`, and what `seal` guarantees."
   (:require
-   [clojure.test :refer [deftest is testing use-fixtures]]
-   [recognitum.audit-fixture :as fixture]
+   [clojure.test :refer [deftest is testing]]
    [recognitum.heist :as heist]
    [recognitum.core :as rec])
   (:import
    (recognitum.heist Heist)))
 
 (def job heist/italian-job)
-
-(use-fixtures :once fixture/audit)
 
 (defn- err [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))

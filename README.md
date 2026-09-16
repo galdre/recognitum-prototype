@@ -47,10 +47,6 @@ Two kinds of check, and the difference matters:
 - **Invariants** look at several fields at once. Each declares the keys it depends on, and runs
   whenever any of them changes.
 
-Declare an invariant's `:keys` accurately. It is how the library knows when to re-check it, what
-the error message reports, and — because an invariant none of whose declared keys were touched is
-skipped — the assumption the whole guarantee rests on. See [Checking your `:keys`](#checking-your-keys).
-
 ## Reading
 
 A validated value behaves like a map. The examples below are written from a consumer
@@ -204,7 +200,6 @@ Everything throws `ex-info` with an `:error` key you can dispatch on:
 | `:extraneous-keys` | sealing a draft holding undeclared keys |
 | `:missing-field` | sealing a value with a field never written |
 | `:cannot-dissoc` | `dissoc` of a declared field — use `assoc … nil` if its predicate admits nil |
-| `:undeclared-invariant-key` | under `*audit-invariant-keys*`, an invariant read a key it does not declare |
 | `:cannot-seal` | sealing something that is neither a draft nor an already-sealed value |
 
 Invariant failures carry what you need to debug them:
@@ -217,43 +212,6 @@ Invariant failures carry what you need to debug them:
  :values     #:my.app.heist{:crew #{:charlie :lyle :left-ear}
                             :cuts {:charlie 1000 :lyle 1000 :left-ear 1000 :stranger 100}}}
 ```
-
-## Checking your `:keys`
-
-An invariant that reads a key it did not declare is skipped on the write that breaks it, and the
-result seals anyway:
-
-```clojure
-(defrecord Bad
-  [^{:valid nb?} name ^{:valid int?} a ^{:valid int?} b]
-  [{:doc "a matches b" :keys #{::a} :pred (fn [m] (= (::a m) (::b m)))}])  ; reads ::b, declares only ::a
-
-(assoc ok ::b 999)   ;=> #my.app/Bad{:a 1, :b 999, :name "n"}   — sealed, and wrong
-```
-
-Nothing declares `::b`, so nothing re-ran. Bind `*audit-invariant-keys*` to run every invariant
-against a proxy that records its reads:
-
-```clojure
-(binding [rec/*audit-invariant-keys* true]
-  (drafting [x Bad] (merge x {::name "n" ::a 1 ::b 1})))
-;=> throws :undeclared-invariant-key
-;   {:invariant "a matches b" :declared #{:my.app/a} :also-read #{:my.app/b}}
-```
-
-The audit only speaks for invariants that run, and a bad `:keys` is exactly what stops one from
-running — so it cannot catch the mis-declaration on the write that exploits it. Construction
-touches every field and so runs every invariant: **build one instance of each type under the
-audit and every mis-declaration surfaces.** That is the thing to put in your test suite.
-
-`clojure -X:test-audit` runs the whole suite this way, so every type it constructs is checked.
-That catch is not redundant with the ordinary run: a mis-declared `:keys` does not corrupt a
-value until some later write exploits it, so the plain suite passes clean while the audited one
-fails. Worth having both.
-
-It is off by default and costs nothing when off. When on, each invariant run allocates a proxy
-and reads go through it, so leave it out of production. A predicate that asks for the whole map
-(`keys`, `vals`, `into {}`) cannot be attributed, and the audit abstains rather than guess.
 
 ## Printing and reading
 
@@ -310,7 +268,6 @@ implying it round-trips would be claiming something untrue:
 
 ```
 clojure -X:test                                        # the suite
-clojure -X:test-audit                                  # the suite, every invariant audited
 clojure -M:dev -e "(require 'recognitum.demo)(recognitum.demo/run)"
 clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"
 ```

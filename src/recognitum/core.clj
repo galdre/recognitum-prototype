@@ -120,13 +120,6 @@
                    [] idxs)]
     (when (seq fs) (checks-failed! model fs))))
 
-(def ^:dynamic *audit-invariant-keys*
-  "Inert. Dependencies are read off each check's arglist now, and the body cannot reach a
-  field the arglist does not name, so there is no declaration left to disagree with the
-  code and nothing for an audit to find. Kept only until the `:test-audit` alias and the
-  fixture that binds this go with it."
-  false)
-
 (defn entries-of [o]
   (cond (map? o)                     (seq o)
         (instance? java.util.Map o)  (seq (into {} o))

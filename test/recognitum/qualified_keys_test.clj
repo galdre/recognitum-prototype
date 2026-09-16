@@ -6,14 +6,11 @@
   else, and a map lifted out of one cannot be quietly poured into another."
   (:require
    [clojure.edn :as edn]
-   [clojure.test :refer [deftest is testing use-fixtures]]
-   [recognitum.audit-fixture :as fixture]
+   [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
    [recognitum.heist :as heist])
   (:import
    (recognitum.heist Heist)))
-
-(use-fixtures :once fixture/audit)
 
 (def job heist/italian-job)
 

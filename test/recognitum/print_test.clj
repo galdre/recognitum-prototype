@@ -2,12 +2,9 @@
   "What a validated value prints as, and what reading it back does."
   (:require
    [clojure.edn :as edn]
-   [clojure.test :refer [deftest is testing use-fixtures]]
-   [recognitum.audit-fixture :as fixture]
+   [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
    [recognitum.heist :as heist]))
-
-(use-fixtures :once fixture/audit)
 
 (def job heist/italian-job)
 

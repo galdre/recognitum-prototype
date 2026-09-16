@@ -1,16 +1,13 @@
 (ns recognitum.core-test
   "Reads and writes on a validated value: which checks run, which do not, and what they throw."
   (:require
-   [clojure.test :refer [deftest is testing use-fixtures]]
-   [recognitum.audit-fixture :as fixture]
+   [clojure.test :refer [deftest is testing]]
    [recognitum.heist :as heist]
    [recognitum.core :as rec])
   (:import
    (recognitum.heist Heist)))
 
 (def job heist/italian-job)
-
-(use-fixtures :once fixture/audit)
 
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing."

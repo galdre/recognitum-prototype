@@ -34,7 +34,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       propagate rather than becoming failures. Every entry point runs everything it was asked to
       and collects all failures, keyed by check name in declaration order, built with
       `array-map`.
-- [ ] **B4. Delete the audit.** `*audit-invariant-keys*`, `KeyAuditor`,
+- [x] **B4. Delete the audit.** `*audit-invariant-keys*`, `KeyAuditor`,
       `undeclared-invariant-key!`, `recognitum.audit-test`, `recognitum.audit-fixture`, the
       `:test-audit` alias, and the README section. Dependencies derived from arglists cannot be
       misdeclared, so there is nothing left to audit. Do this only once B1 lands — until then the
@@ -94,14 +94,14 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ## Deferred during implementation
 
-- [ ] **B1 — the audit is inert but not yet gone.** `*audit-invariant-keys*`,
+- [x] **B1 — the audit is inert but not yet gone.** `*audit-invariant-keys*`,
       `recognitum.audit-fixture`, the `:test-audit` alias and the README section all survive
       B1 and now do nothing: a check body cannot reach a field its arglist does not name, so
       there is no declaration left to disagree with the code. `recognitum.audit-test` was
       deleted with B1 rather than left broken, since every type it defines declares invariant
       `:keys`, which no longer exist; its coverage is replaced by
       `checks-test/a-check-body-cannot-read-a-field-it-did-not-name`, which shows the class of
-      bug does not compile rather than that a proxy catches it. B4 removes the rest.
+      bug does not compile rather than that a proxy catches it. B4 removed the rest.
 - [x] **B1 — declaration order is lost past eight checks.** The reader hands the macro a
       `PersistentHashMap` once a map literal passes eight pairs, so for a ninth check onward
       the order the macro sees is hash order, not source order. `SPEC.md`'s "the order the
@@ -117,6 +117,16 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       those away at once and has to say what happens then. Ruled in B3: the check is at fault
       and must be total over what it names, since checks have no ordering among themselves.
       `recognitum.heist`'s two cross-field checks now restate the shapes they need.
+- [ ] **B4 — the removal test forbids the word "audit" anywhere in the tree.**
+      `recognitum.audit-removal-test` scans every `.clj` under `src/`, `test/`, `dev/` and
+      `bench/`, plus `deps.edn` and `README.md`, for the audit's spellings, and two of its
+      assertions are broader than that: the word itself must not appear in `deps.edn` or
+      `README.md` at all. That is deliberate — the machinery survived B1 by being mentioned
+      nowhere but its own definition — but it means F1, rewriting the README, cannot use
+      "audit" in any sense without the suite failing. If a later document wants the word for
+      something unrelated, narrow those two assertions to the token list the file already
+      carries rather than deleting them.
+
 - [ ] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
       the `:invalid-field` / `:invariant-violated` errors.** None of those exist. F1 owns the
       README; this is a note that it is now wrong rather than merely dated.

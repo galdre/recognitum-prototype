@@ -20,13 +20,4 @@
   :test {:extra-paths ["dev" "test"]
          :extra-deps {io.github.cognitect-labs/test-runner
                       {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-         :exec-fn cognitect.test-runner.api/test}
-
-  ;; The same suite with *audit-invariant-keys* on, so every type it constructs is checked
-  ;; for invariants that read keys they do not declare.
-  ;;   clojure -X:test-audit
-  :test-audit {:extra-paths ["dev" "test"]
-               :extra-deps {io.github.cognitect-labs/test-runner
-                            {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-               :jvm-opts ["-Dvalidated-record.audit=true"]
-               :exec-fn cognitect.test-runner.api/test}}}
+         :exec-fn cognitect.test-runner.api/test}}}
