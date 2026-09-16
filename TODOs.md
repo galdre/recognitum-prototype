@@ -156,12 +156,12 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       removed. (b) `check` *establishes*: it skips what the verdict mask already says passes,
       and on a sealed value, where everything is established, returns `true` without running
       anything. The `:not-a-draft` refusal goes from every checking function; only `unsealed`
-      keeps it. (c) `re-check`, `re-check!`, `re-check-all`, `re-check-all!` run what they name
+      keeps it. (c) `recheck`, `recheck!`, `recheck-all`, `recheck-all!` run what they name
       regardless of the mask: on a draft the result sets or clears bits, so a passed IO check
       that fails against today's world is un-passed; on a sealed value they run and answer.
       (d) `passing` → `passed`, `holding` → `certificates`, matching the `meta` keys, and both
       answer for a sealed value too (every check, every certificate). (e) `check-all` and
-      `re-check-all` accept drafts of more than one type — one fetch pass per type, still
+      `recheck-all` accept drafts of more than one type — one fetch pass per type, still
       batched within each; a name resolves per type; an unknown certificate fails the whole
       call, as a single `check` already does; `:mixed-types` goes. (f) Because every answer is
       keyed by check name, a check that was blocked by its gate shows the blocking check's
