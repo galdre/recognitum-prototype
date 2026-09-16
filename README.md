@@ -8,15 +8,18 @@ not a `Heist`, and `assoc`-ing garbage into a `Heist` does not produce a `Heist`
 
 ## Defining a type
 
+`defrecord` shadows `clojure.core/defrecord`, so require the library under an alias rather than
+referring it — the two then coexist in one namespace without ceremony:
+
 ```clojure
-(require '[recognitum.core :refer [defvalidated drafting draft seal clean]])
+(require '[recognitum.core :as rec :refer [drafting draft seal clean]])
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
 (defn non-neg-int?     [x] (and (int? x) (not (neg? x))))
 (defn cuts-map?        [x] (and (map? x) (every? keyword? (keys x)) (every? non-neg-int? (vals x))))
 
-(defvalidated Heist
+(rec/defrecord Heist
   [^{:valid non-blank-string?} name
    ^{:valid crew-set?}         crew
    ^{:valid non-neg-int?}      take
@@ -120,7 +123,7 @@ layer takes and returns drafts, and `drafting` marks the boundary.
 
 ## Building a new value
 
-`defvalidated` generates the two constructors `defrecord` does, both validating:
+`defrecord` generates the two constructors `defrecord` does, both validating:
 
 ```clojure
 (->Heist "The Italian Job" #{:charlie :lyle :left-ear} 3000
@@ -204,7 +207,7 @@ An invariant that reads a key it did not declare is skipped on the write that br
 result seals anyway:
 
 ```clojure
-(defvalidated Bad
+(defrecord Bad
   [^{:valid nb?} name ^{:valid int?} a ^{:valid int?} b]
   [{:doc "a matches b" :keys #{:a} :pred (fn [m] (= (:a m) (:b m)))}])  ; reads :b, declares only :a
 
@@ -254,12 +257,25 @@ That tag is exactly the key `clojure.edn` wants, and `data-readers` supplies the
 a value that would have been rejected on construction — a bad one throws at read time rather
 than producing something that lies about itself.
 
-There is no global registration, deliberately. `clojure.edn` never consults `*data-readers*`;
-it takes `:readers` and nothing else, and it is the reader you want for anything arriving from
-outside the process. Registering globally is also unreliable: `clojure.main` thread-binds
+The library never registers anything globally, deliberately. `clojure.edn` takes `:readers` and
+consults nothing else, and it is the reader you want for anything arriving from outside the
+process. Registering from the macro would not work anyway: `clojure.main` thread-binds
 `*data-readers*`, so a registration made while loading a namespace is invisible to the thread
-that loaded it and visible to every other one. If you want a tag available to `read-string`,
-put it in your own `data_readers.clj`.
+that loaded it and visible to every other one.
+
+To make a tag available to plain `read` and `read-string`, put a `data_readers.clj` at the root
+of your classpath — `src/data_readers.clj`, or `dev/data_readers.clj` for a fixture. It is a map
+literal of tag to fully-qualified var, and pointing it at the validating constructor is the
+whole trick:
+
+```clojure
+{recognitum.heist/Heist recognitum.heist/map->Heist}
+```
+
+Clojure merges every such file into `*data-readers*` at startup. Two things to know: the entry
+is a *placeholder* until the namespace is loaded, so reading the tag before requiring
+`recognitum.heist` throws `Attempting to call unbound fn`; and `clojure.edn` ignores these files
+entirely, so `:readers` is still how you reach the safe reader.
 
 A draft prints as explicitly unreadable, because it is unvalidated working state and a form
 implying it round-trips would be claiming something untrue:

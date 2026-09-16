@@ -56,7 +56,7 @@
 
 ;;; --------------------------- "never written" is not "written to nil" ---------------------------
 
-(rec/defvalidated Note
+(rec/defrecord Note
   [^{:valid string?}                            title
    ^{:valid (fn [x] (or (nil? x) (string? x)))} body]
   [])

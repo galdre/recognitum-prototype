@@ -29,7 +29,7 @@ of these is worth solving. Counts come from `grep` over `src/` and `enterprise/b
 Anything introduced here coexists with malli rather than replacing it. Problems that follow:
 
 - Two vocabularies for "what is a valid X", and a rule for which one a given piece of data uses.
-- A schema and a validated type can drift: `::lib.schema/query` says one thing, a `defvalidated`
+- A schema and a validated type can drift: `::lib.schema/query` says one thing, a `defrecord`
   says another, nothing checks they agree.
 - `mu/defn` validates function *arguments*; this library validates *values*. A function taking a
   validated type still needs a malli schema to describe its other arguments, so both appear in the
@@ -129,7 +129,7 @@ times.
 `decode/normalize` appears 357 times across 60 files; `malli.transform` in 24 files.
 
 - Metabase normalizes data *as part of* validating it — keywordizing, kebab-casing, coercing.
-  `defvalidated` has no decode step: a predicate either accepts a value or rejects it.
+  `defrecord` has no decode step: a predicate either accepts a value or rejects it.
 - The places that most want a validated type (API bodies, stored JSON columns) are exactly the
   places currently relying on decode-then-validate.
 
@@ -148,7 +148,7 @@ times.
 
 - A new module needs an entry in `.clj-kondo/config/modules/config.edn` with `:api`, `:uses`, a
   `:team`, and to survive `metabase.core.modules-test`.
-- `defvalidated` generates two types, several private vars, and `defmethod print-method` per
+- `defrecord` generates two types, several private vars, and `defmethod print-method` per
   model. clj-kondo will need to understand the macro or every generated name reads as unresolved.
 - Generated `def`s inside a macro may trip existing linters and the ratchets.
 - Cross-module use of a validated type means the type's namespace is in someone's `:uses`.

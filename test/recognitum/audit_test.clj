@@ -10,16 +10,16 @@
 (defn- err [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-(rec/defvalidated Honest
+(rec/defrecord Honest
   [^{:valid int?} a ^{:valid int?} b]
   [{:doc "a matches b" :keys #{:a :b} :pred (fn [m] (= (:a m) (:b m)))}])
 
-(rec/defvalidated Liar
+(rec/defrecord Liar
   ;; declares :a, reads :b
   [^{:valid int?} a ^{:valid int?} b]
   [{:doc "a matches b" :keys #{:a} :pred (fn [m] (= (:a m) (:b m)))}])
 
-(rec/defvalidated Sweeper
+(rec/defrecord Sweeper
   ;; asks for the whole map, so its reads cannot be attributed to particular keys
   [^{:valid int?} a ^{:valid int?} b]
   [{:doc "every value is positive" :keys #{:a} :pred (fn [m] (every? pos? (vals m)))}])

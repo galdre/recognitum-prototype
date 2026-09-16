@@ -82,6 +82,13 @@ rewrite themselves, and the message tells them how.
 - [x] `README.md` prose, the `:cannot-dissoc` row, the `clean` section, and the demo heading
       all match the behavior.
 
+### 5. `defvalidated` renamed to `defrecord` — SETTLED
+
+- [x] The macro generates the same three things `clojure.core/defrecord` does — the type,
+      `->Type`, `map->Type` — under the same names, so it now carries the name too. The library
+      excludes `clojure.core/defrecord`; consumers alias rather than refer, and both kinds
+      coexist in one file (`bench/recognitum/bench.clj` has one of each).
+
 ### 4. Printing and reading — SETTLED
 
 The old objection is void. `CONSIDERATIONS.md` §8 said omitting a reader literal "closes a

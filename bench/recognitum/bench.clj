@@ -4,7 +4,7 @@
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
-   [recognitum.core :refer [defvalidated drafting]]))
+   [recognitum.core :as rec :refer [drafting]]))
 
 ;;; ---- the validation code, used by BOTH implementations ----
 
@@ -22,7 +22,7 @@
 
 ;;; ---- library version ----
 
-(defvalidated BenchHeist
+(rec/defrecord BenchHeist
   [^{:valid non-blank-string?} name
    ^{:valid crew-set?}         crew
    ^{:valid non-neg-int?}      take

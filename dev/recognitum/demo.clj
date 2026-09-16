@@ -1,14 +1,17 @@
 (ns recognitum.demo
   (:require
+   [clojure.edn :as edn]
    [recognitum.heist :as heist]
-   [recognitum.core :as v :refer [drafting]]))
+   [recognitum.core :as rec :refer [drafting]]))
 
 (defn- show [label f]
   (print (format "%-50s" label))
   (try
     (println " =>" (pr-str (f)))
     (catch clojure.lang.ExceptionInfo e
-      (println " THREW" (name (:error (ex-data e) :unknown)) "|" (ex-message e)))))
+      (println " THREW" (name (:error (ex-data e) :unknown)) "|" (ex-message e)))
+    (catch Throwable e
+      (println " THREW" (.getSimpleName (class e)) "|" (ex-message e)))))
 
 (defn run []
   (let [job heist/italian-job]
@@ -55,7 +58,7 @@
           (fn [] (drafting [h job] (-> h (heist/promote :lyle 250) (heist/rename "The Sequel")))))
     (show "what the inner call returns when nested"
           (fn [] (drafting [h job] (let [inner (heist/promote h :lyle 250)]
-                                     (println "\n    inner is a draft?" (v/draft? inner))
+                                     (println "\n    inner is a draft?" (rec/draft? inner))
                                      inner))))
 
     (println "\n--- reduce over changesets ---")
@@ -69,4 +72,26 @@
           (fn [] (drafting [h job]
                    (-> h (assoc :crew (conj (:crew h) :mole))
                          (assoc :cuts (assoc (:cuts h) :mole 400))))))
+    (println "\n--- constructors, both validating ---")
+    (show "(heist/->Heist \"Job\" #{:a} 10 {:a 10})" (fn [] (heist/->Heist "Job" #{:a} 10 {:a 10})))
+    (show "->Heist with a bad field" (fn [] (heist/->Heist "" #{:a} 10 {:a 10})))
+    (show "map->Heist missing a key" (fn [] (heist/map->Heist {:name "Job" :crew #{:a} :take 10})))
+
+    (println "\n--- printing names the reader you need ---")
+    (show "(pr-str job)" (fn [] (pr-str job)))
+    (show "a draft says it is unreadable" (fn [] (pr-str (rec/draft job))))
+
+    (println "\n--- reading, via clojure.edn and explicit :readers ---")
+    (show "edn round trip" (fn [] (= job (edn/read-string {:readers (rec/data-readers)} (pr-str job)))))
+    (show "a literal that fails its predicate"
+          (fn [] (edn/read-string {:readers (rec/data-readers)}
+                                  "#recognitum.heist/Heist{:name \"\" :crew #{:a} :take 1 :cuts {:a 1}}")))
+    (show "a literal that breaks an invariant"
+          (fn [] (edn/read-string {:readers (rec/data-readers)}
+                                  "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 9 :cuts {:a 1}}")))
+
+    (println "\n--- reading, via dev/data_readers.clj and plain read-string ---")
+    (show "tag registered at startup?" (fn [] (contains? *data-readers* 'recognitum.heist/Heist)))
+    (show "(read-string (pr-str job))" (fn [] (= job (read-string (pr-str job)))))
+    (show "clojure.edn ignores data_readers.clj" (fn [] (edn/read-string (pr-str job))))
     (println)))

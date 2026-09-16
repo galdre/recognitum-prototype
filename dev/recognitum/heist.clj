@@ -5,14 +5,14 @@
   which is the whole reason drafts exist."
   (:require
    [clojure.string :as str]
-   [recognitum.core :refer [defvalidated drafting]]))
+   [recognitum.core :as rec :refer [drafting]]))
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
 (defn non-neg-int?     [x] (and (int? x) (not (neg? x))))
 (defn cuts-map?        [x] (and (map? x) (every? keyword? (keys x)) (every? non-neg-int? (vals x))))
 
-(defvalidated Heist
+(rec/defrecord Heist
   [^{:valid non-blank-string?} name
    ^{:valid crew-set?}         crew
    ^{:valid non-neg-int?}      take

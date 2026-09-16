@@ -7,6 +7,7 @@
   update pass through states no single write could produce. [[seal]] closes the gap —
   what it returns is validated exactly as if every predicate and every invariant had
   been rerun."
+  (:refer-clojure :exclude [defrecord])
   (:require
    [potemkin :as p]))
 
@@ -306,7 +307,7 @@
 
 ;;; ------------------------------------------ Macro ------------------------------------------
 
-(defmacro defvalidated
+(defmacro defrecord
   "Define a validated map-like type with a real field per declared key, so reads and writes
   are field access rather than map lookups. Each field carries a `^{:valid pred}` predicate;
   `invariants` is a vector of {:doc :keys :pred} maps."

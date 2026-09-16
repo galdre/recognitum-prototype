@@ -127,7 +127,7 @@
 
 (defn- counted [pred] (fn [m] (swap! runs inc) (pred m)))
 
-(rec/defvalidated Counted
+(rec/defrecord Counted
   [^{:valid int?} a ^{:valid int?} b ^{:valid int?} c]
   [{:doc "a is below b" :keys #{:a :b} :pred (counted (fn [m] (< (:a m) (:b m))))}])
 
