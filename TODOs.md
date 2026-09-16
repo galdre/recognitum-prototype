@@ -175,7 +175,10 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       with a `countdown` method that recurs, on both forms. (b) A certificate accepts any
       collection of check names and duplicates are removed at macroexpansion; documentation
       shows the set form everywhere. Test that `[::a ::a ::b]` and `#{::a ::b}` yield the same
-      certificate. Do not edit TODOs.md or SPEC.md; report.
+      certificate. (c) Delete `test/recognitum/audit_removal_test.clj` outright — it forbids
+      the English word "audit" in the README, and the surface test and dependency tests already
+      guard everything it guarded. Remove any reference to it elsewhere. Do not edit TODOs.md
+      or SPEC.md; report.
 
 ### H — later, low priority
 
@@ -395,7 +398,7 @@ so far, or the options if it is still open. None is implemented.
       those away at once and has to say what happens then. Ruled in B3: the check is at fault
       and must be total over what it names, since checks have no ordering among themselves.
       `recognitum.heist`'s two cross-field checks now restate the shapes they need.
-- [ ] **B4 — the removal test forbids the word "audit" anywhere in the tree.**
+- [x] **B4 — the removal test forbids the word "audit" anywhere in the tree.**
       `recognitum.audit-removal-test` scans every `.clj` under `src/`, `test/`, `dev/` and
       `bench/`, plus `deps.edn` and `README.md`, for the audit's spellings, and two of its
       assertions are broader than that: the word itself must not appear in `deps.edn` or
@@ -404,7 +407,7 @@ so far, or the options if it is still open. None is implemented.
       "audit" in any sense without the suite failing. If a later document wants the word for
       something unrelated, narrow those two assertions to the token list the file already
       carries rather than deleting them. F1 rewrote the README end to end without wanting
-      the word, so nothing was narrowed; the constraint stands for whoever does want it.
+      the word, so nothing was narrowed; the constraint stands for whoever does want it. Ruled by galdre 2026-09-16: delete the test. Folded into step I2.
 
 - [x] **D1 — `passing` answers for a draft only, and D4 will want it for both.**
       `SPEC.md`'s uniform `meta` says a sealed value reports the same
