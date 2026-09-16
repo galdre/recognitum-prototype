@@ -120,15 +120,32 @@ layer takes and returns drafts, and `revising` marks the boundary.
 
 ## Building a new value
 
-Construction has the same problem as updating — the first field you set already violates the
-invariants — so it uses the same tool. Pass the type instead of a value:
+`defvalidated` generates the two constructors `defrecord` does, both validating:
+
+```clojure
+(->Heist "The Italian Job" #{:charlie :lyle :left-ear} 3000
+         {:charlie 1000 :lyle 1000 :left-ear 1000})
+
+(map->Heist {:name "The Italian Job"
+             :crew #{:charlie :lyle :left-ear}
+             :take 3000
+             :cuts {:charlie 1000 :lyle 1000 :left-ear 1000}})
+```
+
+Both run every field predicate and every invariant, because construction touches every field.
+`map->Heist` additionally rejects a key the type does not declare, and reports a key it declares
+and the map omits as `:missing-field`.
+
+There is no unvalidated constructor. The positional factory `deftype` would otherwise intern is
+replaced, and the draft type's is unmapped — a `Heist` cannot be brought into existence except
+through a check.
+
+When the fields are not all in hand at once, build it the way you would update it. Pass the type
+instead of a value:
 
 ```clojure
 (revising [h Heist]
-  (merge h {:name "The Italian Job"
-            :crew #{:charlie :lyle :left-ear}
-            :take 3000
-            :cuts {:charlie 1000 :lyle 1000 :left-ear 1000}}))
+  (reduce apply-fragment h fragments))
 ```
 
 A field you never set is reported at seal as `:missing-field`. Note that `nil` is a legal value

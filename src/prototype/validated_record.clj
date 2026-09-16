@@ -439,6 +439,26 @@
             :draft-seal       (fn [~dvsym] (new ~tname ~@dfields ~(dfield mtasym)))}))
        (register! ~tname ~model-sym)
        (register-draft! ~dname ~model-sym)
+
+       ;; `deftype` interns a positional factory that checks nothing -- a public back door
+       ;; straight through every guarantee the type exists to make. Replace it with one that
+       ;; validates, and unmap the draft's, which nothing outside this file should be calling.
+       (defn ~(symbol (str "->" tname))
+         ~(str "Construct a validated " tname " from its fields, in declaration order.")
+         [~@fsyms]
+         ~@(map (fn [k f] `(check-value! ~model-sym ~k ~f)) ks fsyms)
+         (let [~hsym (new ~tname ~@fsyms nil)]
+           (check-invariants! ~model-sym ~hsym nil)
+           ~hsym))
+
+       (defn ~(symbol (str "map->" tname))
+         ~(str "Construct a validated " tname " from a map holding exactly its declared keys.\n"
+               "  A key it does not declare is an error; a key it declares and the map omits is\n"
+               "  reported as :missing-field, so `nil` and absent stay distinct.")
+         [~msym]
+         (seal ~model-sym (reduce-kv assoc ((:draft-empty ~model-sym) nil) ~msym)))
+
+       (ns-unmap *ns* '~(symbol (str "->" dname)))
        (defmethod print-method ~dname [x# ^java.io.Writer w#]
          (.write w# (str "#" '~tname "/draft" (into (sorted-map) x#))))
        (defmethod print-method ~tname [x# ^java.io.Writer w#]

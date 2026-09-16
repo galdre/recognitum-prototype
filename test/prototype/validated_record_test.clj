@@ -76,6 +76,36 @@
   (is (identical? job (dissoc job :getaway-car))
       "a validated value cannot be holding one, so there is nothing to remove"))
 
+;;; --------------------------------- generated constructors ---------------------------------
+
+(deftest positional-constructor-validates
+  (let [h (heist/->Heist "Job" #{:a} 10 {:a 10})]
+    (is (instance? Heist h))
+    (is (= {:name "Job" :crew #{:a} :take 10 :cuts {:a 10}} (into {} h))))
+  (is (= ::v/invalid-field      (:error (err #(heist/->Heist "" #{:a} 10 {:a 10})))))
+  (is (= ::v/invariant-violated (:error (err #(heist/->Heist "Job" #{:a} 99 {:a 10}))))
+      "every invariant runs, since construction touches every field")
+  (testing "it takes the declared fields and nothing else"
+    (is (= '([name crew take cuts])
+           (:arglists (meta (resolve 'prototype.heist/->Heist)))))))
+
+(deftest map-constructor-validates
+  (is (instance? Heist (heist/map->Heist {:name "Job" :crew #{:a} :take 10 :cuts {:a 10}})))
+  (is (= ::v/missing-field
+         (:error (err #(heist/map->Heist {:name "Job" :crew #{:a} :take 10})))))
+  (is (= ::v/extraneous-keys
+         (:error (err #(heist/map->Heist {:name "Job" :crew #{:a} :take 10 :cuts {:a 10} :x 1})))))
+  (is (= ::v/invalid-field
+         (:error (err #(heist/map->Heist {:name "" :crew #{:a} :take 10 :cuts {:a 10}}))))))
+
+(deftest there-is-no-unvalidated-back-door
+  ;; deftype interns a positional factory that checks nothing. If it survives, every guarantee
+  ;; in this library is one function call away from being bypassed.
+  (is (= ::v/invalid-field (:error (err #(heist/->Heist "" :not-a-set -999 "garbage"))))
+      "the forging attempt that used to succeed")
+  (is (nil? (resolve 'prototype.heist/->HeistDraft))
+      "and the draft type's raw factory is unmapped"))
+
 ;;; ------------------------------------- merge is atomic -------------------------------------
 
 (deftest merge-applies-every-entry-before-checking-invariants
