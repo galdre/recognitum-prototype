@@ -104,20 +104,47 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       or partial `keys` on a draft are changed to the new behaviour, not deleted. The IO gate is
       unchanged.
 
-- [ ] **G2. Emit a record, not a map type.** Replace `potemkin/def-map-type` for both generated
-      types with a hand-emitted type that behaves as `clojure.core/defrecord` does: implements
-      `clojure.lang.IRecord` so `record?` is true and `clojure.walk` rebuilds it with `conj`
-      rather than degrading it through `empty`; type-aware `equiv`, `equals`, `hasheq` and
-      `hashCode` — a value equals another value of the same type with the same fields, never a
-      plain map, never another type, and a draft never equals a sealed value; `empty` throws
-      `UnsupportedOperationException` as `defrecord`'s does; `java.io.Serializable`. Everything
-      the map surface provides today stays: `IPersistentMap`, `Associative`, `ILookup`, the
-      `IKeywordLookup` thunks, `Seqable`, `Counted`, `Iterable`, `IObj`, `print-method`.
-      Acceptance: `(clojure.walk/postwalk identity heist)` returns a `Heist`; the six rows in
-      `SPEC.md`'s defects table read as `defrecord`'s column. This is the largest single step —
-      it replaces the foundation both types stand on — so test the map surface exhaustively
-      against a `defrecord` twin before touching the emission. If potemkin is no longer
-      referenced afterwards, drop it from `deps.edn`. Re-run the bench; if any row moves by more
+- [ ] **G2. A record template of our own.** Every defect in `SPEC.md`'s baseline table is one
+      design decision in `potemkin.collections/AbstractMap`, which both generated types inherit:
+      it implements `clojure.lang.MapEquivalence` (the marker `APersistentMap.equiv` consults, so
+      a plain map equals us from *its* side and no `equiv` of ours can change that), its `equiv`
+      is type-blind, its `hasheq` is the map's, its `empty` returns an empty instance, and it
+      implements neither `IRecord` nor `Serializable`. Not a bug in potemkin — right for a
+      map-like thing, wrong for a record.
+
+      Write `AbstractRecord`, our own `potemkin.types/def-abstract-type` template on the same
+      six-method contract the macro already targets (`get assoc dissoc keys meta with-meta`),
+      and point both emissions at it in place of `AbstractMap`. Potemkin stays for the template
+      mechanism; only the template is ours. In it: no `MapEquivalence`; `clojure.lang.IRecord`
+      and `java.io.Serializable`; `equiv` and `equals` require the same class before comparing
+      entries — never a plain map, never another type, and a draft never equals its sealed
+      value; `hasheq` and `hashCode` mix the class in as `clojure.core/emit-defrecord` does
+      (read it for the recipe); `empty` throws `UnsupportedOperationException` as a record's
+      does. Everything else `AbstractMap` provides stays — `IPersistentMap`, `Associative`,
+      `ILookup`, `Counted`, `Seqable`, `IFn`, `IObj`, `java.util.Map`, iteration — and the
+      macro's own `IKeywordLookup` thunks and `print-method` are untouched.
+
+      **The draft and the sealed type get identical treatment.** Whatever one becomes, the
+      other becomes; the only differences between them are the contractual ones `SPEC.md`
+      already names. "Record" here means the `IRecord` marker and record *behaviour*, not
+      `clojure.core/defrecord`, whose write path cannot be overridden.
+
+      Tests first, and the first test is a `defrecord` twin: pin every map-surface operation
+      against a real `defrecord` holding the same fields — `get`, keyword lookup,
+      destructuring, `keys`/`vals`/`seq`/`count`/`contains?`/`find`, `into {}`, `assoc`
+      returning the same type, `meta`/`with-meta`, `=` in both directions against a map,
+      another type and each other, `hash`, `record?`, `empty`, `Serializable`,
+      `clojure.walk/postwalk` both as identity and editing a field, and the `java.util.Map`
+      methods. Where the spec deliberately departs from `defrecord` (`dissoc` refused, an
+      undeclared key refused on a sealed value), pin our behaviour and say so in the test name.
+      Existing tests that leaned on map-equality between a draft and its sealed value, or
+      between a value and a literal map, change to the new behaviour — not deleted.
+
+      Acceptance: the six rows in `SPEC.md`'s defects table read as `defrecord`'s column;
+      `(clojure.walk/postwalk identity heist)` returns a `Heist`; `(= (draft x) x)` is false.
+      The sealed type's public Java constructor stays as it is — `deftype` offers no
+      constructor hook, and it is the same interop-level standard `defrecord` accepts; anyone
+      constructing one by hand has to work at it. Re-run the bench; if any row moves by more
       than the recorded spread, re-record the README table with provenance.
 
 ### F — reconcile
