@@ -62,13 +62,42 @@
   (:require
    [potemkin :as p]))
 
+(def ^:private core-ns
+  "This namespace's own name, for the expansions below to spell an internal with. Read here
+  rather than where it is used, because `*ns*` inside a macro is the namespace expanding it."
+  (ns-name *ns*))
+
+(defn- internal-var
+  "`(var recognitum.core/nm)`, for generated code to reach an internal by."
+  [nm]
+  (list 'var (symbol (str core-ns) (name nm))))
+
+(defn- internal
+  "The form generated code refers to an internal of this namespace by: the var, dereferenced.
+
+  Everything `SPEC.md` does not name is private, and a macro expands into somebody else's
+  namespace -- where a qualified symbol naming a private var does not compile. That refusal
+  is the whole of what privacy is worth here: it is why `record-verdict!` being private
+  closes the door on writing a draft's verdict mask, and why `model-of` being private closes
+  the door on `:draft-seal`, which turns a draft into a sealed value and runs nothing.
+
+  The var itself stays reachable, as every var does -- privacy in Clojure is advisory -- so
+  the expansion reaches it, emitting `@#'recognitum.core/checks-failed!` where it would
+  otherwise have written the name. What that costs is one `Var.deref` per call site against
+  a `getRawRoot` for a public name, which is not what any of these calls are waiting on.
+
+  The alternative is a public name for every helper a generated `assoc` happens to call --
+  fifty-odd of them, two of which are a way past every check on the type."
+  [nm]
+  (list `deref (internal-var nm)))
+
 (defonce ^:private registry (atom {}))
 
-(defn register! "Associate a class with its model map." [cls model] (swap! registry assoc cls model))
+(defn- register! "Associate a class with its model map." [cls model] (swap! registry assoc cls model))
 
 (defonce ^:private readers (atom {}))
 
-(defn register-reader! "Associate a print tag with its validating map constructor." [tag ctor]
+(defn- register-reader! "Associate a print tag with its validating map constructor." [tag ctor]
   (swap! readers assoc tag ctor))
 
 (defn data-readers
@@ -89,17 +118,17 @@
 
 ;;; ------------------------------------------ Checks ------------------------------------------
 
-(defn unknown-key! [model k]
+(defn- unknown-key! [model k]
   (throw (ex-info (format "%s has no field %s" (:name model) (pr-str k))
                   {:error ::unknown-field :record (:name model) :key k
                    :declared (:field-order model)})))
 
-(defn declared-field!
+(defn- declared-field!
   "Throw unless `k` is a field this type declares."
   [model k]
   (when-not (contains? (:field-set model) k) (unknown-key! model k)))
 
-(defn dep-values
+(defn- dep-values
   "What a check was given, keyed by the dependency it was given for, in arglist order.
   Built only where a failure is about to be reported -- the passing path never has to say.
 
@@ -112,7 +141,7 @@
            (mapcat (fn [d] [d (if (contains? ios d) (get cache d) (get x d))])
                    (:deps check)))))
 
-(defn failure-entry
+(defn- failure-entry
   "The `[check-name report]` pair for a check that did not return `true`. `ret` is what it
   returned, which is the failure data; `vals` is what it was given."
   [check ret vals]
@@ -122,7 +151,7 @@
   (format "%s%s: given %s it returned %s"
           cname (if doc (str " (" doc ")") "") (pr-str values) (pr-str returned)))
 
-(defn checks-failed!
+(defn- checks-failed!
   "Throw one `:check-failed` carrying every failure in `fs`, which is [[failure-entry]] pairs
   in the order the checks ran -- declaration order, everywhere they are run from. `fs` may
   hold `nil` where a check passed, so a call site can emit one expression per check and let
@@ -170,7 +199,7 @@
                      :indexes (vec (keys fs))
                      :failures fs}))))
 
-(defn checks-for
+(defn- checks-for
   "The indices of the checks naming any of `ks`, in declaration order."
   [model ks]
   (into (sorted-set) (mapcat (:index model)) ks))
@@ -181,10 +210,10 @@
   [model i]
   (seq (:io (nth (:checks model) i))))
 
-(defn pure-of "Those of `idxs` that reach no io-dep." [model idxs]
+(defn- pure-of "Those of `idxs` that reach no io-dep." [model idxs]
   (filterv #(not (io-bound? model %)) idxs))
 
-(defn io-of "Those of `idxs` that reach one." [model idxs]
+(defn- io-of "Those of `idxs` that reach one." [model idxs]
   (filterv #(io-bound? model %) idxs))
 
 (defn- split-pending
@@ -249,7 +278,7 @@
       (batch-answer! model d ((:run-batch model) j tuples) tuples)
       (into {} (map (fn [t] [t ((:call-io model) j t)])) tuples))))
 
-(defn fetch-io-all
+(defn- fetch-io-all
   "Fetch, for every value in `xs`, every io-dep the checks at its own entry of `idxss` name,
   and answer with a vector of caches index-aligned with `xs` -- each one io-dep name -> what
   that io-dep returned for that value.
@@ -289,7 +318,7 @@
      (vec (repeat (count xs) {}))
      (sort (reduce into #{} needs)))))
 
-(defn fetch-io
+(defn- fetch-io
   "[[fetch-io-all]] for one value: the io-deps the checks at `idxs` name, fetched in the
   graph's order and answered as one cache. A group of one, so that a call spanning values
   and a call spanning one go through the same fetches."
@@ -320,7 +349,7 @@
   (let [fs (failures-of model run x idxs cache)]
     (when (seq fs) (checks-failed! model fs))))
 
-(defn run-io-checks!
+(defn- run-io-checks!
   "Phase two for a value that is not a draft: fetch what the checks at `idxs` name and run
   them against it.
 
@@ -329,7 +358,7 @@
   [model x idxs]
   (run-group! model (:run-sealed model) x idxs (fetch-io model x idxs)))
 
-(defn run-checks!
+(defn- run-checks!
   "Run the checks at `idxs` against `x` and throw once with every failure.
 
   Two phases, because shape gates IO. Everything pure runs first and ungated; if any of it
@@ -345,13 +374,13 @@
     (run-group! model run x pure {})
     (when (seq io) (run-group! model run x io (fetch-io model x io)))))
 
-(defn entries-of [o]
+(defn- entries-of [o]
   (cond (map? o)                     (seq o)
         (instance? java.util.Map o)  (seq (into {} o))
         (and (vector? o) (= 2 (count o))) [o]
         :else (throw (ex-info "cannot conj this onto a validated value" {:value o}))))
 
-(defn no-dissoc!
+(defn- no-dissoc!
   "Declared fields are permanent, so `dissoc` refuses them; where a check admits nil,
   `(assoc m k nil)` is how absence is spelled. Undeclared keys dissoc normally."
   [model k]
@@ -366,7 +395,7 @@
   (into [] (comp (map (:checks model)) (filter (comp seq :io)) (map :name))
         (get (:index model) k)))
 
-(defn io-limited!
+(defn- io-limited!
   "Refuse a direct write of `ks` to a sealed value of an `:io-limited` type.
 
   A check that queries a database, run on every bare `assoc`, means business logic makes a
@@ -399,7 +428,7 @@
                                 (list `drafting '[x m] (list 'merge 'x 'other))
                                 (list `drafting '[x m] (list 'assoc 'x (first ks) 'v)))}))))
 
-(defn io-limited-write!
+(defn- io-limited-write!
   "Throw where a merge onto a sealed value writes a field its type keeps for [[drafting]].
 
   Every offending key at once, in field declaration order, because a merge is one write:
@@ -412,7 +441,7 @@
     (when (some lim written)
       (io-limited! model (filterv #(and (lim %) (written %)) (:field-order model))))))
 
-(defn qualify-keys
+(defn- qualify-keys
   "Rewrite a bare keyword naming a declared field of `model` into the type's own namespace,
   and leave every other key exactly as it was written.
 
@@ -434,7 +463,7 @@
         given  (reduce-kv (fn [acc k v] (if (simple-keyword? k) acc (assoc acc k v))) {} m)]
     (conj bare given)))
 
-(defn printable
+(defn- printable
   "The map a sealed value prints as. A sealed value holds nothing but its declared fields,
   every one of them qualified by the namespace the print tag already names, so repeating
   that namespace on every key would be noise."
@@ -443,16 +472,16 @@
 
 ;;; ------------------------------------------ Draft ------------------------------------------
 
-(def unset
+(def ^:private unset
   "Marks a declared field a draft has never been written to, so `nil` stays a legal value."
   (Object.))
 
 (defonce ^:private draft-registry (atom {}))
 
-(defn register-draft! "Associate a draft class with its model map." [cls model]
+(defn- register-draft! "Associate a draft class with its model map." [cls model]
   (swap! draft-registry assoc cls model))
 
-(def ^:dynamic *owner*
+(def ^:private ^:dynamic *owner*
   "Token identifying the outermost `drafting` currently on the stack, or nil outside one.
   A draft records the token in force when it was created, which is how a nested `drafting`
   tells a draft an enclosing form owns from a free one it must adopt and seal itself."
@@ -460,7 +489,7 @@
 
 (defn draft? [x] (contains? @draft-registry (class x)))
 
-(defn draft-model [x] (@draft-registry (class x)))
+(defn- draft-model [x] (@draft-registry (class x)))
 
 (defprotocol Verdicts
   "The record a draft keeps of which of its checks currently pass.
@@ -482,7 +511,17 @@
     fails now must stop counting as passed, and without a clear there would be no way to
     un-pass anything."))
 
-(defn draft-model!
+;; The protocol and both its methods are private. `seal` believes the mask, so a public
+;; name that writes one is a way past every check the type declares -- which is the whole
+;; of what narrowing this buys. The generated draft type still implements the protocol from
+;; the consumer's namespace: `deftype` resolves a spec name through `ns-resolve`, which does
+;; not consult privacy, and generated code reads the mask through [[internal]] as it reaches
+;; everything else here.
+(alter-meta! #'Verdicts assoc :private true)
+(alter-meta! #'verdict-mask assoc :private true)
+(alter-meta! #'record-verdict! assoc :private true)
+
+(defn- draft-model!
   "The model for the draft `d`, or a throw naming the operation that wanted one. Everything
   that reads or writes a verdict wants a draft specifically: the mask is the only thing that
   could answer, and only a draft has one."
@@ -517,7 +556,7 @@
   [d]
   (passed-in (draft-model! "passing" d) (verdict-mask d)))
 
-(defn check-id
+(defn- check-id
   "The index of the check named `cname` on this type -- the bit it owns in a draft's mask.
 
   A name the type does not declare is refused rather than answered: a check that does not
@@ -774,7 +813,7 @@
   [model d idxs]
   (first (establish-all model [d] [idxs] (fn [w] (missing-fields! model (val (first w)))))))
 
-(defn run-draft-checks!
+(defn- run-draft-checks!
   "Establish the checks at `idxs` against the draft `d` and throw once with every failure,
   keyed by check name in declaration order."
   [model d idxs]
@@ -877,7 +916,7 @@
   [d]
   (held-in (draft-model! "holding" d) (verdict-mask d)))
 
-(defn merged-meta
+(defn- merged-meta
   "`mta` with the library's own keys, `lib`, merged over the top.
 
   Over rather than under, deliberately. `with-meta` is public, so anything a caller could
@@ -889,7 +928,7 @@
   [mta lib]
   (if mta (conj mta lib) lib))
 
-(defn draft-meta
+(defn- draft-meta
   "What a draft answers [[clojure.core/meta]] with: its own metadata, with what its verdict
   mask says merged over the top.
 
@@ -1082,7 +1121,7 @@
     (insisted model ds rs)
     true))
 
-(defn model-of
+(defn- model-of
   "The model for `x`, whether `x` is a validated instance or the type itself."
   [x]
   (let [r @registry] (or (r (class x)) (r x))))
@@ -1113,14 +1152,14 @@
           (identical? model (@draft-registry c))))
     false))
 
-(defn owner-of [d] ((:draft-owner (draft-model d)) d))
+(defn- owner-of [d] ((:draft-owner (draft-model d)) d))
 
-(defn adopt
+(defn- adopt
   "Stamp `d` as owned by `token`, so nested `drafting` forms recognise it."
   ([d token] (adopt (draft-model d) d token))
   ([model d token] ((:draft-with-owner model) d token)))
 
-(defn open
+(defn- open
   "The draft a `drafting` works from, already stamped with `token`. A free draft is adopted; a
   validated value or a bare type is opened directly, which skips the extra allocation `adopt`
   would cost."
@@ -1142,7 +1181,7 @@
         ((:draft-from model) x *owner*))
       (throw (ex-info "not a validated value, draft, or registered type" {:value x})))))
 
-(defn extraneous
+(defn- extraneous
   "The keys `d` holds that its type does not declare."
   [d]
   (seq (keys ((:draft-ext (draft-model d)) d))))
@@ -1158,6 +1197,11 @@
 ;;; ------------------------------ Opting out of the seal ------------------------------
 
 (deftype Unsealed [wrapped])
+
+;; `deftype` interns a positional factory. [[unsealed]] is the constructor that asserts what
+;; it is wrapping, and a marker holding something that is not a draft would travel rather
+;; than fail where it was written.
+(alter-meta! #'->Unsealed assoc :private true)
 
 (defn unsealed
   "Mark the draft `d` as a return value that should *not* be sealed, the way `reduced`
@@ -1266,7 +1310,7 @@
     (when-not (identical? model (draft-model d)) (not-of-this-type! model d))
     d))
 
-(defn sealed-impl-return
+(defn- sealed-impl-return
   "What a protocol method installed on the *sealed* type hands back.
 
   The body ran against a draft, so a draft of this type is the value the method produced
@@ -1281,7 +1325,7 @@
     (identical? model (draft-model ret)) (seal model ret)
     :else                                ret))
 
-(defn draft-impl-return
+(defn- draft-impl-return
   "What a protocol method installed on the *draft* type hands back: the body's value as
   written. Only the [[unsealed]] marker is unwrapped, so a body means the same thing
   wherever it runs; there was nothing to opt out of here, and the draft keeps whatever
@@ -1289,7 +1333,7 @@
   [model ret]
   (if (instance? Unsealed ret) (opted-out model ret) ret))
 
-(defn owned-here?
+(defn- owned-here?
   "Is `x` a draft belonging to a `drafting` form already on the stack?"
   [x]
   (and (draft? x) (some? *owner*) (= *owner* (owner-of x))))
@@ -1303,21 +1347,26 @@
   draft be called standalone or nested without knowing which. A draft made outside any
   `drafting` is adopted and sealed here."
   [[sym init] & body]
+  ;; `binding` names its var by symbol and [[*owner*]] is private, so the frame is pushed
+  ;; and popped here -- which is what `binding` expands to anyway.
   `(let [init# ~init
-         dm#   (draft-model init#)]
-     (if (and dm# (some? *owner*) (= *owner* ((:draft-owner dm#) init#)))
+         dm#   (~(internal 'draft-model) init#)]
+     (if (and dm# (some? ~(internal '*owner*))
+              (= ~(internal '*owner*) ((:draft-owner dm#) init#)))
        (let [~sym init#] ~@body)
-       (let [model# (or dm# (model-of init#))
+       (let [model# (or dm# (~(internal 'model-of) init#))
              token# (Object.)]
          (when-not model#
            (throw (ex-info "not a validated value, draft, or registered type" {:value init#})))
-         (binding [*owner* token#]
-           (let [~sym (open model# init# token# (some? dm#))]
-             (seal model# (do ~@body))))))))
+         (push-thread-bindings {~(internal-var '*owner*) token#})
+         (try
+           (let [~sym (~(internal 'open) model# init# token# (some? dm#))]
+             (seal model# (do ~@body)))
+           (finally (pop-thread-bindings)))))))
 
 ;;; ------------------------------------------ Macro ------------------------------------------
 
-(defn unknown-dependency!
+(defn- unknown-dependency!
   "Report an arglist entry that names nothing this type declares."
   [{:keys [record what fields io-deps] cname :name} entry]
   (let [kind (name what)]
@@ -1345,7 +1394,7 @@
                             :io-deps io-deps}
                            what cname)))))
 
-(defn resolve-deps
+(defn- resolve-deps
   "Resolve one arglist into the dependency keys it names, in the order it names them.
 
   The arglist is the dependency declaration, so this is where a declaration either means
@@ -1369,7 +1418,7 @@
             :else            (unknown-dependency! ctx entry)))
         args))
 
-(defn reject-duplicate-names!
+(defn- reject-duplicate-names!
   "A keyword in an arglist means an io-dep and a check never appears in one, so the two
   namespaces only collide where a single name is declared in both places -- at which point
   the reader of an arglist could no longer tell what it is looking at. Refuse it."
@@ -1379,12 +1428,12 @@
                             tname (pr-str dup))
                     {:error ::duplicate-name :record tname :name dup}))))
 
-(def definition-sections
+(def ^:private definition-sections
   "The sections a definition map may hold, in the order `SPEC.md` writes them. Every one of
   them is optional; an absent section is an empty one."
   [:options :checks :io-deps :certificates])
 
-(def known-options
+(def ^:private known-options
   "What `:options` may hold, each taking a literal `true` or `false`. `:io-limited` is the
   only one so far -- the section exists so that there can be more.
 
@@ -1392,7 +1441,7 @@
   IO-bound check reads, so those writes go through `drafting` instead. See [[io-limited!]]."
   #{:io-limited})
 
-(defn parse-definition
+(defn- parse-definition
   "`defrecord`'s third position -> `{:options :checks :io-deps :certificates}`, with every
   section the form left out filled in empty, so nothing downstream has to ask whether it
   was written.
@@ -1455,7 +1504,7 @@
                         {:error ::malformed-option :record tname :option o :value v}))))
     sections))
 
-(def mask-width
+(def ^:private mask-width
   "How many checks a type may declare. A draft's verdict mask is one `long`, so a 65th check
   would alias the first: a passing check 0 would make check 64 count as passed, and a value
   could seal on a check that never ran. Refused where it is written rather than discovered
@@ -1466,7 +1515,7 @@
   parameters and Clojure allows 20."
   64)
 
-(defn reject-too-many-checks!
+(defn- reject-too-many-checks!
   "Refuse a type with more checks than one `long` has bits."
   [tname n]
   (when (> n mask-width)
@@ -1476,7 +1525,7 @@
                             tname n mask-width)
                     {:error ::too-many-checks :record tname :count n :limit mask-width}))))
 
-(defn parse-certificates
+(defn- parse-certificates
   "The `:certificates` section -> certificate name -> `{:checks :ids :mask}`, with the
   built-in [[every-check]] appended. `check-names` is the type's checks in declaration
   order, which is the order a certificate is read back in whatever order it was written.
@@ -1648,7 +1697,7 @@
       :else
       {:name dname :doc nil :args [(symbol (name dname))] :fn form})))
 
-(defn reject-field-collisions!
+(defn- reject-field-collisions!
   "An io-dep may not be spelled like a field key. Both are keywords, both end up in the same
   resolved dependency list, and a fetched value is looked up somewhere a field is not -- so
   one name for the two would make an arglist entry mean two things and a failure report
@@ -1658,7 +1707,7 @@
     (throw (ex-info (format "%s declares %s as both a field and an io-dep" tname (pr-str dup))
                     {:error ::duplicate-name :record tname :name dup}))))
 
-(defn order-io-deps!
+(defn- order-io-deps!
   "The io-deps in fetch order: everything an io-dep names comes before it, so ascending
   index is an order the fetches can actually run in.
 
@@ -1686,7 +1735,7 @@
     (doseq [d deps] (visit (:name d) []))
     @order))
 
-(def reserved-methods
+(def ^:private reserved-methods
   "The method names the generated types already carry, and must keep. A protocol method
   spelled one of these would replace the implementation that makes a value behave as a map,
   or the one holding a draft's verdicts: the form would still compile, and the type would
@@ -1694,7 +1743,7 @@
   '#{get assoc dissoc keys meta with-meta empty cons getLookupThunk
      verdict-mask record-verdict!})
 
-(defn parse-impls
+(defn- parse-impls
   "`defrecord`'s trailing forms -> `[:type sym]` and `[:method form]` pairs, in the order
   they were written.
 
@@ -1858,7 +1907,10 @@
   [tname fields definition & impls]
   (let [{:keys [options checks io-deps certificates]} (parse-definition tname definition)
         impl-forms (parse-impls tname impls)
-        model-sym (symbol (str tname "-model"))
+        ;; Private: the model carries `:draft-seal`, which turns a draft into a sealed
+        ;; value and runs nothing, so a public name for it in the defining namespace is the
+        ;; same back door `model-of` would be.
+        model-sym (with-meta (symbol (str tname "-model")) {:private true})
         fsyms     (mapv #(with-meta % nil) fields)
         ;; The defining namespace qualifies the keys, so a field named `name` is
         ;; `:this.ns/name` and two types sharing a field name share nothing else.
@@ -2029,7 +2081,8 @@
                             (if (= kind :type)
                               form
                               (let [[mname args & body] form]
-                                `(~mname ~args (draft-impl-return ~model-sym (do ~@body))))))
+                                `(~mname ~args
+                                   (~(internal 'draft-impl-return) ~model-sym (do ~@body))))))
                           impl-forms)
         ;; The sealed type wraps it: the receiver the body sees is a draft of the value,
         ;; owned by this call, so an enclosing-style `drafting` inside the body passes it
@@ -2041,13 +2094,16 @@
                                (let [[mname args & body] form
                                      recv (first args)]
                                  `(~mname [~(with-meta selfsym (meta recv)) ~@(rest args)]
-                                    (sealed-impl-return
+                                    (~(internal 'sealed-impl-return)
                                      ~model-sym
                                      (let [~toksym (Object.)]
-                                       (binding [*owner* ~toksym]
+                                       (push-thread-bindings
+                                        {~(internal-var '*owner*) ~toksym})
+                                       (try
                                          (let [~recv ((:draft-from ~model-sym)
                                                       ~selfsym ~toksym)]
-                                           ~@body))))))))
+                                           ~@body)
+                                         (finally (pop-thread-bindings)))))))))
                            impl-forms)
         ;; Run the checks at `idxs` over the expressions `argvs-of` gives for each -- locals
         ;; or direct field reads, so evaluating one twice costs nothing. Every check in the
@@ -2062,11 +2118,12 @@
                             rs   (mapv #(gensym (str "r" % "-")) idxs)]
                         `(let [~@(mapcat (fn [i r] [r `(~(cvar i) ~@(argvs-of i))]) idxs rs)]
                            (when-not (and ~@(map (fn [r] `(true? ~r)) rs))
-                             (checks-failed!
+                             (~(internal 'checks-failed!)
                               ~model-sym
                               [~@(map (fn [i r]
                                         `(when-not (true? ~r)
-                                           (failure-entry (nth (:checks ~model-sym) ~i) ~r
+                                           (~(internal 'failure-entry)
+                                            (nth (:checks ~model-sym) ~i) ~r
                                                           (array-map
                                                            ~@(interleave (deps-of i)
                                                                          (argvs-of i))))))
@@ -2081,7 +2138,7 @@
                     (let [io (io-idxs idxs)]
                       (if (seq io)
                         `(let [~newsym ~xform]
-                           (run-io-checks! ~model-sym ~newsym ~io)
+                           (~(internal 'run-io-checks!) ~model-sym ~newsym ~io)
                            ~newsym)
                         xform)))]
     `(do
@@ -2109,45 +2166,46 @@
                               ;; for is one every check passed on, so there is nothing to
                               ;; defer and nothing worth fetching for a write that is not
                               ;; going to happen.
-                              `(io-limited! ~model-sym [~k])
+                              `(~(internal 'io-limited!) ~model-sym [~k])
                               `(do ~(run-group (get index k)
                                                (fn [i] (map (fn [d]
                                                               (if (= d k) vsym (key->sym d)))
                                                             (deps-of i))))
                                    ~(with-io (get index k) (ctor-with j vsym))))])
                        (range n) ks)
-             (unknown-key! ~model-sym ~ksym)))
+             (~(internal 'unknown-key!) ~model-sym ~ksym)))
 
          ;; A validated value cannot hold an undeclared key, so dissoc of one is the
          ;; ordinary map no-op. Only the declared fields are permanent.
          (~'dissoc [this# ~ksym]
            (case ~ksym
-             ~(apply list ks) (no-dissoc! ~model-sym ~ksym)
+             ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
              this#))
          (~'keys [_#] ~ks)
          ;; The library's keys over the caller's, so nothing a caller writes can claim more
          ;; than the value can show for itself. Here what it shows is constant: a sealed
          ;; value is one every check passed on.
-         (~'meta [_#] (merged-meta ~mtasym ~sealed-meta))
+         (~'meta [_#] (~(internal 'merged-meta) ~mtasym ~sealed-meta))
          (~'with-meta [_# ~mta2sym] (new ~tname ~@fsyms ~mta2sym))
 
          ;; one allocation for the whole merge, each applicable check once at the end
          (~'cons [_# ~osym]
-           (let [~essym (entries-of ~osym)
+           (let [~essym (~(internal 'entries-of) ~osym)
                  ~ovsym (reduce (fn [~accsym [~ksym ~vsym]]
-                                  (declared-field! ~model-sym ~ksym)
+                                  (~(internal 'declared-field!) ~model-sym ~ksym)
                                   (assoc ~accsym ~ksym ~vsym))
                                 {} ~essym)
                  ;; After the reduce, so a key the type does not declare is reported as
                  ;; one: `drafting` would not take it either. Only where the option
                  ;; reaches something, so a type without one emits nothing here.
                  ~@(when (seq limited)
-                     [(gensym "limited") `(io-limited-write! ~model-sym (keys ~ovsym))])
+                     [(gensym "limited")
+                      `(~(internal 'io-limited-write!) ~model-sym (keys ~ovsym))])
                  ~hsym  (new ~tname
                              ~@(map (fn [k f] `(get ~ovsym ~k ~f)) ks fsyms)
                              ~mtasym)]
-             (run-checks! ~model-sym (:run-sealed ~model-sym) ~hsym
-                          (checks-for ~model-sym (map first ~essym)))
+             (~(internal 'run-checks!) ~model-sym (:run-sealed ~model-sym) ~hsym
+              (~(internal 'checks-for) ~model-sym (map first ~essym)))
              ~hsym))
 
          ;; A keyword call site caches one of these and reads the field directly, the way a
@@ -2174,7 +2232,8 @@
        (p/def-map-type ~dname ~(into fsyms [extsym vdfield ownsym mtasym])
          (~'get [_# ~ksym ~dsym]
            (case ~ksym
-             ~@(mapcat (fn [[k f]] [k `(if (identical? ~f unset) ~dsym ~f)]) (map vector ks fsyms))
+             ~@(mapcat (fn [[k f]] [k `(if (identical? ~f ~(internal 'unset)) ~dsym ~f)])
+                       (map vector ks fsyms))
              (get ~extsym ~ksym ~dsym)))
          ;; A write seeds the new draft's verdicts from this one's, clearing exactly the
          ;; checks naming the field written -- not the ones whose values moved, which is a
@@ -2189,21 +2248,24 @@
              ~(dctor fsyms `(assoc ~extsym ~ksym ~vsym) vdsym ownsym mtasym)))
          (~'dissoc [this# ~ksym]
            (case ~ksym
-             ~(apply list ks) (no-dissoc! ~model-sym ~ksym)
+             ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
              (if (contains? ~extsym ~ksym)
                ~(dctor fsyms `(dissoc ~extsym ~ksym) vdsym ownsym mtasym)
                this#)))
          (~'keys [_#]
-           (concat (cond-> [] ~@(mapcat (fn [[k f]] [`(not (identical? ~f unset)) `(conj ~k)])
+           (concat (cond-> [] ~@(mapcat (fn [[k f]]
+                                          [`(not (identical? ~f ~(internal 'unset)))
+                                           `(conj ~k)])
                                         (map vector ks fsyms)))
                    (keys ~extsym)))
          ;; The same two keys a sealed value answers with, read off the mask rather than
          ;; fixed: on a draft they are what has actually been established. Merged over the
          ;; caller's metadata for the same reason, and the caller's own keys survive.
-         (~'meta [_#] (draft-meta ~model-sym ~vdsym ~mtasym))
+         (~'meta [_#] (~(internal 'draft-meta) ~model-sym ~vdsym ~mtasym))
          (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym vdsym ownsym mta2sym))
          (~'cons [this# ~osym]
-           (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym)) this# (entries-of ~osym)))
+           (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym))
+                   this# (~(internal 'entries-of) ~osym)))
 
          ;; The only thing about a draft that changes in place, and the only two operations
          ;; allowed to change it.
@@ -2322,7 +2384,8 @@
                            nil))
           ;; From the type, nothing is established; from a sealed value, everything is --
           ;; that is what being sealed means, and the draft inherits exactly that claim.
-          :draft-empty      (fn [~ownsym] ~(dctor (repeat n `unset) {} 0 ownsym nil))
+          :draft-empty      (fn [~ownsym]
+                              ~(dctor (repeat n (internal 'unset)) {} 0 ownsym nil))
           ;; The metadata comes off the field rather than through `meta`, which would hand
           ;; back the library's keys merged in and store a snapshot of them as though the
           ;; caller had written it. What the draft inherits is what the caller actually set.
@@ -2335,12 +2398,16 @@
           ;; the class that declares it.)
           :draft-with-owner (fn [~dvsym ~tokensym]
                               ~(dctor dfields (dfield extsym)
-                                      `(verdict-mask ~dvsym) tokensym (dfield mtasym)))
+                                      `(~(internal 'verdict-mask) ~dvsym)
+                                      tokensym (dfield mtasym)))
           :draft-clean      (fn [~dvsym]
-                              ~(dctor dfields {} `(verdict-mask ~dvsym)
+                              ~(dctor dfields {} `(~(internal 'verdict-mask) ~dvsym)
                                       (dfield ownsym) (dfield mtasym)))
           :draft-missing    (fn [~dvsym]
-                              (cond-> [] ~@(mapcat (fn [[k f]] [`(identical? ~(dfield f) unset) `(conj ~k)])
+                              (cond-> [] ~@(mapcat (fn [[k f]]
+                                                     [`(identical? ~(dfield f)
+                                                                   ~(internal 'unset))
+                                                      `(conj ~k)])
                                                    (map vector ks fsyms))))
           :draft-seal       (fn [~dvsym] (new ~tname ~@dfields ~(dfield mtasym)))})
        ;; `deftype` interns a positional factory that checks nothing -- a public back door
@@ -2361,11 +2428,11 @@
                "  already carries the namespace -- read back through here and be validated.")
          [~msym]
          (seal ~model-sym (reduce-kv assoc ((:draft-empty ~model-sym) nil)
-                                     (qualify-keys ~model-sym ~msym))))
+                                     (~(internal 'qualify-keys) ~model-sym ~msym))))
 
-       (register! ~tname ~model-sym)
-       (register-draft! ~dname ~model-sym)
-       (register-reader! '~tagsym ~(symbol (str "map->" tname)))
+       (~(internal 'register!) ~tname ~model-sym)
+       (~(internal 'register-draft!) ~dname ~model-sym)
+       (~(internal 'register-reader!) '~tagsym ~(symbol (str "map->" tname)))
 
        (ns-unmap *ns* '~(symbol (str "->" dname)))
        ;; A draft is unvalidated working state. `#<` is the reader's own unreadable marker, so
@@ -2375,5 +2442,5 @@
        ;; The tag is namespace-qualified, so it escapes the reader's record-literal path and is
        ;; the exact symbol to hand `clojure.edn/read` as a key in `:readers`.
        (defmethod print-method ~tname [x# ^java.io.Writer w#]
-         (.write w# (str "#" '~tagsym (printable x#))))
+         (.write w# (str "#" '~tagsym (~(internal 'printable) x#))))
        ~tname)))

@@ -384,7 +384,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 - [ ] **A1 — `CONSIDERATIONS.md` still shows bare field keys throughout.** It is scratch,
       kept but not maintained, and TODOs already says not to trust it.
 
-- [ ] **D5 — `seal` believes the mask, so `record-verdict!` is a way past the checks.**
+- [x] **D5 — `seal` believes the mask, so `record-verdict!` is a way past the checks.**
       The `Verdicts` protocol is public, because the draft type is generated in the
       caller's namespace and has to implement it there, so a caller can set the bit of a
       check that never ran and `seal` will skip it. Before D5 it could not: seal selected
@@ -395,7 +395,19 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       and by nothing else outside `core`, and `record-verdict!` by nothing outside `core`
       at all, so both could be `alter-meta!`-ed private with `recognitum.verdict-test`
       reaching them through the protocol object. Not done here because D1 made them public
-      deliberately and D5 is not the step that should reverse that.
+      deliberately and D5 is not the step that should reverse that. Done since, and wider
+      than this entry proposed: the public surface of `recognitum.core` is now the
+      twenty-one names `SPEC.md` and `README.md` use as API, and the other fifty-two are
+      private. The premise above was wrong -- the protocol does not have to be public for
+      the generated draft type to implement it, because `deftype` resolves a spec name
+      through `ns-resolve`, which does not consult privacy. What the macro could not do is
+      *call* a private var by qualified symbol from the consumer's namespace, so it emits
+      `@#'recognitum.core/...` instead, which the compiler allows and a reader cannot
+      mistake for API. `model-of` went with them, and so did the per-type model var a
+      definition interns, since `:draft-seal` is the same back door reached by another
+      name. `recognitum.surface-test` writes the surface out and fails on drift in either
+      direction; `recognitum.internal`, under `test/`, is where the suite reaches around
+      privacy, in one place and on purpose.
 
 - [x] **D5 — `seal` is one phase, and `SPEC.md` describes two.** "The gate makes it
       two-phase: collect all pure failures and throw if there are any, otherwise fetch and

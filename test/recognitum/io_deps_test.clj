@@ -30,6 +30,7 @@
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
+   [recognitum.internal :as internal]
    [recognitum.roster :as roster]))
 
 (defn- err
@@ -157,7 +158,7 @@
 ;;; ---------------------------- the section compiles and means something ----------------------------
 
 (deftest a-populated-io-deps-section-compiles
-  (let [model (rec/model-of Job)]
+  (let [model (internal/model-of Job)]
     (is (= [::roster] (mapv :name (:io-deps model))))
     (is (= "who the house knows about" (:doc (first (:io-deps model))))
         "an io-dep takes a docstring where a check does")
@@ -166,7 +167,7 @@
     (is (= #{::roster} (:io-names model)))))
 
 (deftest a-keyword-in-a-check-arglist-resolves-to-a-declared-io-dep
-  (let [model (rec/model-of Job)
+  (let [model (internal/model-of Job)
         c     (first (filter #(= ::only-roster-gets-a-cut (:name %)) (:checks model)))]
     (is (= [::cuts ::roster] (:deps c))
         "in arglist order, with the io-dep named as itself and the field as its key")))
@@ -351,8 +352,8 @@
           "::crew because it names the field, ::only-roster-gets-a-cut because its fetch does")
       (testing "and the index says the same thing"
         (is (= [::crew ::only-roster-gets-a-cut]
-               (mapv (comp :name (:checks (rec/model-of Job)))
-                     (get (:index (rec/model-of Job)) ::crew))))))))
+               (mapv (comp :name (:checks (internal/model-of Job)))
+                     (get (:index (internal/model-of Job)) ::crew))))))))
 
 (deftest a-verdict-already-established-costs-no-fetch-at-the-seal
   (let [d (whole)]
@@ -534,7 +535,7 @@
                          {:checks  {:scratch/c ([:scratch/x] (some? x))}
                           :io-deps {:scratch/x ([[a] :as rows] (zipmap rows (repeat :v)))}}))))
   (let [model (binding [*ns* @scratch]
-                (eval '(recognitum.core/model-of (->Batched 1))))
+                (eval '(recognitum.internal/model-of (->Batched 1))))
         d     (first (:io-deps model))]
     (is (= [:recognitum.io-deps-scratch/a] (:deps d))
         "the inner vector is the dependency declaration, resolved as any arglist is")

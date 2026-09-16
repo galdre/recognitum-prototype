@@ -8,8 +8,8 @@
   and the body cannot read what it did not name -- there is nothing else in scope."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing."
   [f]
@@ -112,7 +112,7 @@
   (->Ordered 1 2)
   (is (= [2 1] @got) "b then a -- the arglist's order, not the field order")
   (testing "and the model records that order"
-    (is (= [[::b ::a]] (mapv :deps (:checks (rec/model-of (->Ordered 1 2))))))))
+    (is (= [[::b ::a]] (mapv :deps (:checks (internal/model-of (->Ordered 1 2))))))))
 
 (deftest a-check-body-cannot-read-a-field-it-did-not-name
   ;; Nothing but the arglist is in scope, so a dependency that was not declared is not a
@@ -167,12 +167,12 @@
 (defn- indexed [] (rec/drafting [x Indexed] (merge x {::a 1 ::b 2 ::c 3})))
 
 (deftest the-model-carries-the-checks-in-declaration-order
-  (let [model (rec/model-of (indexed))]
+  (let [model (internal/model-of (indexed))]
     (is (= [::a ::b ::c ::a-below-b] (mapv :name (:checks model))))
     (is (= [[::a] [::b] [::c] [::a ::b]] (mapv :deps (:checks model))))))
 
 (deftest the-index-maps-a-field-to-the-checks-that-name-it
-  (let [model (rec/model-of (indexed))]
+  (let [model (internal/model-of (indexed))]
     (is (= [::a ::a-below-b] (checks-on model ::a)))
     (is (= [::b ::a-below-b] (checks-on model ::b)))
     (is (= [::c] (checks-on model ::c)))
@@ -262,7 +262,7 @@
 
 (deftest several-checks-may-name-the-same-field-and-all-of-them-run
   (is (rec/sealed? (->Doubled 5)))
-  (let [model (rec/model-of (->Doubled 5))]
+  (let [model (internal/model-of (->Doubled 5))]
     (is (= [::an-int ::in-range] (checks-on model ::n))))
   (let [e (err #(->Doubled 99))]
     (is (= [::in-range] (keys (:failures e))) "only the one it breaks")

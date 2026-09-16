@@ -23,6 +23,7 @@
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
+   [recognitum.internal :as internal]
    [recognitum.roster :as roster]))
 
 (defn- err
@@ -185,7 +186,7 @@
 ;;; ----------------------------- the form, as the macro reads it -----------------------------
 
 (deftest a-batched-io-dep-compiles-and-says-it-is-batched
-  (let [d (first (:io-deps (rec/model-of Job)))]
+  (let [d (first (:io-deps (internal/model-of Job)))]
     (is (= ::roster (:name d)))
     (is (true? (boolean (:batched d))))
     (is (= "who the house knows about" (:doc d))
@@ -194,19 +195,19 @@
         "the inner vector is the dependency declaration, resolved to field keys")
     (is (= [::crew] (:fields d))
         "and those fields are what gates the fetch")
-    (is (= #{::roster} (:io-names (rec/model-of Job))))))
+    (is (= #{::roster} (:io-names (internal/model-of Job))))))
 
 (deftest the-two-forms-are-told-apart-by-the-reader
-  (is (not (:batched (first (:io-deps (rec/model-of Singular)))))
+  (is (not (:batched (first (:io-deps (internal/model-of Singular)))))
       "`[crew]` is a legal arglist, so it is the singular form")
-  (is (:batched (first (:io-deps (rec/model-of Job))))
+  (is (:batched (first (:io-deps (internal/model-of Job))))
       "`[[crew] :as rows]` is not, so it is the batched one")
   (testing "and they resolve to the same dependency either way"
-    (is (= [::crew] (:deps (first (:io-deps (rec/model-of Singular))))))))
+    (is (= [::crew] (:deps (first (:io-deps (internal/model-of Singular))))))))
 
 (deftest a-check-naming-a-batched-io-dep-names-it-as-any-other
   (let [c (first (filter #(= ::only-roster-gets-a-cut (:name %))
-                         (:checks (rec/model-of Job))))]
+                         (:checks (internal/model-of Job))))]
     (is (= [::cuts ::roster] (:deps c)) "in arglist order")
     (is (= [::cuts ::crew] (:field-closure c))
         "and it reads the fields the batch names, which is what a write invalidates it by")))
