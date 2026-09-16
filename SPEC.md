@@ -264,6 +264,23 @@ cannot run before its pure prerequisites, and the mask makes satisfied prerequis
 Failures are not retained. The call that finds one returns it; a later call re-runs anything not
 passing and produces it again.
 
+Every one of them checks everything it was asked to check and reports every failure. None stops
+at the first.
+
+### Checking many drafts at once
+
+`check-all` and `certify-all` take a collection of drafts and run against all of them, so a
+batched fetch sees every argument tuple in one call. Results are index-aligned with the input:
+two drafts holding identical data are `=`, so keying by draft would silently collapse them.
+
+Partial success is a workspace notion, so only the non-throwing forms offer it. `check-all` and
+`certify-all` report per-value results and leave each draft's mask updated to match. The bang
+forms collect every failure across every value and throw once with all of them.
+
+Nothing bulk produces sealed values. A guarantee does not come in partial, and it does not need
+to: bulk checking leaves the masks populated, so sealing each value afterwards finds its checks
+already passing and performs no IO.
+
 ### Metadata
 
 `meta` on a draft returns its metadata with the library's own keys merged over the top:
@@ -414,10 +431,9 @@ keyword lookup.
 
 ## Open
 
-- **The bulk validation entry point.** Batched fetches exist to serve one, but nothing calls
-  them yet. It cannot throw on the first bad value without defeating itself, so it returns
-  per-value results — whether it also offers partial success, handing back the values that
-  sealed alongside failures for those that did not, is the open part.
+- **Whether "every check" is nameable.** `seal` runs all checks, so bulk-certifying one
+  certificate still leaves other IO-bound checks to run per value. A built-in certificate
+  meaning every check would close that; so would a bulk form that runs everything.
 - **Whether a sealed value reports anything through `meta`.** On a draft the keys carry
   information; on a sealed value every check passes by definition, so they would be constant.
 - **The order failures are reported in.** Checks come from a map literal, which does not preserve
