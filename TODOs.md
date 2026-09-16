@@ -147,6 +147,27 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       constructing one by hand has to work at it. Re-run the bench; if any row moves by more
       than the recorded spread, re-record the README table with provenance.
 
+### I — the checking family, settled
+
+- [ ] **I1. One verb, an explicit re-run, and honest names.** Rulings of 2026-09-16, all
+      galdre's. (a) `check` handles both a check name and a certificate name — a lone check is
+      a certificate containing itself — and its answer is always a map keyed by check name
+      (`true` when everything passed). `certify`, `certify!`, `certify-all`, `certify-all!` are
+      removed. (b) `check` *establishes*: it skips what the verdict mask already says passes,
+      and on a sealed value, where everything is established, returns `true` without running
+      anything. The `:not-a-draft` refusal goes from every checking function; only `unsealed`
+      keeps it. (c) `re-check`, `re-check!`, `re-check-all`, `re-check-all!` run what they name
+      regardless of the mask: on a draft the result sets or clears bits, so a passed IO check
+      that fails against today's world is un-passed; on a sealed value they run and answer.
+      (d) `passing` → `passed`, `holding` → `certificates`, matching the `meta` keys, and both
+      answer for a sealed value too (every check, every certificate). (e) `check-all` and
+      `re-check-all` accept drafts of more than one type — one fetch pass per type, still
+      batched within each; a name resolves per type; an unknown certificate fails the whole
+      call, as a single `check` already does; `:mixed-types` goes. (f) Because every answer is
+      keyed by check name, a check that was blocked by its gate shows the blocking check's
+      entry, and the old `check-all` ambiguity (raw return vs gate-failure map) no longer
+      exists. Update README's draft-level sections and the surface test's expected set.
+
 ### H — later, low priority
 
 - [ ] **H1. `recognitum.walk`.** `clojure.walk/walk` is a plain `cond`: on `IRecord` it does
@@ -173,7 +194,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
 Design questions raised while walking the deferred list on 2026-09-16. Each carries the ruling
 so far, or the options if it is still open. None is implemented.
 
-- [ ] **`check` versus `certify`, and an explicit re-run.** Proposal from galdre: `check` and
+- [x] **`check` versus `certify`, and an explicit re-run.** Settled 2026-09-16; see step I1. Proposal from galdre: `check` and
       `certify` *establish* — they skip whatever the verdict mask already says passes, keeping
       the fast path fast — and on a sealed value, where everything is established, they return
       `true` without running anything. New verbs `recheck` and `recertify` *run it now*
@@ -192,7 +213,7 @@ so far, or the options if it is still open. None is implemented.
       (`check` or `certify`, and so `recheck` or `recertify`), and whether one draft and a
       group share the name.
 
-- [ ] **`passing` and `holding` are misnamed.** Agents named them; galdre has not seen them.
+- [x] **`passing` and `holding` are misnamed.** Settled; see step I1. Agents named them; galdre has not seen them.
       Present participles read as scoping forms — `drafting` already is one in this library —
       and these are queries returning sets. Options: rename to match the `meta` keys they
       duplicate (`passed`, `certificates`) and widen them to answer for a sealed value too (all
@@ -204,7 +225,7 @@ so far, or the options if it is still open. None is implemented.
       only that it must unforgeably carry the information. An agent extended that into
       "therefore the functions stay draft-only," which was never asked for.
 
-- [ ] **Groups of mixed types are allowed.** Ruled by galdre: the contract is "recognitum
+- [x] **Groups of mixed types are allowed.** Settled; see step I1. Ruled by galdre: the contract is "recognitum
       types," and `check-all`/`certify-all` over drafts of more than one type should work. The
       `:mixed-types` refusal goes. Batched fetches are declared per type, so a mixed group is
       one fetch pass per type, still batched within each. A check or certificate name resolves
