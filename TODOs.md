@@ -168,7 +168,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       entry, and the old `check-all` ambiguity (raw return vs gate-failure map) no longer
       exists. Update README's draft-level sections and the surface test's expected set.
 
-- [ ] **I2. Two small fixes ruled on 2026-09-16.** (a) Protocol method bodies are emitted as
+- [x] **I2. Two small fixes ruled on 2026-09-16.** (a) Protocol method bodies are emitted as
       `(loop [~@non-receiver-args] ~@body)` on both the sealed and draft types, so a user's
       `(recur …)` targets the loop with exactly the arity a `defrecord` method body has —
       receiver excluded — allocates nothing, and works inside the sealed side's `try`. Test
@@ -178,7 +178,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       certificate. (c) Delete `test/recognitum/audit_removal_test.clj` outright — it forbids
       the English word "audit" in the README, and the surface test and dependency tests already
       guard everything it guarded. Remove any reference to it elsewhere. Do not edit TODOs.md
-      or SPEC.md; report.
+      or SPEC.md; report. Done 133bd72: `recur` via a `loop` over the non-receiver args on both emissions; the dedup was already true by construction and is now pinned by a test; the audit-removal test is deleted.
 
 - [ ] **I3. `:io-limited` takes a literal boolean or a var.** The value check is specific to
       `:io-limited`, not a rule over all options. Accept `true`, `false`, or a symbol that
@@ -288,6 +288,12 @@ so far, or the options if it is still open. None is implemented.
       call. Galdre: perf work is later.
 
 ## Deferred during implementation
+
+- [ ] **I2 — a type hint on a method parameter now rides onto a `loop` binding.**
+      `recurrable-body` interleaves the non-receiver args verbatim, so `^long n` on a method
+      parameter becomes `^long n` on the loop binding. Legal, and usually wanted, but a
+      primitive hint on a loop binding is stricter than on a fn parameter, and no test in the
+      suite has a hinted method parameter. Untested rather than known-good.
 
 - [x] **G2 — `postwalk` over an `:io-limited` sealed value throws where the step's
       acceptance line said it returns the value.** Superseded by H1 in the implementation
