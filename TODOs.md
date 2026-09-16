@@ -7,6 +7,82 @@ The four drift items have since been adjudicated by galdre; their rulings are re
 below. In every case the code is right and the prose is wrong, which is worth noting: the docs
 drifted off the code, not the reverse.
 
+## Implementation sequence
+
+`SPEC.md` is the target. Each step below leaves the suite green and is scoped to be done on its
+own, tests first. Steps within a phase are ordered; phases after A are ordered.
+
+### A — independent of the check redesign
+
+- [ ] **A1. Namespace-qualify field keys.** `:recognitum.heist/name` rather than `:name`, derived
+      from the defining namespace. Touches the macro's key generation, the `IKeywordLookup`
+      thunks, `map->Type`, the print form (which drops the namespace the tag carries) and the
+      reader (which accepts bare or qualified keys). Mechanical but wide: every test, the demo,
+      the bench, the README. Doing it first keeps it out of the way of everything else, and the
+      `:checks` map needs it, since its keys are the field keys.
+
+### B — the check model
+
+- [ ] **B1. The `:checks` map.** Named checks, arglist-as-dependency, the bare-function shorthand
+      over a single field, and the optional docstring position. Exactly one arity. Replaces
+      `:valid` metadata and the invariants vector. The field → checks index comes from arglists
+      rather than declared `:keys`.
+- [ ] **B2. Compile-time resolution.** A symbol that is not a declared field, a keyword that is
+      not a declared io-dep, a name used for both a check and an io-dep — each a compile error
+      naming the offender. (Cycles wait for E1, when io-deps can name each other.)
+- [ ] **B3. The check contract.** `true` passed, anything else failure data. Exceptions
+      propagate rather than becoming failures. Every entry point runs everything it was asked to
+      and collects all failures, keyed by check name in declaration order, built with
+      `array-map`.
+- [ ] **B4. Delete the audit.** `*audit-invariant-keys*`, `KeyAuditor`,
+      `undeclared-invariant-key!`, `recognitum.audit-test`, `recognitum.audit-fixture`, the
+      `:test-audit` alias, and the README section. Dependencies derived from arglists cannot be
+      misdeclared, so there is nothing left to audit. Do this only once B1 lands — until then the
+      audit is the only thing catching what B1 makes impossible.
+
+### C — the definition form
+
+- [ ] **C1. The definition map.** Wrap the checks in `{:options … :checks … :io-deps …
+      :certificates …}`, all sections optional. Only `:checks` is populated at this point.
+- [ ] **C2. Protocol implementations.** Pass trailing forms through to `def-map-type`. Decide
+      whether they land on the sealed type, the draft, or both — the impl-layer convention says
+      functions take drafts, so a protocol on the sealed type alone would not be callable there.
+
+### D — drafts and verdicts
+
+- [ ] **D1. The verdict mask.** An `^:unsynchronized-mutable` field on the draft. Set on pass,
+      clear on failure. `assoc` seeds the new draft by `and`-ing the parent's mask against the
+      invalidation mask for the written field. Snapshot, so versions diverge.
+- [ ] **D2. `check` / `check!`.** Return `true` or failure data; none return a draft. Running a
+      check runs whatever it depends on that is not already passing.
+- [ ] **D3. Certificates.** The `:certificates` section, holding derived from the mask, and the
+      built-in certificate covering every check. `certify` / `certify!`.
+- [ ] **D4. Uniform `meta`.** Library keys merged over the user's, same answer from drafts and
+      sealed values.
+- [ ] **D5. `seal` consults the mask.** Run only what is not passing; collect every failure and
+      throw once. Subsumes the current dirty-key logic.
+
+### E — IO
+
+- [ ] **E1. `:io-deps`, singular form.** Arglists as everywhere else, io-deps nameable by other
+      io-deps, topological fetch order, cycles rejected at compile time. The gate: an io-dep
+      fetches once the pure checks over the fields it names have passed and every io-dep it names
+      has fetched. Fetched values cached for one validation call and no longer. Argument tuples
+      deduplicated.
+- [ ] **E2. Batched fetches.** `[[crew] :as rows]`, told from `[crew]` by the reader because it
+      is not a legal arglist. Returns a map keyed by argument tuple.
+- [ ] **E3. `check-all` / `certify-all`.** Over a collection of drafts, results index-aligned.
+      Partial success on the non-throwing forms only. Nothing bulk produces sealed values.
+- [ ] **E4. `:io-limited`.** Direct `assoc` and `merge` on a sealed value throw for any field an
+      IO-bound check depends on; other fields unaffected.
+
+### F — reconcile
+
+- [ ] **F1. README, demo, bench** to the new syntax. The bench's hand-rolled side needs the same
+      checks written out by hand again, or the comparison stops being apples-to-apples.
+- [ ] **F2. Re-measure and re-record the performance table.** Checks called with direct field
+      access rather than keyword lookup is the change most likely to move it.
+
 ## Blocking
 
 - [x] `dev/recognitum/demo.clj:60` references `recognitum.core.Draft`, which does not
