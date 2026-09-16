@@ -419,11 +419,20 @@
     (when (seq fs) (checks-failed! model (failure-entries model x fs {})))
     (when (seq io) (run-group! model run x io (fetch-io model x io)))))
 
-(defn- entries-of [o]
+(defn- entries-of
+  "The entries `o` contributes to a `conj` onto a value of this type: a map's, or the one a
+  two-element vector is.
+
+  Anything else is refused by name. A `conj` is a write, and a write that cannot be read as
+  entries is not a write this type can run its checks over -- so it says which type refused
+  it and what it was handed, as every other refusal here does."
+  [model o]
   (cond (map? o)                     (seq o)
         (instance? java.util.Map o)  (seq (into {} o))
         (and (vector? o) (= 2 (count o))) [o]
-        :else (throw (ex-info "cannot conj this onto a validated value" {:value o}))))
+        :else (throw (ex-info (format "cannot conj %s onto a %s -- a conj takes a map or a [k v]"
+                                      (pr-str o) (:name model))
+                              {:error ::cannot-conj :record (:name model) :value o}))))
 
 (defn- no-dissoc!
   "Declared fields are permanent, so `dissoc` refuses them; where a check admits nil,
@@ -528,7 +537,12 @@
   tells a draft an enclosing form owns from a free one it must adopt and seal itself."
   nil)
 
-(defn draft? [x] (contains? @draft-registry (class x)))
+(defn draft?
+  "Is `x` a draft -- of any type this library defines?
+
+  The question about the form. [[of-type?]] is the question about the type, and \"a draft of
+  Heist\" composes from one of each."
+  [x] (contains? @draft-registry (class x)))
 
 (defn- draft-model [x] (@draft-registry (class x)))
 
@@ -613,7 +627,9 @@
   A sealed value answers with every check its type declares, because that is what being
   sealed means and there is no other state it could be in. The name matches the metadata key
   `::passed`, which carries the same answer for the same value; two spellings of one
-  question, and they may not disagree."
+  question, and they may not disagree.
+
+  Throws `:not-a-value` when `x` is neither a draft nor a sealed value, carrying `:value`."
   [x]
   (let [model (value-model! "passed" x)]
     (passed-in model (value-mask model x))))
@@ -911,7 +927,9 @@
   A sealed value holds every certificate its type declares, the built-in among them, because
   every check on it passed -- which is strictly more than any certificate claims. The name
   matches the metadata key `::certificates`, which carries the same answer for the same
-  value."
+  value.
+
+  Throws `:not-a-value` when `x` is neither a draft nor a sealed value, carrying `:value`."
   [x]
   (let [model (value-model! "certificates" x)]
     (held-in model (value-mask model x))))
@@ -1001,8 +1019,12 @@
   not passing and produces it again, fetch included -- a verdict about an external validation
   is point-in-time, and what it consulted is not kept.
 
-  Throws `::unknown-check` where the type declares neither a check nor a certificate of that
-  name, and `::not-a-value` where `x` is not a draft or a sealed value of any type here."
+  Throws `:not-a-value` when `x` is neither a draft nor a sealed value, carrying `:value`;
+  `:unknown-check` when the type declares no check or certificate of that name, carrying
+  `:record`, `:check` and the names it could have been given; and `:malformed-batch` or
+  `:incomplete-batch` when a batched fetch behind an external validation answers something
+  other than a map keyed by every tuple it was handed, each carrying `:record`, `:io-dep`
+  and what the fetch returned."
   [x cname]
   (let [model (value-model! "check" x)]
     (answered model x (ids-for model cname) false)))
@@ -1014,7 +1036,13 @@
   throws.
 
   The work is the same work, so a check already passing costs nothing here either, and a
-  sealed value answers `true` without running anything."
+  sealed value answers `true` without running anything.
+
+  Throws what [[check]] throws: `:not-a-value` when `x` is neither a draft nor a sealed
+  value, `:unknown-check` when the type knows no name like that, and `:malformed-batch` or
+  `:incomplete-batch` when a batched fetch misbehaves. It adds `:check-failed` where a check
+  named did not pass, carrying `:record` and `:failures` -- the full report, keyed by check
+  name in phase order."
   [x cname]
   (let [model (value-model! "check!" x)]
     (insisted-one model x (ids-for model cname) false)))
@@ -1039,7 +1067,11 @@
   Prerequisites are still read off the mask: a gate already established is not re-run, because
   what was asked for was these checks and not their gates. A gate that has *not* passed still
   stops the check behind it, here as anywhere. Fetches are shared for the length of this one
-  call and no longer, exactly as they are for `check`."
+  call and no longer, exactly as they are for `check`.
+
+  Throws what [[check]] throws and in the same conditions: `:not-a-value`, `:unknown-check`,
+  `:malformed-batch` and `:incomplete-batch`. The last two are likelier here than anywhere
+  else, because this is the form that goes back out to the world on purpose."
   [x cname]
   (let [model (value-model! "recheck" x)]
     (answered model x (ids-for model cname) true)))
@@ -1047,7 +1079,11 @@
 (defn recheck!
   "[[recheck]], insisting on the answer: `true`, or one `:check-failed` carrying every
   failure, keyed by check name in declaration order. Same work, and no partial answer to
-  report."
+  report.
+
+  Throws what [[recheck]] throws -- `:not-a-value`, `:unknown-check`, `:malformed-batch`,
+  `:incomplete-batch` -- and `:check-failed` where a check named did not pass, carrying
+  `:record` and `:failures`, exactly as [[check!]] does."
   [x cname]
   (let [model (value-model! "recheck!" x)]
     (insisted-one model x (ids-for model cname) true)))
@@ -1155,7 +1191,14 @@
   establish and answers `true`.
 
   Each draft is left with its own verdicts recorded, which is what makes sealing afterwards
-  free. Nothing here produces a sealed value: a guarantee does not come in partial."
+  free. Nothing here produces a sealed value: a guarantee does not come in partial.
+
+  Throws `:not-a-value` when something in `xs` is neither a draft nor a sealed value,
+  carrying `:index` and `:value`; `:unknown-check` when one of the types in the group
+  declares no check or certificate of that name, carrying `:record`, `:check` and the names
+  it could have been given; and `:malformed-batch` or `:incomplete-batch` when a batched
+  fetch answers something other than a map keyed by every tuple it was handed, each carrying
+  `:record`, `:io-dep` and what the fetch returned."
   [xs cname]
   (if-let [[models rs] (group-run "check-all" xs cname false)]
     (answered-all models rs)
@@ -1168,7 +1211,12 @@
   The work is the same work -- one fetch pass per type, nothing re-established -- and what
   differs is only that there is no partial success to report. Every value is run before
   anything is thrown, and each draft keeps the verdicts it earned. Where the group held more
-  than one type, `:record` is the names of all of them rather than one speaking for the rest."
+  than one type, `:record` is the names of all of them rather than one speaking for the rest.
+
+  Throws what [[check-all]] throws -- `:not-a-value`, `:unknown-check`, `:malformed-batch`
+  and `:incomplete-batch` -- and `:check-failed` where a check did not pass for any value,
+  carrying `:record`, `:bulk`, `:indexes`, and `:failures` keyed by the value's index and,
+  under that, by check name."
   [xs cname]
   (if-let [[models rs] (group-run "check-all!" xs cname false)]
     (insisted models (vec xs) rs)
@@ -1181,7 +1229,10 @@
   This is the shape the verb is really for. Re-verifying a batch against the database is one
   call, one fetch pass per type, batched within each -- where the same work value by value is
   a query apiece. Each draft's mask is written with what was found, so a check the world has
-  taken back is un-passed for exactly the values it was taken back for."
+  taken back is un-passed for exactly the values it was taken back for.
+
+  Throws what [[check-all]] throws, and in the same conditions: `:not-a-value`,
+  `:unknown-check`, `:malformed-batch` and `:incomplete-batch`."
   [xs cname]
   (if-let [[models rs] (group-run "recheck-all" xs cname true)]
     (answered-all models rs)
@@ -1189,7 +1240,11 @@
 
 (defn recheck-all!
   "[[recheck-all]], insisting on the answer: `true`, or one `:check-failed` carrying every
-  failure across every value, keyed by index and, under that, by check name."
+  failure across every value, keyed by index and, under that, by check name.
+
+  Throws what [[check-all!]] throws: `:not-a-value`, `:unknown-check`, `:malformed-batch`,
+  `:incomplete-batch`, and `:check-failed` carrying `:record`, `:bulk`, `:indexes` and
+  `:failures`."
   [xs cname]
   (if-let [[models rs] (group-run "recheck-all!" xs cname true)]
     (insisted models (vec xs) rs)
@@ -1245,7 +1300,9 @@
 
 (defn draft
   "A draft of `x`: a validated value, a registered type (construction from empty), or a draft.
-  A draft created inside a `drafting` records that form as its owner."
+  A draft created inside a `drafting` records that form as its owner.
+
+  Throws `:cannot-draft` when `x` is none of those three, carrying `:value`."
   [x]
   (if (draft? x)
     x
@@ -1253,7 +1310,10 @@
       (if (identical? model (@registry x))
         ((:draft-empty model) *owner*)
         ((:draft-from model) x *owner*))
-      (throw (ex-info "not a validated value, draft, or registered type" {:value x})))))
+      (throw (ex-info (format (str "draft expects a validated value, a draft, or a registered "
+                                   "type, and %s is none of them")
+                              (pr-str x))
+                      {:error ::cannot-draft :value x})))))
 
 (defn- extraneous
   "The keys `d` holds that its type does not declare."
@@ -1262,10 +1322,13 @@
 
 (defn clean
   "Drop the keys the type does not declare, so `d` can seal. A draft -> draft step: put it at
-  the end of a `drafting` body to strip rather than reject."
+  the end of a `drafting` body to strip rather than reject.
+
+  Throws `:not-a-draft` when `d` is not a draft, carrying `:value`."
   [d]
   (when-not (draft? d)
-    (throw (ex-info "clean expects a draft" {:value d})))
+    (throw (ex-info (format "clean expects a draft, and %s is not one" (pr-str d))
+                    {:error ::not-a-draft :value d})))
   (if (extraneous d) ((:draft-clean (draft-model d)) d) d))
 
 ;;; ------------------------------ Opting out of the seal ------------------------------
@@ -1295,7 +1358,9 @@
   that quietly defeated that would be a hole rather than an escape hatch.
 
   Anything that is not a draft throws: the marker asserts what is being returned, and a
-  wrong assertion should say so where it is written rather than travel."
+  wrong assertion should say so where it is written rather than travel.
+
+  Throws `:not-a-draft` when `d` is not a draft, carrying `:value`."
   [d]
   (if (draft? d)
     (Unsealed. d)
@@ -1354,7 +1419,15 @@
 
   An [[unsealed]] marker is unwrapped and the draft inside it sealed anyway. That marker
   opts out of the *implicit* seal a protocol method performs; asking to seal and being
-  refused by a marker would be a hole rather than an escape hatch."
+  refused by a marker would be a hole rather than an escape hatch.
+
+  Throws `:cannot-seal` when `d` is neither a draft nor an already-sealed value, carrying
+  `:value` and, where a type was asking, `:record`; `:extraneous-keys` when the draft holds
+  a key its type does not declare, carrying `:record` and `:keys`; `:check-failed` when a
+  check does not pass, carrying `:record` and `:failures`, a map keyed by check name in
+  phase order; and `:malformed-batch` or `:incomplete-batch` when a batched fetch behind an
+  external validation answers something other than a map keyed by every tuple it was handed,
+  each carrying `:record`, `:io-dep` and what the fetch returned."
   ([d]
    (let [d (unmark d)]
      (cond
@@ -1438,7 +1511,14 @@
   draft. A draft an enclosing `drafting` owns passes straight through unsealed, so only
   the outermost form validates — that is what lets an impl fn taking and returning a
   draft be called standalone or nested without knowing which. A draft made outside any
-  `drafting` is adopted and sealed here."
+  `drafting` is adopted and sealed here.
+
+  Throws `:cannot-draft` when `init` is none of those three, carrying `:value`, and then
+  whatever the seal throws, since this seals: `:cannot-seal` where the body's value is
+  neither a draft of that type nor an already-sealed one, `:extraneous-keys` where the draft
+  holds a key the type does not declare, `:check-failed` where a check does not pass, and
+  the batch-shape `:malformed-batch` and `:incomplete-batch`. See [[seal]] for what each of
+  them carries."
   [[sym init] & body]
   ;; `binding` names its var by symbol and [[*owner*]] is private, so the frame is pushed
   ;; and popped here -- which is what `binding` expands to anyway.
@@ -1450,7 +1530,9 @@
        (let [model# (or dm# (~(internal 'model-of) init#))
              token# (Object.)]
          (when-not model#
-           (throw (ex-info "not a validated value, draft, or registered type" {:value init#})))
+           (throw (ex-info (str "drafting expects a validated value, a draft, or a registered "
+                                "type, and " (pr-str init#) " is none of them")
+                           {:error ::cannot-draft :value init#})))
          (push-thread-bindings {~(internal-var '*owner*) token#})
          (try
            (let [~sym (~(internal 'open) model# init# token# (some? dm#))]
@@ -2166,6 +2248,17 @@
         ;; itself never runs, and a form that describes one never compiles.
         io-parsed (order-io-deps! tname io-parsed io-names)
         nio       (count io-parsed)
+        ;; Whether the generated constructors can meet a batched fetch that misbehaves, which
+        ;; is what decides whether their docstrings have anything to say about one. A type
+        ;; with no batched io-dep cannot reach either of those throws, and a docstring that
+        ;; mentioned them would be describing a different type.
+        batched-io? (boolean (some :batched io-parsed))
+        batch-doc (if batched-io?
+                    (str ";\n  and `:malformed-batch` or `:incomplete-batch` when one of this "
+                         "type's batched fetches\n  answers something other than a map keyed by "
+                         "every tuple it was handed, each\n  carrying `:record`, `:io-dep` and "
+                         "what the fetch returned")
+                    "")
         io?       (fn [d] (contains? io-names d))
         batched?  (fn [j] (boolean (:batched (nth io-parsed j))))
         ;; What a fetch reads for one dependency, whichever form it was written in: a field
@@ -2453,7 +2546,7 @@
            ;; are locals here, so an entry is a rebinding of one of them and the value is
            ;; constructed out of what the loop carries. There is no map in the middle of
            ;; it -- what a merge allocates is the value it returns.
-           (let [~essym (~(internal 'entries-of) ~osym)
+           (let [~essym (~(internal 'entries-of) ~model-sym ~osym)
                  ~hsym  (loop [~cursym (seq ~essym)
                                ~@(interleave fsyms fsyms)]
                           (if ~cursym
@@ -2536,7 +2629,7 @@
          (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym vdsym ownsym mta2sym))
          (~'cons [this# ~osym]
            (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym))
-                   this# (~(internal 'entries-of) ~osym)))
+                   this# (~(internal 'entries-of) ~model-sym ~osym)))
 
          ;; The only thing about a draft that changes in place, and the only two operations
          ;; allowed to change it.
@@ -2696,7 +2789,11 @@
        ;; straight through every guarantee the type exists to make. Replace it with one that
        ;; validates, and unmap the draft's, which nothing outside this file should be calling.
        (defn ~(symbol (str "->" tname))
-         ~(str "Construct a validated " tname " from its fields, in declaration order.")
+         ~(str "Construct a validated " tname " from its fields, in declaration order.\n\n"
+               "  Throws `:check-failed` when a check does not pass, carrying `:record` and\n"
+               "  `:failures` -- a map keyed by check name in phase order, each entry holding the\n"
+               "  check's docstring, what it was given and what it returned"
+               batch-doc ".")
          [~@fsyms]
          ~(run-group (range nchecks) (fn [i] (map key->sym (deps-of i))))
          ~(with-io (range nchecks) `(new ~tname ~@fsyms nil)))
@@ -2708,7 +2805,11 @@
                "  says whether nil is acceptable.\n\n"
                "  Keys may be written qualified or bare: a bare keyword naming a declared field is\n"
                "  qualified into " key-ns ", which is what lets a printed literal -- whose tag\n"
-               "  already carries the namespace -- read back through here and be validated.")
+               "  already carries the namespace -- read back through here and be validated.\n\n"
+               "  Throws `:extraneous-keys` when the map holds a key this type does not declare,\n"
+               "  carrying `:record` and `:keys`; `:check-failed` when a check does not pass,\n"
+               "  carrying `:record` and `:failures`, a map keyed by check name in phase order"
+               batch-doc ".")
          [~msym]
          (seal ~model-sym (reduce-kv assoc ((:draft-empty ~model-sym) nil)
                                      (~(internal 'qualify-keys) ~model-sym ~msym))))

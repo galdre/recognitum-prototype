@@ -573,22 +573,18 @@ type. To drop one undeclared key rather than all of them, `dissoc` it.
 
 ## Errors
 
-Everything throws `ex-info` with an `:error` key you can dispatch on. The keys are qualified —
-`:recognitum.core/check-failed` is what you match on; the table writes them short.
+There is one shape, and it is worth learning once. Everything this library refuses at run time
+throws an `ex-info`; its data carries `:error`, the keyword you dispatch on, and, wherever a type
+is involved, `:record`, that type's name. The keys are qualified —
+`:recognitum.core/check-failed` is what you match on, and `:check-failed` matches nothing.
 
-| `:error` | when |
-|---|---|
-| `:check-failed` | a check returned something other than `true` |
-| `:unknown-field` | `assoc` of a key the type does not declare |
-| `:extraneous-keys` | sealing a draft holding undeclared keys |
-| `:cannot-dissoc` | `dissoc` of a declared field — use `assoc … nil` if its checks admit nil |
-| `:cannot-seal` | sealing something that is neither a draft nor an already-sealed value |
-| `:io-limited` | a direct `assoc` or `merge` on a sealed value of an `:io-limited` type |
-
-A `:check-failed` carries every failure, never one — each throwing entry point runs everything it
-was asked to run first. They come back keyed by check name in declaration order, and each carries
-the check's docstring, the dependencies it declared with what it was handed for each, and
-whatever it returned:
+A `:check-failed` carries every failure, never one: each throwing entry point runs everything it
+was asked to run before it throws anything. They arrive under `:failures`, keyed by check name
+in phase order — the shape validations, then the invariant validations, then the
+external validations, in declaration order within each. Those are the same keys, in the same
+order, that `check` answers with when it does not answer `true`; what a throw adds is a report
+under each one, carrying the check's docstring, the dependencies it declared with what it was
+handed for each, and whatever it returned:
 
 ```clojure
 {:error    :recognitum.core/check-failed
@@ -600,10 +596,21 @@ whatever it returned:
              :returned false}}}
 ```
 
-Mis-declaration is a compile error rather than a run-time one, so there is a second family of
-`ex-info`s thrown while the macro runs — `::unknown-dependency`, `::unknown-section`,
-`::unknown-option`, `::io-dep-cycle`, `::reserved-method` and their neighbours. Each names the
-offender and the alternatives it could have meant.
+So a caller dispatches on the keyword and reads the rest of the map for what to do about it:
+
+```clojure
+(try
+  (rec/seal d)
+  (catch clojure.lang.ExceptionInfo e
+    (case (:error (ex-data e))
+      :recognitum.core/check-failed    (report (:failures (ex-data e)))
+      :recognitum.core/extraneous-keys (rec/seal (rec/clean d))
+      (throw e))))
+```
+
+Which errors any one operation can throw is in that operation's docstring, named with the
+conditions that produce it and the keys it carries — `(doc rec/seal)` rather than a table here,
+because the docstring is what the implementation is held to.
 
 ## Printing and reading
 
