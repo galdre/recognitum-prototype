@@ -210,7 +210,7 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       the sentence listing record behaviours. (c) A brief explanation of the three kinds of
       check — pure and structural (a shape check over one field), pure and cross-field (an
       invariant over several), and impure (one that reaches outside the value through an
-      io-dep). Names ruled 2026-09-16: **shape check**, **invariant**, **external validation**,
+      io-dep). Names ruled 2026-09-16: **shape validation**, **invariant validation**, **external validation**,
       used consistently; the FP gloss (refinement / invariant / effectful) may appear once in
       parentheses. Placed where the checks are introduced. Do not edit TODOs.md or SPEC.md;
       report.
