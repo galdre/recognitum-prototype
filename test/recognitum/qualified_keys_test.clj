@@ -23,9 +23,10 @@
 ;; which is the point: the qualifying namespace is the one the type is written in.
 (rec/defrecord Point
   [x y]
-  {::x int?
-   ::y int?
-   ::ordered ("x does not exceed y" [x y] (<= x y))})
+  {:checks
+   {::x int?
+    ::y int?
+    ::ordered ("x does not exceed y" [x y] (<= x y))}})
 
 (def origin (rec/drafting [p Point] (merge p {::x 0 ::y 0})))
 

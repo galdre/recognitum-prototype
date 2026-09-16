@@ -37,7 +37,7 @@
 (deftest a-symbol-that-is-not-a-declared-field-does-not-compile
   (let [e (compile-data '(recognitum.core/defrecord Stray
                            [a b]
-                           {:scratch/c ([z] (int? z))}))]
+                           {:checks {:scratch/c ([z] (int? z))}}))]
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= 'Stray (:record e)))
     (is (= :scratch/c (:check e)))
@@ -47,7 +47,7 @@
 (deftest the-message-names-the-offender
   (let [m (compile-message '(recognitum.core/defrecord Stray2
                               [a b]
-                              {:scratch/c ([z] (int? z))}))]
+                              {:checks {:scratch/c ([z] (int? z))}}))]
     (is (re-find #"\bz\b" m))
     (is (re-find #":scratch/c" m))
     (is (re-find #"Stray2" m))))
@@ -56,21 +56,22 @@
   (testing "a bad entry after a good one"
     (let [e (compile-data '(recognitum.core/defrecord Later
                              [a b]
-                             {:scratch/c ([a z] (< a z))}))]
+                             {:checks {:scratch/c ([a z] (< a z))}}))]
       (is (= ::rec/unknown-dependency (:error e)))
       (is (= 'z (:dependency e)))))
   (testing "the last entry of a longer arglist"
     (let [e (compile-data '(recognitum.core/defrecord Last
                              [a b]
-                             {:scratch/c ([a b z] (< a b z))}))]
+                             {:checks {:scratch/c ([a b z] (< a b z))}}))]
       (is (= 'z (:dependency e))))))
 
 (deftest resolution-runs-over-every-check-not-only-the-first
   (let [e (compile-data '(recognitum.core/defrecord Third
                            [a b]
-                           {:scratch/one ([a] (int? a))
-                            :scratch/two ([b] (int? b))
-                            :scratch/three ([nope] (int? nope))}))]
+                           {:checks
+                            {:scratch/one ([a] (int? a))
+                             :scratch/two ([b] (int? b))
+                             :scratch/three ([nope] (int? nope))}}))]
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= :scratch/three (:check e)))
     (is (= 'nope (:dependency e)))))
@@ -78,7 +79,7 @@
 (deftest the-docstring-form-is-resolved-the-same-way
   (let [e (compile-data '(recognitum.core/defrecord Documented
                            [a b]
-                           {:scratch/c ("a doc" [a nope] (int? a))}))]
+                           {:checks {:scratch/c ("a doc" [a nope] (int? a))}}))]
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= 'nope (:dependency e)))))
 
@@ -87,14 +88,14 @@
   ;; same error as any other unresolvable symbol -- the field it would check does not exist.
   (let [e (compile-data '(recognitum.core/defrecord Short
                            [a b]
-                           {:scratch/nonesuch int?}))]
+                           {:checks {:scratch/nonesuch int?}}))]
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= :scratch/nonesuch (:check e)))
     (is (= 'nonesuch (:dependency e))))
   (testing "while a shorthand over a field it does declare compiles"
     (is (nil? (compiles '(recognitum.core/defrecord ShortOk
                            [a b]
-                           {:scratch/a int? :scratch/b int?}))))))
+                           {:checks {:scratch/a int? :scratch/b int?}}))))))
 
 ;;; ------------------------- a keyword names an io-dep, or nothing -------------------------
 
@@ -104,7 +105,7 @@
   ;; symbol, because which kind of thing it is is visible where it is written.
   (let [e (compile-data '(recognitum.core/defrecord Fetching
                            [a]
-                           {:scratch/c ([a :scratch/roster] (= a roster))}))]
+                           {:checks {:scratch/c ([a :scratch/roster] (= a roster))}}))]
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= :scratch/roster (:dependency e)))
     (is (= #{} (:io-deps e)) "the type declares none"))
@@ -112,7 +113,7 @@
     (is (re-find #"io-dep"
                  (compile-message '(recognitum.core/defrecord Fetching2
                                      [a]
-                                     {:scratch/c ([:scratch/roster] (some? roster))}))))))
+                                     {:checks {:scratch/c ([:scratch/roster] (some? roster))}}))))))
 
 ;;; -------------------- an entry is one of those two things and nothing else --------------------
 
@@ -120,19 +121,19 @@
   (testing "a destructuring map is not a dependency declaration"
     (let [e (compile-data '(recognitum.core/defrecord Destructured
                              [a b]
-                             {:scratch/c ([{:keys [a]}] (int? a))}))]
+                             {:checks {:scratch/c ([{:keys [a]}] (int? a))}}))]
       (is (= ::rec/unknown-dependency (:error e)))
       (is (= '{:keys [a]} (:dependency e)))))
   (testing "nor is a destructuring vector"
     (let [e (compile-data '(recognitum.core/defrecord Vectored
                              [a b]
-                             {:scratch/c ([[a b]] (< a b))}))]
+                             {:checks {:scratch/c ([[a b]] (< a b))}}))]
       (is (= ::rec/unknown-dependency (:error e)))
       (is (= '[a b] (:dependency e)))))
   (testing "nor anything else that is not a name at all"
     (let [e (compile-data '(recognitum.core/defrecord Stringy
                              [a]
-                             {:scratch/c (["a"] true)}))]
+                             {:checks {:scratch/c (["a"] true)}}))]
       (is (= ::rec/unknown-dependency (:error e)))
       (is (= "a" (:dependency e))))))
 
@@ -142,14 +143,14 @@
   ;; is the one thing the arglist rule exists to rule out.
   (let [e (compile-data '(recognitum.core/defrecord Variadic
                            [a b]
-                           {:scratch/c ([a & more] (int? a))}))]
+                           {:checks {:scratch/c ([a & more] (int? a))}}))]
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= '& (:dependency e)))))
 
 (deftest an-ignored-parameter-is-not-a-dependency-either
   (let [e (compile-data '(recognitum.core/defrecord Ignoring
                            [a b]
-                           {:scratch/c ([a _] (int? a))}))]
+                           {:checks {:scratch/c ([a _] (int? a))}}))]
     (is (= ::rec/unknown-dependency (:error e)))
     (is (= '_ (:dependency e)))))
 
@@ -160,7 +161,7 @@
   ;; there is no half-built type left behind for a later form to pick up.
   (is (some? (compiles '(recognitum.core/defrecord Rejected
                           [a]
-                          {:scratch/c ([nope] (int? nope))}))))
+                          {:checks {:scratch/c ([nope] (int? nope))}}))))
   (is (nil? (ns-resolve @scratch '->Rejected)))
   (is (nil? (ns-resolve @scratch 'map->Rejected)))
   (is (nil? (ns-resolve @scratch 'Rejected-model))))
@@ -169,9 +170,10 @@
 
 (rec/defrecord Resolved
   [a b]
-  {::a int?
-   ::b int?
-   ::ordered ("a is below b" [b a] (< a b))})
+  {:checks
+   {::a int?
+    ::b int?
+    ::ordered ("a is below b" [b a] (< a b))}})
 
 (deftest an-arglist-that-resolves-still-says-what-it-said
   (let [v (->Resolved 1 2)

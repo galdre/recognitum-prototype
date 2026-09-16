@@ -388,6 +388,76 @@
                             tname (pr-str dup))
                     {:error ::duplicate-name :record tname :name dup}))))
 
+(def definition-sections
+  "The sections a definition map may hold, in the order `SPEC.md` writes them. Every one of
+  them is optional; an absent section is an empty one."
+  [:options :checks :io-deps :certificates])
+
+(def known-options
+  "What `:options` may hold. `:io-limited` is the only one so far -- the section exists so
+  that there can be more."
+  #{:io-limited})
+
+(defn parse-definition
+  "`defrecord`'s third position -> `{:options :checks :io-deps :certificates}`, with every
+  section the form left out filled in empty, so nothing downstream has to ask whether it
+  was written.
+
+  Every key is resolved here, while the macro runs, for the same reason every arglist entry
+  is: a section the macro does not recognise is a declaration that would mean nothing. A
+  mistyped `:cheks` would quietly define a type with no checks at all -- a value asserting
+  a validation that never ran, which is the one failure this library exists to make
+  impossible -- so it is a compile error naming the offender instead. The same goes for a
+  key inside `:options`, and for a bare map of checks written where the definition map now
+  goes, whose check names arrive here as sections nobody declared.
+
+  `:io-deps` and `:certificates` are part of the form before they are part of the library.
+  An empty one compiles, so a form may be written in its final shape; a populated one is
+  refused rather than accepted and ignored, which would be the silent mis-declaration
+  again, wearing a different hat."
+  [tname definition]
+  (when-not (map? definition)
+    (throw (ex-info (format (str "%s: defrecord takes a name, a vector of fields and a "
+                                 "definition map -- %s is not a map")
+                            tname (pr-str definition))
+                    {:error ::malformed-definition :record tname :definition definition})))
+  (doseq [k (keys definition)]
+    (when-not (some #{k} definition-sections)
+      (throw (ex-info (format (str "%s declares %s, which is not a section of a definition "
+                                   "map -- the sections are %s%s")
+                              tname (pr-str k) (pr-str definition-sections)
+                              (if (qualified-keyword? k)
+                                (str " (a check goes under :checks, which holds the map this "
+                                     "position used to take)")
+                                ""))
+                      {:error ::unknown-section :record tname :section k
+                       :sections definition-sections}))))
+  (let [sections (reduce (fn [acc s]
+                           (let [v (get definition s {})]
+                             (when-not (map? v)
+                               (throw (ex-info (format "%s: %s is a map, and %s is not one"
+                                                       tname s (pr-str v))
+                                               {:error ::malformed-section :record tname
+                                                :section s :value v})))
+                             (assoc acc s v)))
+                         {} definition-sections)]
+    (doseq [o (keys (:options sections))]
+      (when-not (contains? known-options o)
+        (throw (ex-info (format (str "%s: :options holds %s, which is not an option -- the "
+                                     "options are %s")
+                                tname (pr-str o) (pr-str known-options))
+                        {:error ::unknown-option :record tname :option o
+                         :options known-options}))))
+    (doseq [s [:io-deps :certificates]]
+      (when (seq (get sections s))
+        (throw (ex-info (format (str "%s declares %s, which the library does not implement yet "
+                                     "-- the section is accepted only empty, so that nothing is "
+                                     "declared and then ignored")
+                                tname s)
+                        {:error ::unsupported-section :record tname :section s
+                         :declared (vec (keys (get sections s)))}))))
+    sections))
+
 (defn- parse-check
   "One entry of the `:checks` map -> `{:name :doc :args :fn}`.
 
@@ -420,7 +490,22 @@
   "Define a validated map-like type with a real field per declared key, so reads and writes
   are field access rather than map lookups.
 
-  `checks` maps a check name -- a namespace-qualified keyword, unique within the type, and
+  Three positions: the type name, the fields, and a definition map of named sections --
+
+      (rec/defrecord Heist
+        [name crew take cuts]
+        {:options      {:io-limited true}
+         :checks       {::name non-blank-string?}
+         :io-deps      {}
+         :certificates {}})
+
+  Every section is optional and an absent one is an empty one, but a key that names no
+  section at all is a compile error: a mistyped `:cheks` would define a type with no checks,
+  and a value asserting a validation that never ran is the one thing here that must not be
+  constructible. See [[parse-definition]]. `:io-deps` and `:certificates` are accepted only
+  empty until the library implements them.
+
+  `:checks` maps a check name -- a namespace-qualified keyword, unique within the type, and
   what failures report -- to a check, written in one of three forms:
 
       ::name       non-blank-string?                      ; a bare fn over the field it names
@@ -451,8 +536,9 @@
   defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
   `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
   declare, so two types that happen to share a field name share nothing else."
-  [tname fields checks]
-  (let [model-sym (symbol (str tname "-model"))
+  [tname fields definition]
+  (let [{:keys [options checks]} (parse-definition tname definition)
+        model-sym (symbol (str tname "-model"))
         fsyms     (mapv #(with-meta % nil) fields)
         ;; The defining namespace qualifies the keys, so a field named `name` is
         ;; `:this.ns/name` and two types sharing a field name share nothing else.
@@ -616,6 +702,7 @@
        (def ~model-sym
          {:name        '~tname
           :key-ns      ~key-ns
+          :options     ~options
           :field-order ~ks
           :field-set   ~(set ks)
           :checks      ~(mapv (fn [i]

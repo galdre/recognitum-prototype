@@ -152,12 +152,12 @@
   ;; which a proxy could watch for it.
   (let [t (compiles '(recognitum.core/defrecord Peeker
                        [a b]
-                       {:scratch/peek ([a] (int? b))}))]
+                       {:checks {:scratch/peek ([a] (int? b))}}))]
     (is (some? t) "reading an undeclared field must not compile")
     (is (re-find #"Unable to resolve symbol: b" (ex-message (root-cause t)))))
   (testing "and a dependency the type does not declare is refused by name"
     (let [e (compile-data '(recognitum.core/defrecord Stranger
                              [a]
-                             {:scratch/c ([a z] (int? a))}))]
+                             {:checks {:scratch/c ([a z] (int? a))}}))]
       (is (= ::rec/unknown-dependency (:error e)))
       (is (= 'z (:dependency e))))))

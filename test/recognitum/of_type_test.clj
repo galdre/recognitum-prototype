@@ -26,7 +26,7 @@
 
 (rec/defrecord Caper
   [name crew take cuts]
-  {::name string?})
+  {:checks {::name string?}})
 
 (def caper (->Caper "The Lavender Hill Mob" #{:holland} 1 {:holland 1}))
 

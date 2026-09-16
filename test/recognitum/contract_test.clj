@@ -25,7 +25,7 @@
   [v]
   ;; Returns what it was given when it disapproves, so the failure data is visibly the
   ;; check's return value rather than a constant the library supplied.
-  {::strict ("v is :ok" [v] (if (= v :ok) true v))})
+  {:checks {::strict ("v is :ok" [v] (if (= v :ok) true v))}})
 
 (def ^:private ok (->Strict :ok))
 
@@ -60,7 +60,7 @@
   [n]
   ;; A predicate that forgot to return a boolean. It is truthy for every input it will ever
   ;; see, and it passes nothing -- which is the failure mode this rule exists to make loud.
-  {::counted ([n] (count (str n)))})
+  {:checks {::counted ([n] (count (str n)))}})
 
 (deftest a-check-that-never-returns-true-never-passes
   (let [e (err #(->Counted 5))]
@@ -71,9 +71,10 @@
 
 (rec/defrecord Fragile
   [v]
-  {::fragile ([v] (if (= v :boom)
-                    (throw (IllegalStateException. "a bug in the check"))
-                    (= v :ok)))})
+  {:checks
+   {::fragile ([v] (if (= v :boom)
+                     (throw (IllegalStateException. "a bug in the check"))
+                     (= v :ok)))}})
 
 (def ^:private sturdy (->Fragile :ok))
 
@@ -88,7 +89,10 @@
 
 (rec/defrecord Thrower
   [v]
-  {::thrower ([v] (if (= v :ok) true (throw (ex-info "from inside the check" {:error ::mine}))))})
+  {:checks
+   {::thrower ([v] (if (= v :ok)
+                     true
+                     (throw (ex-info "from inside the check" {:error ::mine}))))}})
 
 (deftest an-ex-info-thrown-by-a-check-is-not-mistaken-for-a-check-failure
   ;; A check is free to throw an ExceptionInfo of its own, and it must come out the way it
@@ -100,8 +104,9 @@
 
 (rec/defrecord Mixed
   [a b]
-  {::a-int  ([a] (int? a))
-   ::b-boom ([b] (if (= b :boom) (throw (IllegalStateException. "still a bug")) true))})
+  {:checks
+   {::a-int  ([a] (int? a))
+    ::b-boom ([b] (if (= b :boom) (throw (IllegalStateException. "still a bug")) true))}})
 
 (deftest a-throw-is-not-softened-by-a-failure-beside-it
   ;; "We could not determine whether this is valid" is a different claim from "this is
@@ -115,10 +120,11 @@
   [a b]
   ;; Written deliberately out of sorted order, so "declaration order" is distinguishable
   ;; from any order a map or a set would have imposed on its own.
-  {::a-int     ("a is an int" [a] (int? a))
-   ::a-small   ("a is under ten" [a] (and (int? a) (< a 10)))
-   ::b-int     ([b] (int? b))
-   ::a-below-b ("a is below b" [a b] (and (int? a) (int? b) (< a b)))})
+  {:checks
+   {::a-int     ("a is an int" [a] (int? a))
+    ::a-small   ("a is under ten" [a] (and (int? a) (< a 10)))
+    ::b-int     ([b] (int? b))
+    ::a-below-b ("a is below b" [a b] (and (int? a) (int? b) (< a b)))}})
 
 (def ^:private pair (->Multi 1 2))
 (def ^:private multi-order [::a-int ::a-small ::b-int ::a-below-b])
@@ -182,8 +188,9 @@
 
 (rec/defrecord Tallied
   [a b]
-  {::first  ([a] (do (swap! ran conj ::first) false))
-   ::second ([b] (do (swap! ran conj ::second) false))})
+  {:checks
+   {::first  ([a] (do (swap! ran conj ::first) false))
+    ::second ([b] (do (swap! ran conj ::second) false))}})
 
 (deftest a-failing-check-does-not-stop-the-ones-after-it-from-running
   (reset! ran [])
@@ -194,16 +201,17 @@
 
 (rec/defrecord Ten
   [v]
-  {::c0 ([v] (= v :ok))
-   ::c1 ([v] (= v :ok))
-   ::c2 ([v] (= v :ok))
-   ::c3 ([v] (= v :ok))
-   ::c4 ([v] (= v :ok))
-   ::c5 ([v] (= v :ok))
-   ::c6 ([v] (= v :ok))
-   ::c7 ([v] (= v :ok))
-   ::c8 ([v] (= v :ok))
-   ::c9 ([v] (= v :ok))})
+  {:checks
+   {::c0 ([v] (= v :ok))
+    ::c1 ([v] (= v :ok))
+    ::c2 ([v] (= v :ok))
+    ::c3 ([v] (= v :ok))
+    ::c4 ([v] (= v :ok))
+    ::c5 ([v] (= v :ok))
+    ::c6 ([v] (= v :ok))
+    ::c7 ([v] (= v :ok))
+    ::c8 ([v] (= v :ok))
+    ::c9 ([v] (= v :ok))}})
 
 (deftest ten-failures-come-back-in-declaration-order-in-an-array-map
   ;; A map literal would have stopped holding its insertion order at eight entries. The

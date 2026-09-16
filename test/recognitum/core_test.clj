@@ -135,10 +135,11 @@
 
 (rec/defrecord Counted
   [a b c]
-  {::a int?
-   ::b int?
-   ::c int?
-   ::a-below-b ([a b] (counted a b))})
+  {:checks
+   {::a int?
+    ::b int?
+    ::c int?
+    ::a-below-b ([a b] (counted a b))}})
 
 (def ^:private counted-base (rec/drafting [x Counted] (merge x {::a 1 ::b 2 ::c 3})))
 

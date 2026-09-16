@@ -45,7 +45,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 - [x] **C0. `of-type?`.** True for either form of a registered type; false for anything
       unregistered, including the type object itself. Needed before C2, since a wrapped body
       receives a draft and `instance?` stops meaning what an author expects.
-- [ ] **C1. The definition map.** Wrap the checks in `{:options … :checks … :io-deps …
+- [x] **C1. The definition map.** Wrap the checks in `{:options … :checks … :io-deps …
       :certificates …}`, all sections optional. Only `:checks` is populated at this point.
 - [ ] **C2. Protocol implementations.** One body installed on both types. The draft impl runs it
       as written; the sealed impl opens a draft, runs it, and seals the result only if the body
@@ -127,6 +127,29 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       something unrelated, narrow those two assertions to the token list the file already
       carries rather than deleting them.
 
+- [ ] **C1 — `:io-deps` and `:certificates` compile only empty.** The sections are part of
+      the form before they are part of the library, so a populated one throws
+      `:recognitum.core/unsupported-section` at macroexpansion rather than being accepted
+      and ignored — accepting a declaration nothing reads is the silent mis-declaration
+      this design is arranged to prevent. E1 and D3 each delete their half of the
+      `(doseq [s [:io-deps :certificates]] ...)` guard in `parse-definition`, populate the
+      model from the section, and drop the corresponding case from
+      `definition-test/a-section-with-no-implementation-behind-it-is-accepted-only-empty`.
+
+- [ ] **C1 — only `:options` was added to the model, and nothing reads it.** The model
+      carries `:options` (an empty map where the section was left out) so that E4 has
+      somewhere to look for `:io-limited`; `:io-deps` and `:certificates` are not on the
+      model at all, because they can only be empty. Whoever lands E1/D3/E4 adds theirs the
+      same way. `known-options` is `#{:io-limited}` and an option outside it is a compile
+      error, so a new option is declared there or it does not compile.
+
+- [ ] **C1 — the definition map is required, not optional.** `SPEC.md` says three
+      positions and every *section* optional, so a type with no checks is written
+      `(rec/defrecord T [a b] {})` rather than with the third position dropped. C2 adds
+      trailing protocol implementations to the form and so has to touch the arity anyway;
+      if an omitted definition map is wanted, that is where to decide it, since a map
+      literal and a protocol name are trivially told apart.
+
 - [ ] **C0 — `README.md` does not mention `of-type?`, `draft?` or `sealed?` at all.** The
       four-way table in `SPEC.md` under "Telling values apart" has no counterpart in the
       README, which still leaves a reader with `instance?` and no warning that it is true of
@@ -135,7 +158,9 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 - [ ] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
       the `:invalid-field` / `:invariant-violated` errors.** None of those exist. F1 owns the
-      README; this is a note that it is now wrong rather than merely dated.
+      README; this is a note that it is now wrong rather than merely dated. C1 adds to the
+      pile: the third position is now a definition map, so the README's `defrecord` example
+      is wrong in its shape as well as in its contents.
 
 - [ ] **B3 — `SPEC.md` says failures come back "in declaration order", which is true only
       up to eight checks.** Ruled acceptable rather than fixed: the reader hands the macro a

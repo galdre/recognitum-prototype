@@ -27,12 +27,13 @@
 
 (rec/defrecord BenchHeist
   [name crew take cuts]
-  {::name non-blank-string?
-   ::crew crew-set?
-   ::take non-neg-int?
-   ::cuts cuts-map?
-   ::cuts-add-up ("cuts add up" [take cuts] (= take (reduce + 0 (vals cuts))))
-   ::only-crew   ("only crew"   [crew cuts] (every? crew (keys cuts)))})
+  {:checks
+   {::name non-blank-string?
+    ::crew crew-set?
+    ::take non-neg-int?
+    ::cuts cuts-map?
+    ::cuts-add-up ("cuts add up" [take cuts] (= take (reduce + 0 (vals cuts))))
+    ::only-crew   ("only crew"   [crew cuts] (every? crew (keys cuts)))}})
 
 ;;; ---- hand-rolled version ----
 

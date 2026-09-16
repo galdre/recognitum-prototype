@@ -40,10 +40,11 @@
 
 (rec/defrecord Forms
   [a b]
-  {::a int?                               ; shorthand: a bare fn over the field the key names
-   ::b-positive ([b] (pos? b))            ; arglist and body
-   ::ordered ("a is below b"              ; docstring, arglist and body
-              [a b] (and (int? a) (int? b) (< a b)))})
+  {:checks
+   {::a int?                               ; shorthand: a bare fn over the field the key names
+    ::b-positive ([b] (pos? b))            ; arglist and body
+    ::ordered ("a is below b"              ; docstring, arglist and body
+               [a b] (and (int? a) (int? b) (< a b)))}})
 
 (deftest all-three-forms-define-a-check
   (is (rec/sealed? (->Forms 1 2)))
@@ -74,7 +75,7 @@
 
 (rec/defrecord Nilly
   [a]
-  {::a ([a] (when (int? a) true))})
+  {:checks {::a ([a] (when (int? a) true))}})
 
 (deftest a-check-returning-nil-fails-and-nil-is-what-is-reported
   (is (rec/sealed? (->Nilly 1)))
@@ -90,7 +91,7 @@
   [v]
   ;; A `(fn ...)` literal is a list, and so is the arglist form -- they are told apart by what
   ;; the list starts with, so this is the shorthand and receives the field's value.
-  {::v (fn [x] (reset! saw x) (string? x))})
+  {:checks {::v (fn [x] (reset! saw x) (string? x))}})
 
 (deftest the-shorthand-receives-the-field-value-not-the-record
   (reset! saw ::nothing)
@@ -104,7 +105,7 @@
 
 (rec/defrecord Ordered
   [a b]
-  {::reversed ([b a] (reset! got [b a]) true)})
+  {:checks {::reversed ([b a] (reset! got [b a]) true)}})
 
 (deftest the-body-receives-its-arglist-positionally-in-the-order-written
   (reset! got nil)
@@ -118,32 +119,34 @@
   ;; silently-missing index entry -- it does not compile.
   (let [t (compiles '(recognitum.core/defrecord Peeker
                        [a b]
-                       {:scratch/peek ([a] (+ a b))}))]
+                       {:checks {:scratch/peek ([a] (+ a b))}}))]
     (is (some? t))
     (is (re-find #"Unable to resolve symbol: b" (ex-message (root-cause t)))))
   (testing "while naming it compiles"
     (is (nil? (compiles '(recognitum.core/defrecord Namer
                            [a b]
-                           {:scratch/named ([a b] (< a b))}))))))
+                           {:checks {:scratch/named ([a b] (< a b))}}))))))
 
 (deftest a-check-takes-exactly-one-arity
   (let [e (compile-data '(recognitum.core/defrecord Multi
                            [a b]
-                           {:scratch/two (([a] (int? a)) ([a b] (< a b)))}))]
+                           {:checks {:scratch/two (([a] (int? a)) ([a b] (< a b)))}}))]
     (is (= ::rec/malformed-check (:error e)))
     (is (= :scratch/two (:check e)))))
 
 (deftest a-check-form-that-does-not-parse-names-itself
   (testing "a docstring and nothing else"
-    (let [e (compile-data '(recognitum.core/defrecord NoArgs [a] {:scratch/c ("just a doc")}))]
+    (let [e (compile-data '(recognitum.core/defrecord NoArgs [a]
+                             {:checks {:scratch/c ("just a doc")}}))]
       (is (= ::rec/malformed-check (:error e)))
       (is (= :scratch/c (:check e)))))
   (testing "an arglist and no body"
-    (let [e (compile-data '(recognitum.core/defrecord NoBody [a] {:scratch/c ([a])}))]
+    (let [e (compile-data '(recognitum.core/defrecord NoBody [a] {:checks {:scratch/c ([a])}}))]
       (is (= ::rec/malformed-check (:error e)))
       (is (= :scratch/c (:check e)))))
   (testing "a docstring and an arglist and no body"
-    (let [e (compile-data '(recognitum.core/defrecord NoBody2 [a] {:scratch/c ("d" [a])}))]
+    (let [e (compile-data '(recognitum.core/defrecord NoBody2 [a]
+                             {:checks {:scratch/c ("d" [a])}}))]
       (is (= ::rec/malformed-check (:error e)))
       (is (= :scratch/c (:check e))))))
 
@@ -155,10 +158,11 @@
 
 (rec/defrecord Indexed
   [a b c]
-  {::a ([a] (tally ::a (int? a)))
-   ::b ([b] (tally ::b (int? b)))
-   ::c ([c] (tally ::c (int? c)))
-   ::a-below-b ([a b] (tally ::a-below-b (and (int? a) (int? b) (< a b))))})
+  {:checks
+   {::a ([a] (tally ::a (int? a)))
+    ::b ([b] (tally ::b (int? b)))
+    ::c ([c] (tally ::c (int? c)))
+    ::a-below-b ([a b] (tally ::a-below-b (and (int? a) (int? b) (< a b))))}})
 
 (defn- indexed [] (rec/drafting [x Indexed] (merge x {::a 1 ::b 2 ::c 3})))
 
@@ -222,8 +226,9 @@
 
 (rec/defrecord Grounded
   [a]
-  {::a int?
-   ::always ("depends on nothing at all" [] (do (swap! grounded inc) true))})
+  {:checks
+   {::a int?
+    ::always ("depends on nothing at all" [] (do (swap! grounded inc) true))}})
 
 (deftest a-check-with-an-empty-arglist-runs-where-there-is-no-earlier-verdict-to-trust
   (reset! grounded 0)
@@ -251,8 +256,9 @@
 
 (rec/defrecord Doubled
   [n]
-  {::an-int ([n] (int? n))
-   ::in-range ("n is between 1 and 10" [n] (and (int? n) (<= 1 n 10)))})
+  {:checks
+   {::an-int ([n] (int? n))
+    ::in-range ("n is between 1 and 10" [n] (and (int? n) (<= 1 n 10)))}})
 
 (deftest several-checks-may-name-the-same-field-and-all-of-them-run
   (is (rec/sealed? (->Doubled 5)))

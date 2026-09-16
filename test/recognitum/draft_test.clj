@@ -55,8 +55,9 @@
 
 (rec/defrecord Note
   [title body]
-  {::title string?
-   ::body  ([body] (or (nil? body) (string? body)))})
+  {:checks
+   {::title string?
+    ::body  ([body] (or (nil? body) (string? body)))}})
 
 (deftest nil-is-a-legal-value-when-the-check-admits-it
   (let [n (rec/drafting [x Note] (merge x {::title "t" ::body nil}))]
