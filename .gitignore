@@ -5,3 +5,4 @@
 /classes/
 .nrepl-port
 *.hprof
+/.desktop/
