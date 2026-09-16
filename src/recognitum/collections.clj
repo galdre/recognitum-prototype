@@ -114,8 +114,11 @@
   (equals [this x]
     (clojure.lang.APersistentMap/mapEquals this x))
 
-  (toString [this]
-    (str (into {} this)))
+  ;; No `toString`, for the same reason: a record does not override it, so `str` of one is
+  ;; `Object`'s identity string. potemkin's template answered with the entries, which is
+  ;; readable but unbounded -- `str` is what concatenation and logging call implicitly, and
+  ;; a collection field would go into every line that mentions a value. The readable form
+  ;; is `pr-str`, one call away.
 
   clojure.lang.ILookup
   (valAt [this k]

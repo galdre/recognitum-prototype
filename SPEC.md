@@ -568,6 +568,11 @@ is a placeholder until its namespace is loaded, and `clojure.edn` ignores it ent
 A draft prints `#<Heist draft {...}>` — explicitly unreadable, because it is unvalidated working
 state.
 
+`str` of a value is the JVM identity string — `recognitum.heist.Heist@3c6f1169` — exactly as a
+record's is, because neither overrides `toString`; the readable form is `pr-str`. `str` is called
+implicitly by string concatenation and by logging, where a value's entries would dump a whole
+collection field into every line, and the identity string is bounded.
+
 ## Errors
 
 Everything throws `ex-info` with an `:error` key to dispatch on.

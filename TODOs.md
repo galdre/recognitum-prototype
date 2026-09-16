@@ -192,14 +192,16 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       and could emit a field-by-field `equiv`/`equals`/`hasheq` into each generated type,
       where it would override the template's the way `cons` already does.
 
-- [ ] **G2 — `toString` is neither `defrecord`'s nor the print form.** potemkin's
-      template answers with the entries, `str` of a `defrecord` is `Object`'s identity
+- [x] **G2 — `toString` is neither `defrecord`'s nor the print form.** potemkin's
+      template answered with the entries, `str` of a `defrecord` is `Object`'s identity
       string, and `pr-str` of one of ours is `#recognitum.heist/Heist{...}`. The template
-      keeps potemkin's answer, which is the readable one of the three and what every
-      existing test expects, but a value whose `str` drops the tag its printed form
-      carries is a small lie. Making `toString` the print form is a two-line change in
-      the generated type, where the tag is in hand; it was left alone because `SPEC.md`
-      rules on printing and says nothing about `toString`.
+      kept potemkin's answer, which is the readable one of the three and what every
+      existing test expected, but a value whose `str` drops the tag its printed form
+      carries is a small lie. Ruled: `str` matches `defrecord` — the identity string —
+      because `str` is what concatenation and logging call implicitly and the entries
+      form would dump a collection field into every line, while the readable form is one
+      `pr-str` away; the override is gone from the template and `SPEC.md`, "Printing and
+      reading", records it.
 
 - [ ] **G1 — a check whose shape gate fails throws from `check`, where `SPEC.md` gives
       two outcomes.** The same position E1 took for a failing IO gate, and for the same
