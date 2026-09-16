@@ -62,7 +62,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       check runs whatever it depends on that is not already passing.
 - [x] **D3. Certificates.** The `:certificates` section, holding derived from the mask, and the
       built-in certificate covering every check. `certify` / `certify!`.
-- [ ] **D4. Uniform `meta`.** Library keys merged over the user's, same answer from drafts and
+- [x] **D4. Uniform `meta`.** Library keys merged over the user's, same answer from drafts and
       sealed values.
 - [ ] **D5. `seal` consults the mask.** Run only what is not passing; collect every failure and
       throw once. Subsumes the current dirty-key logic.
@@ -135,7 +135,13 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       has one. D4 either widens `passing` to read the model's check names for a sealed
       value or builds that constant where it merges the metadata; either is fine, but the
       docstring's "a question about a draft and nothing else" has to move if the first is
-      chosen.
+      chosen. Ruled in D4: the second. `meta` is the uniform interface and answers for
+      both forms; `passing` and `holding` stay questions about a mask, which only a draft
+      has, and the sealed half of the answer is a constant the macro computes from the
+      type and embeds in the sealed `meta` method. So a sealed value with no metadata of
+      its own answers with that very map and allocates nothing, and there is one narrow
+      set of draft-only fns rather than four fns disagreeing about what a sealed value is
+      allowed to be asked.
 
 - [ ] **D1 — the mask is written but barely read.** `run-draft-checks!` records what
       it ran and `seal` is its only caller; the inlined groups at `assoc`, `merge` and the two
@@ -153,7 +159,9 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       passed on, so `true` is an honest answer there too, and D4's uniform `meta` wants the
       same constant for the same reason. Whoever widens `passing` for D4 should widen these
       alongside it or leave all three narrow deliberately -- the one thing to avoid is
-      `passing` answering for a sealed value while `check` throws on one.
+      `passing` answering for a sealed value while `check` throws on one. Ruled in D4:
+      all of them stay narrow. `meta` is where a sealed value answers, and it answers
+      from a constant rather than by running anything.
 
 - [ ] **D2 — a check naming a field never written throws `::missing-field`, which
       `SPEC.md` does not say.** The spec's table gives `check` two outcomes, `true` or the
@@ -471,3 +479,10 @@ validates, so a literal routed through it is a validating entry point, not a byp
 - [x] Now a git repo. Nothing before the migration has history, so an agent reading the early
       state cold could not tell spec from accident, and reconstructed a rationale rather than
       admit it did not know. That is how the invented performance rationale got written.
+
+- [ ] **D4 — the metadata keys are documented only in docstrings.** `README.md` says
+      nothing about `:recognitum.core/passed` or `:recognitum.core/certificates`, or about
+      `meta` answering the same way from a draft and from a sealed value. F1 rewrites the
+      README and should give them a section; `dev/recognitum/demo.clj` shows drafts and
+      sealing without ever printing what a draft has established, which is the one place
+      the uniformity is visible at a glance.

@@ -37,7 +37,14 @@
   *holds* one is derived from the mask rather than recorded anywhere ([[holding]]), so
   overlapping certificates need no coordination and individual checks can complete one
   incidentally. Certificates are a draft-level facility and change nothing about what a
-  sealed value guarantees: [[seal]] enforces every check on the type, certified or not."
+  sealed value guarantees: [[seal]] enforces every check on the type, certified or not.
+
+  `meta` answers the same way from either form. A value's own metadata comes back with
+  `::passed` and `::certificates` merged over the top -- read off the mask for a draft, and
+  a constant of the type for a sealed value, where every check passed and every certificate
+  therefore holds. So nothing has to establish which form it is holding before asking, and
+  because the library's keys are written last, nothing a caller sets can claim more than
+  the value can show for itself."
   (:refer-clojure :exclude [defrecord])
   (:require
    [potemkin :as p]))
@@ -232,6 +239,18 @@
       (throw (ex-info (format "%s expects a draft, and %s is not one" what (pr-str d))
                       {:error ::not-a-draft :value d}))))
 
+(defn- passed-in
+  "The names of the checks `mask` says are passing."
+  [model mask]
+  (into #{} (keep-indexed (fn [i c] (when (bit-test mask i) (:name c)))) (:checks model)))
+
+(defn- held-in
+  "The names of the certificates `mask` says are held -- one `and` each, since a certificate
+  is held exactly when every check in it passes."
+  [model mask]
+  (into #{} (keep (fn [[cname {cm :mask}]] (when (= cm (bit-and mask cm)) cname)))
+        (:certificates model)))
+
 (defn passing
   "The set of check names currently passing on the draft `d`.
 
@@ -241,11 +260,10 @@
   stands, never what was once true of something it came from.
 
   A question about a draft and nothing else: a sealed value has no mask, because it has no
-  state to be in other than valid."
+  state to be in other than valid. Where the question is asked of a value that could be
+  either, `(::passed (meta x))` is the same answer and both forms answer it."
   [d]
-  (let [model (draft-model! "passing" d)
-        m     (verdict-mask d)]
-    (into #{} (keep-indexed (fn [i c] (when (bit-test m i) (:name c)))) (:checks model))))
+  (passed-in (draft-model! "passing" d) (verdict-mask d)))
 
 (defn run-draft-checks!
   "Run the checks at `idxs` against the draft `d`, writing each verdict into its mask as it
@@ -420,12 +438,34 @@
   actually passed its checks.
 
   A question about a draft, as [[passing]] is: a sealed value passed every check on its
-  type, which is strictly more than any certificate claims."
+  type, which is strictly more than any certificate claims. Where the question is asked of
+  a value that could be either, `(::certificates (meta x))` is the same answer and both
+  forms answer it."
   [d]
-  (let [model (draft-model! "holding" d)
-        m     (verdict-mask d)]
-    (into #{} (keep (fn [[cname {:keys [mask]}]] (when (= mask (bit-and m mask)) cname)))
-          (:certificates model))))
+  (held-in (draft-model! "holding" d) (verdict-mask d)))
+
+(defn merged-meta
+  "`mta` with the library's own keys, `lib`, merged over the top.
+
+  Over rather than under, deliberately. `with-meta` is public, so anything a caller could
+  set a caller could forge; keys written last cannot be overridden by anything handed in,
+  and what comes back is what the value can actually show for itself.
+
+  A value carrying no metadata of its own answers with `lib` exactly -- for a sealed value
+  that is the type's constant, allocated once when the type was defined."
+  [mta lib]
+  (if mta (conj mta lib) lib))
+
+(defn draft-meta
+  "What a draft answers [[clojure.core/meta]] with: its own metadata, with what its verdict
+  mask says merged over the top.
+
+  A sealed value answers the same two keys, from a constant its type computed when it was
+  defined -- every check passed, so every certificate is held. That is what makes the
+  question askable of a value without first establishing which form it is."
+  [model mask mta]
+  (merged-meta mta (array-map ::passed       (passed-in model mask)
+                              ::certificates (held-in model mask))))
 
 (defn- run-certificate!
   "Establish every check in `cert` against `d` and answer with `[i ret]` for each that did
@@ -1125,6 +1165,12 @@
         ;; that does not exist, or covering nothing at all, is a claim about a validation
         ;; nobody wrote. The built-in comes back on the end of this.
         certs     (parse-certificates tname certificates (mapv :name parsed))
+        ;; What a sealed value adds to its own metadata: every check passed, so every
+        ;; certificate is held. Both are facts about the type rather than about the value,
+        ;; so this is computed once here and embedded as a constant -- a sealed value with
+        ;; no metadata of its own answers with this very map, and allocates nothing.
+        sealed-meta (array-map ::passed       (set (map :name parsed))
+                               ::certificates (set (keys certs)))
         cvar      (fn [i] (symbol (str tname "--check-" i)))
         deps-of   (fn [i] (:deps (nth parsed i)))
         ;; Derived from the arglists, so it cannot be misdeclared: there is nowhere to
@@ -1216,7 +1262,10 @@
              ~(apply list ks) (no-dissoc! ~model-sym ~ksym)
              this#))
          (~'keys [_#] ~ks)
-         (~'meta [_#] ~mtasym)
+         ;; The library's keys over the caller's, so nothing a caller writes can claim more
+         ;; than the value can show for itself. Here what it shows is constant: a sealed
+         ;; value is one every check passed on.
+         (~'meta [_#] (merged-meta ~mtasym ~sealed-meta))
          (~'with-meta [_# ~mta2sym] (new ~tname ~@fsyms ~mta2sym))
 
          ;; one allocation for the whole merge, each applicable check once at the end
@@ -1279,7 +1328,10 @@
            (concat (cond-> [] ~@(mapcat (fn [[k f]] [`(not (identical? ~f unset)) `(conj ~k)])
                                         (map vector ks fsyms)))
                    (keys ~extsym)))
-         (~'meta [_#] ~mtasym)
+         ;; The same two keys a sealed value answers with, read off the mask rather than
+         ;; fixed: on a draft they are what has actually been established. Merged over the
+         ;; caller's metadata for the same reason, and the caller's own keys survive.
+         (~'meta [_#] (draft-meta ~model-sym ~vdsym ~mtasym))
          (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym dirtysym vdsym ownsym mta2sym))
          (~'cons [this# ~osym]
            (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym)) this# (entries-of ~osym)))
@@ -1333,8 +1385,11 @@
           ;; From the type, nothing is established; from a sealed value, everything is --
           ;; that is what being sealed means, and the draft inherits exactly that claim.
           :draft-empty      (fn [~ownsym] ~(dctor (repeat n `unset) {} 0 0 ownsym nil))
+          ;; The metadata comes off the field rather than through `meta`, which would hand
+          ;; back the library's keys merged in and store a snapshot of them as though the
+          ;; caller had written it. What the draft inherits is what the caller actually set.
           :draft-from       (fn [~svsym ~ownsym]
-                              ~(dctor (mapv sfield fsyms) {} 0 all-pass ownsym `(meta ~svsym)))
+                              ~(dctor (mapv sfield fsyms) {} 0 all-pass ownsym (sfield mtasym)))
           :draft-owner      (fn [~dvsym] ~(dfield ownsym))
           :draft-ext        (fn [~dvsym] ~(dfield extsym))
           ;; Neither changes a field, so neither disturbs a verdict: the mask is copied

@@ -191,7 +191,9 @@
     (testing "with-meta"
       (let [m (with-meta d {:user-key 1})]
         (is (= all-checks (rec/passing m)))
-        (is (= {:user-key 1} (meta m)))))
+        (is (= 1 (:user-key (meta m))))
+        (is (= all-checks (:recognitum.core/passed (meta m)))
+            "and `meta` reports the same mask the caller's own keys travelled with")))
     (testing "adoption, by hand and by a drafting form"
       (is (= all-checks (rec/passing (rec/adopt d (Object.)))))
       (is (= all-checks (seen d rec/passing))))))

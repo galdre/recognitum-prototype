@@ -320,10 +320,15 @@
   (is (nil? (resolve 'recognitum.protocol-test/->LedgerDraft))))
 
 (deftest metadata-survives-a-wrapped-method
+  ;; The draft the wrapper opens inherits the caller's metadata and the sealed value it
+  ;; produces carries it out again. `meta` merges the library's own keys over the top of
+  ;; it, which is why the comparison is on the caller's key rather than on the whole map.
   (let [m (with-meta led {:tagged 1})
         l (spend m 20)]
-    (is (= {:tagged 1} (meta l)))
-    (is (= {:tagged 1} (meta (me m))))))
+    (is (= 1 (:tagged (meta l))))
+    (is (= 1 (:tagged (meta (me m)))))
+    (is (= (meta led) (dissoc (meta l) :tagged))
+        "and what the library adds is the same on the way out as on the way in")))
 
 ;;; ------------------------------- what does not compile -------------------------------
 

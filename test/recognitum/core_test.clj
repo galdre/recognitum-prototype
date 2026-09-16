@@ -32,11 +32,14 @@
          (into {} job))))
 
 (deftest carries-meta
+  ;; `meta` answers with the library's own keys merged over whatever the caller set, so
+  ;; what comes back is the caller's metadata plus what the value can show for itself --
+  ;; on a sealed value, that every check passed. See `recognitum.meta-test`.
   (let [m (with-meta job {:src :test})]
-    (is (= {:src :test} (meta m)))
+    (is (= :test (:src (meta m))))
     (is (instance? Heist m))
     (is (= 3000 (::heist/take m)))
-    (is (nil? (meta job)) "with-meta does not mutate the original")))
+    (is (= (meta job) (dissoc (meta m) :src)) "with-meta does not mutate the original")))
 
 ;;; ----------------------------------------- writing -----------------------------------------
 
