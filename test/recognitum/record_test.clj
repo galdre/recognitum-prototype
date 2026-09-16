@@ -20,6 +20,7 @@
    [recognitum.heist :as heist])
   (:import
    (java.io ByteArrayInputStream ByteArrayOutputStream ObjectInputStream ObjectOutputStream)
+   (java.util HashSet)
    (recognitum.heist Heist)))
 
 ;;; ----------------------------------- the two types -----------------------------------
@@ -136,6 +137,39 @@
         (is (= UnsupportedOperationException (threw #(.put x :z 1))))
         (is (= UnsupportedOperationException (threw #(.remove x k))))
         (is (= UnsupportedOperationException (threw #(.clear x))))))))
+
+(deftest equals-and-hashcode-match-a-defrecords-map-contract
+  ;; `emit-defrecord` leaves `Object.equals` and `Object.hashCode` to
+  ;; `APersistentMap/mapEquals` and `APersistentMap/mapHash`, both class-blind: at the Java
+  ;; level a record *is* a bare map with the same entries, symmetrically, and hashes as
+  ;; one. The baseline rule decides it -- ours answers the same, so the two sit in one
+  ;; bucket and agree when asked.
+  (doseq [[what x m] [["defrecord" theirs {:alpha 1 :beta 2}]
+                      ["ours"      ours   {::alpha 1 ::beta 2}]]]
+    (testing what
+      (is (true? (.equals x m)) "true to a bare map with the same entries")
+      (is (true? (.equals m x)) "and true from the map's side, so it is symmetric")
+      (is (= (.hashCode x) (.hashCode m)) "and hashes as that map does")
+      (is (true? (.contains (HashSet. [m]) x))
+          "so a Java hash collection holding the map finds the value in it")))
+  (testing "and two unrelated types with the same entries are equal at the Java level"
+    (is (true? (.equals theirs (->PlainDoppel 1 2))))
+    (is (true? (.equals ours (->Doppel 1 2)))))
+  (testing "while = and hash stay type-aware, which is where equiv and hasheq live"
+    (is (false? (= ours {::alpha 1 ::beta 2})))
+    (is (false? (= {::alpha 1 ::beta 2} ours)))
+    (is (false? (= ours (->Doppel 1 2))))
+    (is (not= (hash ours) (hash (into {} ours))))
+    (is (false? (.equiv ours {::alpha 1 ::beta 2})))
+    (is (false? (.equiv ours (->Doppel 1 2))))
+    (is (true? (.equiv ours (->Twin 1 2))))
+    (testing "as a defrecord's do"
+      (is (false? (= theirs {:alpha 1 :beta 2})))
+      (is (false? (= theirs (->PlainDoppel 1 2))))
+      (is (not= (hash theirs) (hash (into {} theirs))))
+      (is (false? (.equiv theirs {:alpha 1 :beta 2})))
+      (is (false? (.equiv theirs (->PlainDoppel 1 2))))
+      (is (true? (.equiv theirs (->PlainTwin 1 2)))))))
 
 ;;; ============================== the six defect rows ==============================
 
@@ -321,25 +355,6 @@
   (is (= 1 (ours ::alpha)))
   (is (= :d (ours ::nope :d)))
   (is (= ClassCastException (threw #(theirs :alpha)))))
-
-(deftest ours-departs-equals-and-hashcode-require-the-class-where-a-defrecords-do-not
-  ;; `defrecord` leaves `.equals` and `.hashCode` to `APersistentMap`'s map contract, so at
-  ;; the Java level a bare map with the right keys *is* a record -- the hole `=` was closed
-  ;; against. We close it on our side too, at the price of an asymmetry against a plain
-  ;; map, which the class-mixed `.hashCode` keeps out of every hash-based collection: the
-  ;; two never land in one bucket, so nothing ever asks.
-  (is (false? (.equals ours {::alpha 1 ::beta 2})))
-  (is (false? (.equals ours (->Doppel 1 2))))
-  (is (false? (.equals ours (rec/draft ours))))
-  (is (true? (.equals ours (->Twin 1 2))))
-  (is (not= (.hashCode ours) (.hashCode (into {} ours))))
-  (is (= (.hashCode ours) (.hashCode (->Twin 1 2))))
-  (testing "the asymmetry, written down: the map's side is the map's to answer"
-    (is (true? (.equals {::alpha 1 ::beta 2} ours))))
-  (testing "where a defrecord answers true to all of it"
-    (is (true? (.equals theirs {:alpha 1 :beta 2})))
-    (is (true? (.equals theirs (->PlainDoppel 1 2))))
-    (is (= (.hashCode theirs) (.hashCode (into {} theirs))))))
 
 (deftest ours-departs-tostring-is-the-entries-where-a-defrecords-is-the-object-identity
   ;; `defrecord` defines no `toString`, so `str` of one is `Object`'s; potemkin's template
