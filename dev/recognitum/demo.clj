@@ -26,14 +26,14 @@
     (show "(:take job) -- the bare key" (fn [] (:take job)))
     (show "assoc :take 4000 -- the bare key" (fn [] (assoc job :take 4000)))
 
-    (println "\n--- per-field predicates, eager ---")
+    (println "\n--- a check over one field, eager ---")
     (show "assoc ::heist/take \"lots\"" (fn [] (assoc job ::heist/take "lots")))
     (show "assoc :getaway-car \"mini\"" (fn [] (assoc job :getaway-car "mini")))
 
     (println "\n--- dissoc refuses declared fields ---")
     (show "dissoc ::heist/cuts" (fn [] (dissoc job ::heist/cuts)))
 
-    (println "\n--- invariants on single-key writes ---")
+    (println "\n--- a check over two fields, on a single-key write ---")
     (show "assoc ::heist/take 4000 (cuts now stale)" (fn [] (assoc job ::heist/take 4000)))
 
     (println "\n--- merge is one atomic multi-key write ---")
@@ -92,10 +92,10 @@
           (fn [] (edn/read-string {:readers (rec/data-readers)}
                                   "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 1 :cuts {:a 1}}")))
     (show "edn round trip" (fn [] (= job (edn/read-string {:readers (rec/data-readers)} (pr-str job)))))
-    (show "a literal that fails its predicate"
+    (show "a literal that fails a single-field check"
           (fn [] (edn/read-string {:readers (rec/data-readers)}
                                   "#recognitum.heist/Heist{:name \"\" :crew #{:a} :take 1 :cuts {:a 1}}")))
-    (show "a literal that breaks an invariant"
+    (show "a literal that breaks a cross-field check"
           (fn [] (edn/read-string {:readers (rec/data-readers)}
                                   "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 9 :cuts {:a 1}}")))
 

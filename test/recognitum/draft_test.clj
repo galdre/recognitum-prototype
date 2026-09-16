@@ -6,8 +6,7 @@
    [recognitum.heist :as heist]
    [recognitum.core :as rec])
   (:import
-   (recognitum.heist Heist)
-   (recognitum.core Invariant)))
+   (recognitum.heist Heist)))
 
 (def job heist/italian-job)
 
@@ -23,11 +22,12 @@
     (is (rec/draft? d))
     (is (= "nope" (::heist/take d)) "the bad value is simply there"))
   (testing "seal is where it fails"
-    (is (= ::rec/invalid-field (:error (err #(rec/seal (assoc (rec/draft job) ::heist/take "nope"))))))))
+    (is (contains? (:failures (err #(rec/seal (assoc (rec/draft job) ::heist/take "nope"))))
+                   ::heist/take))))
 
 (deftest a-draft-may-pass-through-states-no-single-write-could
   (testing "either write alone throws on a validated value"
-    (is (= ::rec/invariant-violated (:error (err #(assoc job ::heist/take 3500))))))
+    (is (= ::rec/check-failed (:error (err #(assoc job ::heist/take 3500))))))
   (testing "but the pair is fine inside one drafting"
     (is (instance? Heist (rec/drafting [x job] (heist/add-member x :napster 500))))))
 
@@ -57,11 +57,11 @@
 ;;; --------------------------- "never written" is not "written to nil" ---------------------------
 
 (rec/defrecord Note
-  [^{:valid string?}                            title
-   ^{:valid (fn [x] (or (nil? x) (string? x)))} body]
-  [])
+  [title body]
+  {::title string?
+   ::body  ([body] (or (nil? body) (string? body)))})
 
-(deftest nil-is-a-legal-value-when-the-predicate-admits-it
+(deftest nil-is-a-legal-value-when-the-check-admits-it
   (let [n (rec/drafting [x Note] (merge x {::title "t" ::body nil}))]
     (is (nil? (::body n)))
     (is (= [::title ::body] (keys n)) "the field is present, holding nil"))
@@ -130,14 +130,16 @@
 (deftest whatever-seal-returns-passes-every-check
   ;; The guarantee is not "seal ran the checks it selected" but "the result is valid as if
   ;; every check had run". Assert the second directly: seal's key selection is the thing
-  ;; under test, so re-running everything is the only honest oracle.
+  ;; under test, so re-running everything is the only honest oracle. Each check is called
+  ;; here the way it declared it wanted to be -- its arglist, read off the model, is the
+  ;; whole of what it depends on.
   (let [model     (rec/model-of job)
+        run       (fn [{:keys [deps pred]} h] (apply pred (map #(get h %) deps)))
         changeset (fn [i] {:op :add-member :who (keyword (str "m" i)) :cut (* 10 (inc i))})
         history   (reductions (fn [h i] (rec/drafting [x h] (heist/apply-changeset x (changeset i))))
                               job (range 25))]
+    (is (= 6 (count (:checks model))) "and every one of them is exercised")
     (doseq [[i h] (map-indexed vector history)]
       (is (instance? Heist h))
-      (doseq [[k pred] (:preds model)]
-        (is (pred (get h k)) (str "step " i ", field " k)))
-      (doseq [^Invariant inv (:invariants model)]
-        (is ((.-pred inv) h) (str "step " i ", invariant " (.-doc inv)))))))
+      (doseq [c (:checks model)]
+        (is (true? (run c h)) (str "step " i ", check " (:name c)))))))

@@ -1,12 +1,16 @@
 (ns recognitum.core
   "A record-like type that carries proof of its own validation.
 
-  A write to a validated value checks that field's predicate and every invariant
-  depending on it, so such a value is never observable in an invalid state. A draft is
-  not a validated value: writes into it check nothing, which is what lets a multi-step
-  update pass through states no single write could produce. [[seal]] closes the gap —
-  what it returns is validated exactly as if every predicate and every invariant had
-  been rerun.
+  A type declares named checks. A check names, in its arglist, exactly the fields it
+  reads, and the body receives those and nothing else -- so the field -> checks index
+  is derived from the form rather than declared alongside it, and cannot disagree with
+  what the body actually does.
+
+  A write to a validated value runs the checks naming the field written, so such a value
+  is never observable in an invalid state. A draft is not a validated value: writes into
+  it check nothing, which is what lets a multi-step update pass through states no single
+  write could produce. [[seal]] closes the gap -- what it returns is validated exactly as
+  if every check had been rerun.
 
   Fields become keys qualified by the namespace defining the type, so a bare keyword of
   the same name is a key the type does not declare."
@@ -33,8 +37,8 @@
   `clojure.main` thread-binds that var, so a registration made while loading a namespace is
   invisible to the very thread that loaded it and visible to every other one.
 
-  Reading is validating. A literal whose contents fail a predicate or an invariant throws at
-  read time rather than producing a value that lies about itself.
+  Reading is validating. A literal whose contents fail a check throws at read time rather
+  than producing a value that lies about itself.
 
       (edn/read-string {:readers (rec/data-readers)} s)"
   [] @readers)
@@ -46,107 +50,53 @@
                   {:error ::unknown-field :record (:name model) :key k
                    :declared (:field-order model)})))
 
-(defn invalid-field! [model k v]
-  (let [form (get-in model [:fields k :form])]
-    (throw (ex-info (format "%s/%s failed %s: %s" (:name model) (name k) form (pr-str v))
-                    {:error ::invalid-field :record (:name model)
-                     :key k :value v :predicate form}))))
+(defn declared-field!
+  "Throw unless `k` is a field this type declares."
+  [model k]
+  (when-not (contains? (:field-set model) k) (unknown-key! model k)))
 
-(defn check-value!
-  "Run `k`'s predicate against `v`. `k` is assumed declared -- the caller's `case` established it."
-  [model k v]
-  (when-not (try ((get (:preds model) k) v) (catch Throwable _ false))
-    (invalid-field! model k v)))
+(defn check-failed!
+  "Report `check` failing. `vals` is what it was given, keyed by the dependency it was given
+  for, in arglist order; `ret` is what it returned, which is the failure data."
+  [model check ret vals]
+  (throw (ex-info (format "%s failed %s%s: given %s it returned %s"
+                          (:name model) (:name check)
+                          (if-let [d (:doc check)] (str " (" d ")") "")
+                          (pr-str vals) (pr-str ret))
+                  {:error ::check-failed
+                   :record (:name model)
+                   :failures (array-map (:name check)
+                                        {:doc      (:doc check)
+                                         :values   vals
+                                         :returned ret})})))
 
-(defn check-field!
-  "Like [[check-value!]] but for a key that may not be declared at all."
-  [model k v]
-  (if-let [pred (get (:preds model) k)]
-    (when-not (try (pred v) (catch Throwable _ false))
-      (invalid-field! model k v))
-    (unknown-key! model k)))
+(defn run-check!
+  "Run the check at index `i` against `x`, through the type's own generated runner -- which
+  reads the fields it needs directly rather than looking them up. Only the failure path pays
+  for a lookup, to say what the check was given."
+  [model run i x]
+  (let [ret (try (run i x) (catch Throwable _ false))]
+    (when-not ret
+      (let [c (nth (:checks model) i)]
+        (check-failed! model c ret
+                       (into (array-map) (map (fn [d] [d (get x d)])) (:deps c)))))))
 
-(deftype Invariant [doc keys pred])
+(defn checks-for
+  "The indices of the checks naming any of `ks`, in declaration order."
+  [model ks]
+  (into (sorted-set) (mapcat (:index model)) ks))
 
-(defn ->invariant
-  "Turn a literal {:doc :keys :pred} map into an [[Invariant]], whose fields are read directly
-  rather than looked up on every run."
-  [{:keys [doc keys pred]}]
-  (Invariant. doc keys pred))
-
-(defn build-index
-  "`{key -> [invariant ...]}` so a write looks up its invariants instead of scanning them."
-  [invariants]
-  (reduce (fn [idx inv]
-            (reduce #(update %1 %2 (fnil conj []) inv) idx (.-keys ^Invariant inv)))
-          {} invariants))
-
-(defn invariant-failed! [model ^Invariant inv m]
-  (let [ks (.-keys inv) doc (.-doc inv)]
-    (throw (ex-info (format "%s violates invariant: %s" (:name model) doc)
-                    {:error ::invariant-violated :record (:name model)
-                     :invariant doc :depends-on ks
-                     :values (select-keys m ks)}))))
+(defn run-checks!
+  "Run the checks at `idxs` against `x`, in the order `idxs` yields them."
+  [model run x idxs]
+  (doseq [i idxs] (run-check! model run i x)))
 
 (def ^:dynamic *audit-invariant-keys*
-  "When true, every invariant runs against a proxy recording which keys its predicate reads,
-  and reading one the invariant does not declare throws [[undeclared-invariant-key!]].
-
-  Bind it in tests, not in production: the proxy costs an allocation per invariant run and a
-  layer of indirection per key read.
-
-  It can only speak for invariants that actually run, and an invariant is skipped precisely
-  when none of its declared keys were touched -- so it will not catch a bad `:keys` on the
-  write that exploits it. Construction touches every field and therefore runs every invariant,
-  so building one instance under the audit does catch every mis-declaration in a type."
+  "Inert. Dependencies are read off each check's arglist now, and the body cannot reach a
+  field the arglist does not name, so there is no declaration left to disagree with the
+  code and nothing for an audit to find. Kept only until the `:test-audit` alias and the
+  fixture that binds this go with it."
   false)
-
-(p/def-map-type KeyAuditor [m seen]
-  ;; `seen` is a volatile holding the set of keys read so far, or ::all once the predicate has
-  ;; asked for the whole map -- at which point nothing can be attributed and the audit abstains.
-  (get [_ k default] (vswap! seen #(if (= ::all %) % (conj % k))) (get m k default))
-  (assoc [_ k v] (KeyAuditor. (assoc m k v) seen))
-  (dissoc [_ k] (KeyAuditor. (dissoc m k) seen))
-  (keys [_] (vreset! seen ::all) (keys m))
-  (meta [_] (meta m))
-  (with-meta [_ mta] (KeyAuditor. (with-meta m mta) seen)))
-
-(defn undeclared-invariant-key! [model ^Invariant inv undeclared]
-  (let [doc (.-doc inv) declared (.-keys inv)]
-    (throw (ex-info (format "%s invariant %s reads %s but declares only %s -- seal skips an invariant none of whose declared keys were touched, so this one can be skipped on a write that breaks it"
-                            (:name model) (pr-str doc) (pr-str (vec (sort undeclared))) (pr-str declared))
-                    {:error ::undeclared-invariant-key :record (:name model)
-                     :invariant doc :declared declared :also-read (set undeclared)}))))
-
-(defn run-invariant! [model m ^Invariant inv]
-  (if-not *audit-invariant-keys*
-    (when-not (try ((.-pred inv) m) (catch Throwable _ false))
-      (invariant-failed! model inv m))
-    (let [seen (volatile! #{})
-          ok   (try ((.-pred inv) (KeyAuditor. m seen)) (catch Throwable _ false))
-          read @seen]
-      ;; A mis-declared `:keys` is a defect in the type, so it outranks a mere data failure.
-      (when-not (= ::all read)
-        (when-let [undeclared (seq (remove (.-keys inv) read))]
-          (undeclared-invariant-key! model inv undeclared)))
-      (when-not ok (invariant-failed! model inv m)))))
-
-(defn run-invariants-for!
-  "Run the invariants that depend on the single key `k`."
-  [model m k]
-  (when-let [invs ((:index model) k)]
-    (doseq [inv invs] (run-invariant! model m inv))))
-
-(defn check-invariants!
-  "Run every invariant depending on a key in `ks`; nil `ks` runs all of them. `ks` is any
-  collection -- membership is tested against each invariant's own key set, so a caller never
-  has to build one."
-  [model m ks]
-  (if (nil? ks)
-    (doseq [inv (:invariants model)]
-      (run-invariant! model m inv))
-    (doseq [inv (:invariants model) :when (some (.-keys ^Invariant inv) ks)]
-      (run-invariant! model m inv))))
 
 (defn entries-of [o]
   (cond (map? o)                     (seq o)
@@ -154,19 +104,11 @@
         (and (vector? o) (= 2 (count o))) [o]
         :else (throw (ex-info "cannot conj this onto a validated value" {:value o}))))
 
-(defn cons-checked
-  "Apply every entry, then check invariants once — so `merge` is an atomic multi-key update."
-  [model m o]
-  (let [es (entries-of o)
-        m' (reduce (fn [acc [k v]] (check-field! model k v) (assoc acc k v)) m es)]
-    (check-invariants! model m' (map first es))
-    m'))
-
 (defn no-dissoc!
-  "Declared fields are permanent, so `dissoc` refuses them; where a predicate admits nil,
+  "Declared fields are permanent, so `dissoc` refuses them; where a check admits nil,
   `(assoc m k nil)` is how absence is spelled. Undeclared keys dissoc normally."
   [model k]
-  (throw (ex-info (format "cannot dissoc %s from %s: declared fields are permanent -- use (assoc m %s nil) if its predicate admits nil"
+  (throw (ex-info (format "cannot dissoc %s from %s: declared fields are permanent -- use (assoc m %s nil) if its checks admit nil"
                           (pr-str k) (:name model) (pr-str k))
                   {:error ::cannot-dissoc :record (:name model) :key k
                    :instead (list 'assoc 'm k nil)})))
@@ -183,7 +125,7 @@
   so degenerate input resolves the same way every time rather than by seq order."
   [model m]
   (let [nsp    (:key-ns model)
-        fields (set (:field-order model))
+        fields (:field-set model)
         bare   (reduce-kv (fn [acc k v]
                             (if (simple-keyword? k)
                               (let [q (keyword nsp (name k))]
@@ -273,10 +215,11 @@
   (if (extraneous d) ((:draft-clean (draft-model d)) d) d))
 
 (defn- seal-draft [model d]
-  ;; Only the touched keys are actually checked, which is equivalent to checking all of
-  ;; them: an untouched field still holds a value that already satisfied its predicate,
-  ;; and an invariant with no touched key among its own reads only unchanged values.
-  ;; That second step is sound only so far as each invariant's `:keys` is accurate.
+  ;; Only the checks naming a key the draft wrote are actually run, which is equivalent to
+  ;; running all of them: an untouched field still holds the value it had in the validated
+  ;; source, and a check none of whose fields were touched reads only unchanged values, so
+  ;; its verdict cannot have moved. A check naming no field at all has no verdict to inherit
+  ;; from a write, so it runs here regardless.
   (when-let [extra (extraneous d)]
     (throw (ex-info (format "%s has no field(s) %s -- use `clean` to strip them"
                             (:name model) (pr-str (vec extra)))
@@ -285,13 +228,13 @@
     (throw (ex-info (format "%s is missing field %s" (:name model) (first missing))
                     {:error ::missing-field :record (:name model) :key (first missing)})))
   (let [dirty ((:draft-dirty-keys model) d)]
-    (doseq [k dirty] (check-value! model k (get d k)))
-    (when (seq dirty) (check-invariants! model d dirty)))
+    (run-checks! model (:run-draft model) d
+                 (into (checks-for model dirty) (:independent model))))
   ((:draft-seal model) d))
 
 (defn seal
   "Validate `d` and return the sealed value. What comes back is validated exactly as if
-  every field predicate and every invariant had been rerun.
+  every check had been rerun.
 
   Idempotent: an already-sealed value passes straight through, so `seal` is a projection and a
   sealed value is a fixed point of it. That is what lets a `drafting` body end in a call that
@@ -339,17 +282,56 @@
 
 ;;; ------------------------------------------ Macro ------------------------------------------
 
+(defn- parse-check
+  "One entry of the `:checks` map -> `{:name :doc :args :fn}`.
+
+  Three forms, told apart by what the value starts with: a string is a docstring, a vector
+  is an arglist, and anything else is the shorthand -- a bare function over the single field
+  the check's key names."
+  [tname cname form]
+  (let [bad! (fn [why]
+               (throw (ex-info (format "%s check %s %s" tname (pr-str cname) why)
+                               {:error ::malformed-check :record tname :check cname :form form})))]
+    (cond
+      (and (seq? form) (string? (first form)))
+      (let [[doc args & body] form]
+        (when-not (vector? args) (bad! "has a docstring but no arglist"))
+        (when-not (seq body) (bad! "has an arglist but no body"))
+        {:name cname :doc doc :args args :fn `(fn ~args ~@body)})
+
+      (and (seq? form) (vector? (first form)))
+      (let [[args & body] form]
+        (when-not (seq body) (bad! "has an arglist but no body"))
+        {:name cname :doc nil :args args :fn `(fn ~args ~@body)})
+
+      (and (seq? form) (seq? (first form)) (vector? (ffirst form)))
+      (bad! "gives more than one arity -- the arglist is the dependency list, so there is exactly one")
+
+      :else
+      {:name cname :doc nil :args [(symbol (name cname))] :fn form})))
+
 (defmacro defrecord
   "Define a validated map-like type with a real field per declared key, so reads and writes
-  are field access rather than map lookups. Each field carries a `^{:valid pred}` predicate;
-  `invariants` is a vector of {:doc :keys :pred} maps.
+  are field access rather than map lookups.
+
+  `checks` maps a check name -- a namespace-qualified keyword, unique within the type, and
+  what failures report -- to a check, written in one of three forms:
+
+      ::name       non-blank-string?                      ; a bare fn over the field it names
+      ::valid-name ([name] (non-blank-string? name))      ; arglist and body
+      ::cuts-sum-to-take (\"The cuts add up to the take.\"  ; with a docstring
+                          [take cuts] (= take (reduce + 0 (vals cuts))))
+
+  The arglist is the dependency declaration. The body receives exactly what it names,
+  positionally, in that order, and nothing else is in scope -- so nothing can depend on
+  something it did not name, and the field -> checks index the macro derives from those
+  arglists cannot disagree with the code. Exactly one arity: the arity is the dependency set.
 
   A field becomes a key qualified by the namespace this form is written in -- a `Heist`
   defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
-  `::h/name` wherever the namespace is aliased. An invariant's `:keys` names fields the same
-  way. A bare keyword is a key the type does not declare, so two types that happen to share a
-  field name share nothing else."
-  [tname fields invariants]
+  `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
+  declare, so two types that happen to share a field name share nothing else."
+  [tname fields checks]
   (let [model-sym (symbol (str tname "-model"))
         fsyms     (mapv #(with-meta % nil) fields)
         ;; The defining namespace qualifies the keys, so a field named `name` is
@@ -358,9 +340,10 @@
         qkey      (fn [f] (keyword key-ns (str f)))
         ks        (mapv qkey fields)
         n         (count fsyms)
+        key->sym  (zipmap ks fsyms)
         ;; every local is gensymed: a field could be named k, v, o, acc ...
-        [ksym vsym dsym osym hsym essym ovsym accsym mtasym mta2sym msym thunksym tgtsym]
-        (map gensym ["k" "v" "d" "o" "h" "es" "ov" "acc" "mta" "mta2" "m" "thunk" "target"])
+        [ksym vsym dsym osym hsym essym ovsym accsym mtasym mta2sym msym thunksym tgtsym isym]
+        (map gensym ["k" "v" "d" "o" "h" "es" "ov" "acc" "mta" "mta2" "m" "thunk" "target" "i"])
         tgthint   (with-meta tgtsym {:tag tname})
         dname     (symbol (str tname "Draft"))
         [extsym dirtysym ownsym tokensym] (map gensym ["ext" "dirty" "own" "token"])
@@ -370,37 +353,52 @@
         sfield    (fn [f] (list '. svsym (symbol (str "-" f))))
         dctor     (fn [vals ext dirty own mta] `(new ~dname ~@vals ~ext ~dirty ~own ~mta))
         dfields   (mapv dfield fsyms)
-        inv-maps  (vec invariants)
-        pred-var  (fn [f] (symbol (str tname "--pred-" f)))
-        inv-var   (fn [i] (symbol (str tname "--inv-" i)))
-        invp-var  (fn [i] (symbol (str tname "--inv-" i "-pred")))
-        xsym      (with-meta (gensym "x") {:tag tname})
         params    (conj fsyms mtasym)
         ;; (Heist. a b c mta) with position i replaced by `x`
         ctor-with (fn [i x] `(new ~tname ~@(assoc fsyms i x) ~mtasym))
-        field-map (into {} (map (fn [f] [(qkey f) {:form (list 'quote (:valid (meta f)))}])) fields)
-        pred-map  (into {} (map (fn [f] [(qkey f) (:valid (meta f))])) fields)
-        tagsym    (symbol key-ns (str tname))]
+        tagsym    (symbol key-ns (str tname))
+        ;; ---- the checks ----
+        parsed    (mapv (fn [[cname form]]
+                          (let [c (parse-check tname cname form)]
+                            (assoc c :deps (mapv #(if (symbol? %) (qkey %) %) (:args c)))))
+                        (seq checks))
+        nchecks   (count parsed)
+        cvar      (fn [i] (symbol (str tname "--check-" i)))
+        deps-of   (fn [i] (:deps (nth parsed i)))
+        ;; Derived from the arglists, so it cannot be misdeclared: there is nowhere to
+        ;; declare it. Sorted vectors, because a sorted set does not survive being embedded
+        ;; in emitted code -- the compiler rebuilds a set literal as a hash set.
+        index     (reduce (fn [idx i] (reduce #(update %1 %2 (fnil conj []) i) idx (deps-of i)))
+                          {} (range nchecks))
+        independent (filterv #(empty? (deps-of %)) (range nchecks))
+        ;; Run check `i` over the given expressions, which are locals or direct field reads.
+        ;; The value map is built only where it is about to be reported.
+        run-check (fn [i argvs]
+                    `(let [r# (try (~(cvar i) ~@argvs) (catch Throwable _# false))]
+                       (when-not r#
+                         (check-failed! ~model-sym (nth (:checks ~model-sym) ~i) r#
+                                        (array-map ~@(interleave (deps-of i) argvs))))))]
     `(do
        (declare ~model-sym)
-       ~@(map (fn [f] `(def ~(with-meta (pred-var f) {:private true}) ~(:valid (meta f)))) fields)
-       ~@(mapcat (fn [i]
-                   (let [{:keys [doc keys pred]} (nth inv-maps i)]
-                     [`(def ~(with-meta (invp-var i) {:private true}) ~pred)
-                      `(def ~(with-meta (inv-var i) {:private true})
-                         (Invariant. ~doc ~keys ~(invp-var i)))]))
-                 (range (count inv-maps)))
+       ~@(map (fn [i] `(def ~(with-meta (cvar i) {:private true}) ~(:fn (nth parsed i))))
+              (range nchecks))
+
        (p/def-map-type ~tname ~params
          (~'get [_# ~ksym ~dsym]
            (case ~ksym ~@(interleave ks fsyms) ~dsym))
 
+         ;; The checks naming this field are known here, so they are called with the new
+         ;; value and the untouched fields directly -- no lookup, and no allocation unless
+         ;; they all pass.
          (~'assoc [_# ~ksym ~vsym]
            (case ~ksym
-             ~@(mapcat (fn [i k]
-                         [k `(do (check-value! ~model-sym ~k ~vsym)
-                                 (let [~hsym ~(ctor-with i vsym)]
-                                   (run-invariants-for! ~model-sym ~hsym ~k)
-                                   ~hsym))])
+             ~@(mapcat (fn [j k]
+                         [k `(do ~@(map (fn [i]
+                                          (run-check i (map (fn [d]
+                                                              (if (= d k) vsym (key->sym d)))
+                                                            (deps-of i))))
+                                        (get index k))
+                                 ~(ctor-with j vsym))])
                        (range n) ks)
              (unknown-key! ~model-sym ~ksym)))
 
@@ -414,17 +412,18 @@
          (~'meta [_#] ~mtasym)
          (~'with-meta [_# ~mta2sym] (new ~tname ~@fsyms ~mta2sym))
 
-         ;; one allocation for the whole merge, invariants once at the end
+         ;; one allocation for the whole merge, each applicable check once at the end
          (~'cons [_# ~osym]
            (let [~essym (entries-of ~osym)
                  ~ovsym (reduce (fn [~accsym [~ksym ~vsym]]
-                                  (check-field! ~model-sym ~ksym ~vsym)
+                                  (declared-field! ~model-sym ~ksym)
                                   (assoc ~accsym ~ksym ~vsym))
                                 {} ~essym)
                  ~hsym  (new ~tname
                              ~@(map (fn [k f] `(get ~ovsym ~k ~f)) ks fsyms)
                              ~mtasym)]
-             (check-invariants! ~model-sym ~hsym (map first ~essym))
+             (run-checks! ~model-sym (:run-sealed ~model-sym) ~hsym
+                          (checks-for ~model-sym (map first ~essym)))
              ~hsym))
 
          ;; A keyword call site caches one of these and reads the field directly, the way a
@@ -471,42 +470,56 @@
            (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym)) this# (entries-of ~osym))))
 
        (def ~model-sym
-         (let [invs# ~(mapv inv-var (range (count inv-maps)))]
-           {:name        '~tname
-            :fields      ~field-map
-            :preds       ~pred-map
-            :field-order ~ks
-            :key-ns      ~key-ns
-            :invariants  invs#
-            :index       (build-index invs#)
-            :tag         '~tagsym
-            :draft-empty      (fn [~ownsym] ~(dctor (repeat n `unset) {} 0 ownsym nil))
-            :draft-from       (fn [~svsym ~ownsym]
-                                ~(dctor (mapv sfield fsyms) {} 0 ownsym `(meta ~svsym)))
-            :draft-owner      (fn [~dvsym] ~(dfield ownsym))
-            :draft-ext        (fn [~dvsym] ~(dfield extsym))
-            :draft-with-owner (fn [~dvsym ~tokensym]
-                                ~(dctor dfields (dfield extsym) (dfield dirtysym) tokensym (dfield mtasym)))
-            :draft-clean      (fn [~dvsym]
-                                ~(dctor dfields {} (dfield dirtysym) (dfield ownsym) (dfield mtasym)))
-            :draft-dirty-keys (fn [~dvsym]
-                                (let [~dirtysym ~(dfield dirtysym)]
-                                  (cond-> [] ~@(mapcat (fn [i k] [`(bit-test ~dirtysym ~i) `(conj ~k)])
-                                                       (range n) ks))))
-            :draft-missing    (fn [~dvsym]
-                                (cond-> [] ~@(mapcat (fn [[k f]] [`(identical? ~(dfield f) unset) `(conj ~k)])
-                                                     (map vector ks fsyms))))
-            :draft-seal       (fn [~dvsym] (new ~tname ~@dfields ~(dfield mtasym)))}))
+         {:name        '~tname
+          :key-ns      ~key-ns
+          :field-order ~ks
+          :field-set   ~(set ks)
+          :checks      ~(mapv (fn [i]
+                                (let [{:keys [name doc deps]} (nth parsed i)]
+                                  {:name name :doc doc :deps deps :pred (cvar i)}))
+                              (range nchecks))
+          :index       ~index
+          :independent ~independent
+          :tag         '~tagsym
+          ;; One runner per type, so a check reached by index is still called with direct
+          ;; field access rather than a lookup per dependency.
+          :run-sealed  (fn [~isym ~svsym]
+                         (case (int ~isym)
+                           ~@(mapcat (fn [i]
+                                       [i `(~(cvar i) ~@(map (comp sfield key->sym) (deps-of i)))])
+                                     (range nchecks))
+                           nil))
+          :run-draft   (fn [~isym ~dvsym]
+                         (case (int ~isym)
+                           ~@(mapcat (fn [i]
+                                       [i `(~(cvar i) ~@(map (comp dfield key->sym) (deps-of i)))])
+                                     (range nchecks))
+                           nil))
+          :draft-empty      (fn [~ownsym] ~(dctor (repeat n `unset) {} 0 ownsym nil))
+          :draft-from       (fn [~svsym ~ownsym]
+                              ~(dctor (mapv sfield fsyms) {} 0 ownsym `(meta ~svsym)))
+          :draft-owner      (fn [~dvsym] ~(dfield ownsym))
+          :draft-ext        (fn [~dvsym] ~(dfield extsym))
+          :draft-with-owner (fn [~dvsym ~tokensym]
+                              ~(dctor dfields (dfield extsym) (dfield dirtysym) tokensym (dfield mtasym)))
+          :draft-clean      (fn [~dvsym]
+                              ~(dctor dfields {} (dfield dirtysym) (dfield ownsym) (dfield mtasym)))
+          :draft-dirty-keys (fn [~dvsym]
+                              (let [~dirtysym ~(dfield dirtysym)]
+                                (cond-> [] ~@(mapcat (fn [i k] [`(bit-test ~dirtysym ~i) `(conj ~k)])
+                                                     (range n) ks))))
+          :draft-missing    (fn [~dvsym]
+                              (cond-> [] ~@(mapcat (fn [[k f]] [`(identical? ~(dfield f) unset) `(conj ~k)])
+                                                   (map vector ks fsyms))))
+          :draft-seal       (fn [~dvsym] (new ~tname ~@dfields ~(dfield mtasym)))})
        ;; `deftype` interns a positional factory that checks nothing -- a public back door
        ;; straight through every guarantee the type exists to make. Replace it with one that
        ;; validates, and unmap the draft's, which nothing outside this file should be calling.
        (defn ~(symbol (str "->" tname))
          ~(str "Construct a validated " tname " from its fields, in declaration order.")
          [~@fsyms]
-         ~@(map (fn [k f] `(check-value! ~model-sym ~k ~f)) ks fsyms)
-         (let [~hsym (new ~tname ~@fsyms nil)]
-           (check-invariants! ~model-sym ~hsym nil)
-           ~hsym))
+         ~@(map (fn [i] (run-check i (map key->sym (deps-of i)))) (range nchecks))
+         (new ~tname ~@fsyms nil))
 
        (defn ~(symbol (str "map->" tname))
          ~(str "Construct a validated " tname " from a map holding exactly its declared keys.\n"
@@ -533,5 +546,3 @@
        (defmethod print-method ~tname [x# ^java.io.Writer w#]
          (.write w# (str "#" '~tagsym (printable x#))))
        ~tname)))
-
-

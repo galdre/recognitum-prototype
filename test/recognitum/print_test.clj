@@ -33,10 +33,10 @@
   ;; The reader goes through map->Heist, so a literal cannot smuggle in a value that would
   ;; have been rejected had it been constructed.
   (let [read-bad #(edn/read-string {:readers (rec/data-readers)} %)]
-    (is (= ::rec/invalid-field
-           (:error (err #(read-bad "#recognitum.heist/Heist{:name \"\" :crew #{:a} :take 1 :cuts {:a 1}}")))))
-    (is (= ::rec/invariant-violated
-           (:error (err #(read-bad "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 9 :cuts {:a 1}}")))))
+    (is (contains? (:failures (err #(read-bad "#recognitum.heist/Heist{:name \"\" :crew #{:a} :take 1 :cuts {:a 1}}")))
+                   :recognitum.heist/name))
+    (is (= [:recognitum.heist/cuts-sum-to-take]
+           (keys (:failures (err #(read-bad "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 9 :cuts {:a 1}}"))))))
     (is (= ::rec/extraneous-keys
            (:error (err #(read-bad "#recognitum.heist/Heist{:name \"x\" :crew #{:a} :take 1 :cuts {:a 1} :z 2}")))))
     (is (= ::rec/missing-field
@@ -57,7 +57,7 @@
   (testing "dev/data_readers.clj puts the tag in *data-readers* at startup"
     (is (contains? *data-readers* 'recognitum.heist/Heist))
     (is (= job (read-string (pr-str job))))
-    (is (= ::rec/invalid-field
+    (is (= ::rec/check-failed
            (:error (err #(read-string "#recognitum.heist/Heist{:name \"\" :crew #{:a} :take 1 :cuts {:a 1}}"))))
         "and read-string validates too"))
   (testing "clojure.edn never consults it, whatever data_readers.clj says"

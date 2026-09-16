@@ -65,9 +65,9 @@
              (get (:failures e) ::ordered))))))
 
 (deftest a-failure-reports-the-declared-fields-in-arglist-order
-  (let [vals (:values (get (:failures (err #(->Forms 5 2))) ::ordered))]
-    (is (= [::a ::b] (keys vals)) "the arglist is the order, and it survives at any size")
-    (is (= [5 2] (vals vals)))))
+  (let [given (:values (get (:failures (err #(->Forms 5 2))) ::ordered))]
+    (is (= [::a ::b] (keys given)) "the arglist is the order, and it survives at any size")
+    (is (= [5 2] (vals given)))))
 
 (deftest what-the-check-returned-is-carried-as-failure-data
   (is (= false (:returned (get (:failures (err #(->Forms 5 2))) ::ordered)))))

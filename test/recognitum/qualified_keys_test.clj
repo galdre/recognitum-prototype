@@ -25,10 +25,10 @@
 ;; Defined here rather than in recognitum.heist, so `::` in this file names its fields --
 ;; which is the point: the qualifying namespace is the one the type is written in.
 (rec/defrecord Point
-  [^{:valid int?} x ^{:valid int?} y]
-  [{:doc  "x does not exceed y"
-    :keys #{::x ::y}
-    :pred (fn [p] (<= (::x p) (::y p)))}])
+  [x y]
+  {::x int?
+   ::y int?
+   ::ordered ("x does not exceed y" [x y] (<= x y))})
 
 (def origin (rec/drafting [p Point] (merge p {::x 0 ::y 0})))
 
@@ -82,19 +82,22 @@
 (deftest the-model-carries-qualified-keys-throughout
   (let [model (rec/model-of job)]
     (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts] (:field-order model)))
-    (is (= #{::heist/name ::heist/crew ::heist/take ::heist/cuts} (set (keys (:preds model)))))
-    (is (= #{::heist/name ::heist/crew ::heist/take ::heist/cuts} (set (keys (:fields model)))))))
+    (is (= #{::heist/name ::heist/crew ::heist/take ::heist/cuts} (:field-set model)))
+    (is (= #{::heist/name ::heist/crew ::heist/take ::heist/cuts}
+           (set (keys (:index model))))
+        "the field -> checks index is keyed the same way")))
 
-(deftest invariants-declare-qualified-keys-and-the-index-still-selects
-  (let [e (err #(assoc job ::heist/take 4000))]
-    (is (= ::rec/invariant-violated (:error e)))
-    (is (= "the cuts add up to the take" (:invariant e)))
-    (is (= #{::heist/take ::heist/cuts} (:depends-on e)))
-    (is (= #{::heist/take ::heist/cuts} (set (keys (:values e))))))
-  (testing "a type defined in this namespace, declaring its keys with ::"
+(deftest a-check-arglist-resolves-to-qualified-keys-and-the-index-still-selects
+  (let [e (err #(assoc job ::heist/take 4000))
+        f (get (:failures e) ::heist/cuts-sum-to-take)]
+    (is (= ::rec/check-failed (:error e)))
+    (is (= "the cuts add up to the take" (:doc f)))
+    (is (= [::heist/take ::heist/cuts] (keys (:values f)))
+        "the arglist named bare symbols; the dependencies are the type's own keys"))
+  (testing "a type defined in this namespace, whose fields qualify into it"
     (let [e (err #(assoc origin ::x 5))]
-      (is (= ::rec/invariant-violated (:error e)))
-      (is (= #{::x ::y} (:depends-on e))))
+      (is (= [::ordered] (keys (:failures e))))
+      (is (= [::x ::y] (keys (:values (get (:failures e) ::ordered))))))
     (is (= 0 (::x (assoc origin ::x 0))))))
 
 (deftest dissoc-names-the-qualified-field
@@ -122,9 +125,9 @@
   (let [e (err #(heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10}))]
     (is (= ::rec/missing-field (:error e)))
     (is (= ::heist/cuts (:key e))))
-  (is (= ::rec/invalid-field
-         (:error (err #(heist/map->Heist {::heist/name "" ::heist/crew #{:a}
-                                          ::heist/take 10 ::heist/cuts {:a 10}}))))))
+  (is (contains? (:failures (err #(heist/map->Heist {::heist/name "" ::heist/crew #{:a}
+                                                     ::heist/take 10 ::heist/cuts {:a 10}})))
+                 ::heist/name)))
 
 (deftest the-map-constructor-qualifies-a-bare-field-name
   ;; This is what lets a printed literal, whose keys the tag already qualifies, read back.
@@ -133,10 +136,10 @@
                                 :take 3000
                                 :cuts {:charlie 1000 :lyle 1000 :left-ear 1000}})))
   (testing "and validates what it qualified, exactly as if it had been written qualified"
-    (is (= ::rec/invalid-field
-           (:error (err #(heist/map->Heist {:name "" :crew #{:a} :take 1 :cuts {:a 1}})))))
-    (is (= ::rec/invariant-violated
-           (:error (err #(heist/map->Heist {:name "x" :crew #{:a} :take 9 :cuts {:a 1}})))))
+    (is (contains? (:failures (err #(heist/map->Heist {:name "" :crew #{:a} :take 1 :cuts {:a 1}})))
+                   ::heist/name))
+    (is (= [::heist/cuts-sum-to-take]
+           (keys (:failures (err #(heist/map->Heist {:name "x" :crew #{:a} :take 9 :cuts {:a 1}}))))))
     (is (= ::rec/missing-field
            (:error (err #(heist/map->Heist {:name "x" :crew #{:a} :take 1}))))))
   (testing "a bare key naming no field is taken as given and reported as written"
@@ -196,10 +199,10 @@
                           " :recognitum.heist/take 3000"
                           " :recognitum.heist/cuts {:charlie 1000 :lyle 1000 :left-ear 1000}}")))))
     (testing "and reading validates whichever spelling it was handed"
-      (is (= ::rec/invariant-violated
-             (:error (err #(rd (str "#recognitum.heist/Heist"
-                                    "{:recognitum.heist/name \"x\" :recognitum.heist/crew #{:a}"
-                                    " :recognitum.heist/take 9 :recognitum.heist/cuts {:a 1}}")))))))))
+      (is (= [::heist/cuts-sum-to-take]
+             (keys (:failures (err #(rd (str "#recognitum.heist/Heist"
+                                             "{:recognitum.heist/name \"x\" :recognitum.heist/crew #{:a}"
+                                             " :recognitum.heist/take 9 :recognitum.heist/cuts {:a 1}}"))))))))))
 
 (deftest a-value-round-trips-through-print-and-read
   (let [h (rec/drafting [x job] (heist/rename x "The Sequel"))]

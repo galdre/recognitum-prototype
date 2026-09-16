@@ -1,8 +1,9 @@
 (ns recognitum.bench
   "defrecord + hand-rolled validation vs. the library, sharing one set of field predicates
   so the validation work is the same on both sides. The cross-field checks are written
-  twice -- the library's keys are qualified by the defining namespace and a plain record's
-  are not -- but the two spellings do the same lookups over the same values."
+  twice -- the hand-rolled side reads them out of a map, the library's are handed the two
+  fields they named -- which is the difference being measured rather than a thumb on the
+  scale: the same comparison over the same values either way."
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
@@ -18,13 +19,6 @@
 (defn cuts-add-up? [h] (= (:take h) (reduce + 0 (vals (:cuts h)))))
 (defn only-crew?   [h] (every? (:crew h) (keys (:cuts h))))
 
-;; The library's field keys are qualified by the defining namespace, so the cross-field
-;; checks are written out a second time against that spelling. Same lookups over the same
-;; values -- only the keyword constants differ -- which is what keeps the two sides
-;; comparable now that they cannot literally share one function.
-(defn q-cuts-add-up? [h] (= (::take h) (reduce + 0 (vals (::cuts h)))))
-(defn q-only-crew?   [h] (every? (::crew h) (keys (::cuts h))))
-
 (def field-preds {:name non-blank-string? :crew crew-set? :take non-neg-int? :cuts cuts-map?})
 (def inv-index   {:take [cuts-add-up?] :cuts [cuts-add-up? only-crew?] :crew [only-crew?]})
 (def all-invs    [cuts-add-up? only-crew?])
@@ -32,12 +26,13 @@
 ;;; ---- library version ----
 
 (rec/defrecord BenchHeist
-  [^{:valid non-blank-string?} name
-   ^{:valid crew-set?}         crew
-   ^{:valid non-neg-int?}      take
-   ^{:valid cuts-map?}         cuts]
-  [{:doc "cuts add up" :keys #{::take ::cuts} :pred q-cuts-add-up?}
-   {:doc "only crew"   :keys #{::crew ::cuts} :pred q-only-crew?}])
+  [name crew take cuts]
+  {::name non-blank-string?
+   ::crew crew-set?
+   ::take non-neg-int?
+   ::cuts cuts-map?
+   ::cuts-add-up ("cuts add up" [take cuts] (= take (reduce + 0 (vals cuts))))
+   ::only-crew   ("only crew"   [crew cuts] (every? crew (keys cuts)))})
 
 ;;; ---- hand-rolled version ----
 

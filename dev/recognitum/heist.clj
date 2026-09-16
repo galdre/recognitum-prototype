@@ -1,7 +1,7 @@
 (ns recognitum.heist
   "A heist: a crew, a take, and how the take is split.
 
-  Two cross-field invariants, both of which a single `assoc` necessarily breaks —
+  Two cross-field checks, both of which a single `assoc` necessarily breaks —
   which is the whole reason drafts exist."
   (:require
    [clojure.string :as str]
@@ -13,16 +13,20 @@
 (defn cuts-map?        [x] (and (map? x) (every? keyword? (keys x)) (every? non-neg-int? (vals x))))
 
 (rec/defrecord Heist
-  [^{:valid non-blank-string?} name
-   ^{:valid crew-set?}         crew
-   ^{:valid non-neg-int?}      take
-   ^{:valid cuts-map?}         cuts]
-  [{:doc  "the cuts add up to the take"
-    :keys #{::take ::cuts}
-    :pred (fn [h] (= (::take h) (reduce + 0 (vals (::cuts h)))))}
-   {:doc  "only crew get a cut"
-    :keys #{::crew ::cuts}
-    :pred (fn [h] (every? (::crew h) (keys (::cuts h))))}])
+  [name crew take cuts]
+
+  {::name non-blank-string?
+   ::crew crew-set?
+   ::take non-neg-int?
+   ::cuts cuts-map?
+
+   ::cuts-sum-to-take
+   ("the cuts add up to the take"
+    [take cuts] (= take (reduce + 0 (vals cuts))))
+
+   ::only-crew-get-cuts
+   ("only crew get a cut"
+    [crew cuts] (every? crew (keys cuts)))})
 
 (def italian-job
   (drafting [h Heist]

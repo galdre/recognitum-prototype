@@ -23,7 +23,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### B — the check model
 
-- [ ] **B1. The `:checks` map.** Named checks, arglist-as-dependency, the bare-function shorthand
+- [x] **B1. The `:checks` map.** Named checks, arglist-as-dependency, the bare-function shorthand
       over a single field, and the optional docstring position. Exactly one arity. Replaces
       `:valid` metadata and the invariants vector. The field → checks index comes from arglists
       rather than declared `:keys`.
@@ -93,6 +93,31 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       access rather than keyword lookup is the change most likely to move it.
 
 ## Deferred during implementation
+
+- [ ] **B1 — the audit is inert but not yet gone.** `*audit-invariant-keys*`,
+      `recognitum.audit-fixture`, the `:test-audit` alias and the README section all survive
+      B1 and now do nothing: a check body cannot reach a field its arglist does not name, so
+      there is no declaration left to disagree with the code. `recognitum.audit-test` was
+      deleted with B1 rather than left broken, since every type it defines declares invariant
+      `:keys`, which no longer exist; its coverage is replaced by
+      `checks-test/a-check-body-cannot-read-a-field-it-did-not-name`, which shows the class of
+      bug does not compile rather than that a proxy catches it. B4 removes the rest.
+- [ ] **B1 — declaration order is lost past eight checks.** The reader hands the macro a
+      `PersistentHashMap` once a map literal passes eight pairs, so for a ninth check onward
+      the order the macro sees is hash order, not source order. `SPEC.md`'s "the order the
+      checks are written in the form, which the macro sees before a map literal would lose
+      it" is true only up to eight. It is stable, just not the written order. B3 owns the
+      ordered failure map and should decide whether that is acceptable or whether the section
+      needs another shape.
+- [ ] **B1 — a cross-field check runs on fields its own type has already rejected.** With
+      checks unified, `SPEC.md` says pure checks run ungated and exceptions propagate, so
+      `::cuts-sum-to-take` over a `cuts` that is the string `"garbage"` would throw rather
+      than report. B1 preserves the old behaviour — declaration order plus stop-at-first
+      failure, with a throw read as a failure — so nothing is exposed yet. B3 takes both of
+      those away at once and has to say what happens then.
+- [ ] **B1 — `README.md` still documents `^{:valid pred}` fields, the invariants vector, and
+      the `:invalid-field` / `:invariant-violated` errors.** None of those exist. F1 owns the
+      README; this is a note that it is now wrong rather than merely dated.
 
 - [ ] **A1 — the README performance table was not re-measured.** The bench runs and its
       numbers sit inside the run-to-run spread the table already warns about, but qualified
