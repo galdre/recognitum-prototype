@@ -12,7 +12,8 @@ not a `Heist`, and `assoc`-ing garbage into a `Heist` does not produce a `Heist`
 referring it — the two then coexist in one namespace without ceremony:
 
 ```clojure
-(require '[recognitum.core :as rec :refer [drafting draft seal clean]])
+(ns my.app.heist
+  (:require [recognitum.core :as rec :refer [drafting draft seal clean]]))
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
@@ -26,12 +27,18 @@ referring it — the two then coexist in one namespace without ceremony:
    ^{:valid cuts-map?}         cuts]
 
   [{:doc  "the cuts add up to the take"
-    :keys #{:take :cuts}
-    :pred (fn [h] (= (:take h) (reduce + 0 (vals (:cuts h)))))}
+    :keys #{::take ::cuts}
+    :pred (fn [h] (= (::take h) (reduce + 0 (vals (::cuts h)))))}
    {:doc  "only crew get a cut"
-    :keys #{:crew :cuts}
-    :pred (fn [h] (every? (:crew h) (keys (:cuts h))))}])
+    :keys #{::crew ::cuts}
+    :pred (fn [h] (every? (::crew h) (keys (::cuts h))))}])
 ```
+
+**Fields become keys qualified by the namespace the type is defined in.** A `Heist` written in
+`my.app.heist` answers to `:my.app.heist/name`, which is what `::name` spells inside that file
+and `::h/name` spells anywhere that aliases it. A bare `:name` is a key the type does not
+declare, so two types that happen to share a field name share nothing else, and a map lifted
+out of one cannot be quietly poured into another.
 
 Two kinds of check, and the difference matters:
 
@@ -46,14 +53,17 @@ skipped — the assumption the whole guarantee rests on. See [Checking your `:ke
 
 ## Reading
 
-A validated value behaves like a map.
+A validated value behaves like a map. The examples below are written from a consumer
+namespace that has done `(:require [my.app.heist :as h])`, so `::h/take` is
+`:my.app.heist/take`.
 
 ```clojure
-(:take heist)                      ;=> 3000
-(get heist :crew)                  ;=> #{:charlie :lyle :left-ear}
-(let [{:keys [name take]} heist] …) ; destructuring works
-(keys heist)                       ;=> (:name :crew :take :cuts)
-(into {} heist)                    ;=> a plain map
+(::h/take heist)                       ;=> 3000
+(get heist ::h/crew)                   ;=> #{:charlie :lyle :left-ear}
+(let [{::h/keys [name take]} heist] …)  ; destructuring works
+(keys heist)                           ;=> (:my.app.heist/name :my.app.heist/crew …)
+(into {} heist)                        ;=> a plain map, keys and all
+(:take heist)                          ;=> nil — a bare key is not a field
 ```
 
 ## Writing
@@ -61,24 +71,25 @@ A validated value behaves like a map.
 `assoc` validates the field and any invariant that depends on it:
 
 ```clojure
-(assoc heist :name "The Sequel")     ;=> #Heist{…}
-(assoc heist :take "lots")           ;=> throws :invalid-field
+(assoc heist ::h/name "The Sequel")  ;=> #my.app.heist/Heist{…}
+(assoc heist ::h/take "lots")        ;=> throws :invalid-field
 (assoc heist :getaway-car "mini")    ;=> throws :unknown-field
+(assoc heist :take 4000)             ;=> throws :unknown-field — bare, so undeclared
 ```
 
 `merge` applies every entry and then checks invariants **once**, so a multi-key update is atomic:
 
 ```clojure
 ;; fine — take and cuts change together
-(merge heist {:take 4000 :cuts {:charlie 2000 :lyle 1000 :left-ear 1000}})
+(merge heist {::h/take 4000 ::h/cuts {:charlie 2000 :lyle 1000 :left-ear 1000}})
 
 ;; throws :invariant-violated — the cuts no longer add up
-(assoc heist :take 4000)
+(assoc heist ::h/take 4000)
 ```
 
-`dissoc` of a declared field throws. A `Heist` without `:cuts` is not a `Heist`, and silently
+`dissoc` of a declared field throws. A `Heist` without `::h/cuts` is not a `Heist`, and silently
 degrading to a plain map is exactly the failure this type exists to prevent. Where a field's
-predicate admits `nil`, `(assoc heist :cuts nil)` is how you spell absence — the error says so.
+predicate admits `nil`, `(assoc heist ::h/cuts nil)` is how you spell absence — the error says so.
 
 Undeclared keys are ordinary: `dissoc` removes one from a draft, and on a validated value — which
 cannot be holding one — it is the usual no-op. `clean` is still how you strip them in bulk.
@@ -114,8 +125,8 @@ lets you write impl functions once and call them either way:
 (defn promote [h who bonus]
   (drafting [x h]                 ; seals when called on a Heist
     (-> x                         ; passes through when called on a draft
-        (assoc :cuts (update (:cuts x) who + bonus))
-        (assoc :take (+ (:take x) bonus)))))
+        (assoc ::cuts (update (::cuts x) who + bonus))
+        (assoc ::take (+ (::take x) bonus)))))
 ```
 
 The convention that falls out: your public API takes and returns validated values, your impl
@@ -129,15 +140,21 @@ layer takes and returns drafts, and `drafting` marks the boundary.
 (->Heist "The Italian Job" #{:charlie :lyle :left-ear} 3000
          {:charlie 1000 :lyle 1000 :left-ear 1000})
 
-(map->Heist {:name "The Italian Job"
-             :crew #{:charlie :lyle :left-ear}
-             :take 3000
-             :cuts {:charlie 1000 :lyle 1000 :left-ear 1000}})
+(map->Heist {::h/name "The Italian Job"
+             ::h/crew #{:charlie :lyle :left-ear}
+             ::h/take 3000
+             ::h/cuts {:charlie 1000 :lyle 1000 :left-ear 1000}})
 ```
 
 Both run every field predicate and every invariant, because construction touches every field.
 `map->Heist` additionally rejects a key the type does not declare, and reports a key it declares
 and the map omits as `:missing-field`.
+
+It takes either spelling: a bare keyword naming a declared field is qualified into the type's
+namespace, and anything else is taken as written, so a stray `:getaway-car` is reported as
+`:getaway-car` rather than as something you never wrote. That is what lets a printed literal —
+whose tag already carries the namespace, so the printed map drops it — read straight back
+through the validating constructor.
 
 There is no unvalidated constructor. The positional factory `deftype` would otherwise intern is
 replaced, and the draft type's is unmapped — a `Heist` cannot be brought into existence except
@@ -169,7 +186,7 @@ want in the pipeline:
 
 ```clojure
 (drafting [h heist]
-  (-> h (assoc :getaway-car "mini") clean))   ;=> #Heist{…}
+  (-> h (assoc :getaway-car "mini") clean))   ;=> #my.app.heist/Heist{…}
 ```
 
 That gives you both policies — reject or strip — chosen per call site rather than baked into the
@@ -196,9 +213,9 @@ Invariant failures carry what you need to debug them:
 {:error      :invariant-violated
  :record     Heist
  :invariant  "only crew get a cut"
- :depends-on #{:crew :cuts}
- :values     {:crew #{:charlie :lyle :left-ear}
-              :cuts {:charlie 1000 :lyle 1000 :left-ear 1000 :stranger 100}}}
+ :depends-on #{:my.app.heist/crew :my.app.heist/cuts}
+ :values     #:my.app.heist{:crew #{:charlie :lyle :left-ear}
+                            :cuts {:charlie 1000 :lyle 1000 :left-ear 1000 :stranger 100}}}
 ```
 
 ## Checking your `:keys`
@@ -209,19 +226,19 @@ result seals anyway:
 ```clojure
 (defrecord Bad
   [^{:valid nb?} name ^{:valid int?} a ^{:valid int?} b]
-  [{:doc "a matches b" :keys #{:a} :pred (fn [m] (= (:a m) (:b m)))}])  ; reads :b, declares only :a
+  [{:doc "a matches b" :keys #{::a} :pred (fn [m] (= (::a m) (::b m)))}])  ; reads ::b, declares only ::a
 
-(assoc ok :b 999)   ;=> #Bad{:a 1, :b 999, :name "n"}   — sealed, and wrong
+(assoc ok ::b 999)   ;=> #my.app/Bad{:a 1, :b 999, :name "n"}   — sealed, and wrong
 ```
 
-Nothing declares `:b`, so nothing re-ran. Bind `*audit-invariant-keys*` to run every invariant
+Nothing declares `::b`, so nothing re-ran. Bind `*audit-invariant-keys*` to run every invariant
 against a proxy that records its reads:
 
 ```clojure
-(binding [v/*audit-invariant-keys* true]
-  (drafting [x Bad] (merge x {:name "n" :a 1 :b 1})))
+(binding [rec/*audit-invariant-keys* true]
+  (drafting [x Bad] (merge x {::name "n" ::a 1 ::b 1})))
 ;=> throws :undeclared-invariant-key
-;   {:invariant "a matches b" :declared #{:a} :also-read #{:b}}
+;   {:invariant "a matches b" :declared #{:my.app/a} :also-read #{:my.app/b}}
 ```
 
 The audit only speaks for invariants that run, and a bad `:keys` is exactly what stops one from
@@ -240,12 +257,17 @@ and reads go through it, so leave it out of production. A predicate that asks fo
 
 ## Printing and reading
 
-A validated value prints with a namespace-qualified tag:
+A validated value prints with a namespace-qualified tag, and the printed map drops the
+namespace that tag already carries:
 
 ```clojure
 (pr-str heist)
 ;=> "#recognitum.heist/Heist{:crew #{…}, :cuts {…}, :name \"The Italian Job\", :take 3000}"
 ```
+
+The reader puts it back. It accepts both spellings — bare keys, which it qualifies from the
+tag, and fully qualified keys, which it takes as given — so a literal written either way
+reads, and both go through the same validating constructor.
 
 That tag is exactly the key `clojure.edn` wants, and `data-readers` supplies the map:
 
@@ -253,7 +275,7 @@ That tag is exactly the key `clojure.edn` wants, and `data-readers` supplies the
 (edn/read-string {:readers (rec/data-readers)} s)
 ```
 
-**Reading is validating.** The reader goes through `map->Heist`, so a literal cannot smuggle in
+**Reading is validating.** The reader *is* `map->Heist`, so a literal cannot smuggle in
 a value that would have been rejected on construction — a bad one throws at read time rather
 than producing something that lies about itself.
 

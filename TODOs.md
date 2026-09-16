@@ -14,7 +14,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
 
 ### A — independent of the check redesign
 
-- [ ] **A1. Namespace-qualify field keys.** `:recognitum.heist/name` rather than `:name`, derived
+- [x] **A1. Namespace-qualify field keys.** `:recognitum.heist/name` rather than `:name`, derived
       from the defining namespace. Touches the macro's key generation, the `IKeywordLookup`
       thunks, `map->Type`, the print form (which drops the namespace the tag carries) and the
       reader (which accepts bare or qualified keys). Mechanical but wide: every test, the demo,
@@ -91,6 +91,15 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       checks written out by hand again, or the comparison stops being apples-to-apples.
 - [ ] **F2. Re-measure and re-record the performance table.** Checks called with direct field
       access rather than keyword lookup is the change most likely to move it.
+
+## Deferred during implementation
+
+- [ ] **A1 — the README performance table was not re-measured.** The bench runs and its
+      numbers sit inside the run-to-run spread the table already warns about, but qualified
+      keys are exactly the kind of change F2 exists to re-record. Left to F2, which owns the
+      table.
+- [ ] **A1 — `CONSIDERATIONS.md` still shows bare field keys throughout.** It is scratch,
+      kept but not maintained, and TODOs already says not to trust it.
 
 ## Blocking
 

@@ -1,6 +1,8 @@
 (ns recognitum.bench
-  "defrecord + hand-rolled validation vs. the library, sharing one set of predicates
-  and invariants so the validation work is provably identical on both sides."
+  "defrecord + hand-rolled validation vs. the library, sharing one set of field predicates
+  so the validation work is the same on both sides. The cross-field checks are written
+  twice -- the library's keys are qualified by the defining namespace and a plain record's
+  are not -- but the two spellings do the same lookups over the same values."
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
@@ -16,6 +18,13 @@
 (defn cuts-add-up? [h] (= (:take h) (reduce + 0 (vals (:cuts h)))))
 (defn only-crew?   [h] (every? (:crew h) (keys (:cuts h))))
 
+;; The library's field keys are qualified by the defining namespace, so the cross-field
+;; checks are written out a second time against that spelling. Same lookups over the same
+;; values -- only the keyword constants differ -- which is what keeps the two sides
+;; comparable now that they cannot literally share one function.
+(defn q-cuts-add-up? [h] (= (::take h) (reduce + 0 (vals (::cuts h)))))
+(defn q-only-crew?   [h] (every? (::crew h) (keys (::cuts h))))
+
 (def field-preds {:name non-blank-string? :crew crew-set? :take non-neg-int? :cuts cuts-map?})
 (def inv-index   {:take [cuts-add-up?] :cuts [cuts-add-up? only-crew?] :crew [only-crew?]})
 (def all-invs    [cuts-add-up? only-crew?])
@@ -27,8 +36,8 @@
    ^{:valid crew-set?}         crew
    ^{:valid non-neg-int?}      take
    ^{:valid cuts-map?}         cuts]
-  [{:doc "cuts add up" :keys #{:take :cuts} :pred cuts-add-up?}
-   {:doc "only crew"   :keys #{:crew :cuts} :pred only-crew?}])
+  [{:doc "cuts add up" :keys #{::take ::cuts} :pred q-cuts-add-up?}
+   {:doc "only crew"   :keys #{::crew ::cuts} :pred q-only-crew?}])
 
 ;;; ---- hand-rolled version ----
 
@@ -57,11 +66,13 @@
 
 ;;; ---- fixtures ----
 
-(def base {:name "The Italian Job" :crew #{:charlie :lyle :left-ear}
-           :take 3000 :cuts {:charlie 1000 :lyle 1000 :left-ear 1000}})
-(def r (map->PlainHeist base))
-(def h (drafting [x BenchHeist] (into x base)))
 (def valid-cuts {:charlie 1000 :lyle 1000 :left-ear 1000})
+(def base  {:name "The Italian Job" :crew #{:charlie :lyle :left-ear}
+            :take 3000 :cuts valid-cuts})
+(def qbase {::name "The Italian Job" ::crew #{:charlie :lyle :left-ear}
+            ::take 3000 ::cuts valid-cuts})
+(def r (map->PlainHeist base))
+(def h (drafting [x BenchHeist] (into x qbase)))
 
 (defn- ns-per [f] (* 1e9 (first (:mean (c/quick-benchmark (f) {:verbose false})))))
 
@@ -83,28 +94,34 @@
           (assoc :cuts (assoc (:cuts r) who 10))
           (assoc :take (+ (:take r) 10)))))
 
+(defn- q-add [r i]
+  (let [who (keyword (str "m" i))]
+    (-> r (assoc ::crew (conj (::crew r) who))
+          (assoc ::cuts (assoc (::cuts r) who 10))
+          (assoc ::take (+ (::take r) 10)))))
+
 (defn run []
   (println (format "%-34s %10s %10s %8s" "" "manual" "library" "ratio"))
-  (line "read :take"            (ns-per-read #(:take r))        (ns-per-read #(:take h)))
-  (line "write :name (0 invs)"  (ns-per #(m-assoc r :name "x")) (ns-per #(assoc h :name "x")))
+  (line "read :take"            (ns-per-read #(:take r))        (ns-per-read #(::take h)))
+  (line "write :name (0 invs)"  (ns-per #(m-assoc r :name "x")) (ns-per #(assoc h ::name "x")))
   (line "write :cuts (2 invs)"  (ns-per #(m-assoc r :cuts valid-cuts))
-                                (ns-per #(assoc h :cuts valid-cuts)))
+                                (ns-per #(assoc h ::cuts valid-cuts)))
   (line "merge 2 keys"          (ns-per #(m-merge r {:take 3000 :cuts valid-cuts}))
-                                (ns-per #(merge h {:take 3000 :cuts valid-cuts})))
+                                (ns-per #(merge h {::take 3000 ::cuts valid-cuts})))
   (line "construct"             (ns-per #(m-validate! (map->PlainHeist base) [:name :crew :take :cuts]))
-                                (ns-per #(drafting [x BenchHeist] (into x base))))
+                                (ns-per #(drafting [x BenchHeist] (into x qbase))))
   (println)
   (println (format "%-34s %10s %10s %8s" "batch: N renames" "manual" "library" "ratio"))
   (doseq [n [1 3 5 10 15]]
     (let [is (vec (range n))]
       (line (str "  N=" n)
             (ns-per #(m-validate! (reduce (fn [x i] (assoc x :name (str "n" i))) r is) [:name]))
-            (ns-per #(drafting [x h] (reduce (fn [x i] (assoc x :name (str "n" i))) x is))))))
+            (ns-per #(drafting [x h] (reduce (fn [x i] (assoc x ::name (str "n" i))) x is))))))
   (println)
   (println (format "%-34s %10s %10s %8s" "batch: N add-members" "manual" "library" "ratio"))
   (doseq [n [1 3 5 10 15]]
     (let [is (vec (range n))]
       (line (str "  N=" n)
             (ns-per #(m-validate! (reduce m-add r is) [:crew :cuts :take]))
-            (ns-per #(drafting [x h] (reduce m-add x is))))))
+            (ns-per #(drafting [x h] (reduce q-add x is))))))
   (println))

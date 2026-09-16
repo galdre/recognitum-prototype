@@ -6,7 +6,10 @@
   not a validated value: writes into it check nothing, which is what lets a multi-step
   update pass through states no single write could produce. [[seal]] closes the gap —
   what it returns is validated exactly as if every predicate and every invariant had
-  been rerun."
+  been rerun.
+
+  Fields become keys qualified by the namespace defining the type, so a bare keyword of
+  the same name is a key the type does not declare."
   (:refer-clojure :exclude [defrecord])
   (:require
    [potemkin :as p]))
@@ -168,6 +171,35 @@
                   {:error ::cannot-dissoc :record (:name model) :key k
                    :instead (list 'assoc 'm k nil)})))
 
+(defn qualify-keys
+  "Rewrite a bare keyword naming a declared field of `model` into the type's own namespace,
+  and leave every other key exactly as it was written.
+
+  That is what lets a printed literal read back: the tag already carries the namespace, so
+  the printed map drops it, and the reader -- which is `map->Type` itself -- puts it back.
+  Qualifying only what names a field is what keeps the error honest for what does not: a
+  stray `:getaway-car` is reported as `:getaway-car` rather than as something the caller
+  never wrote. Where a map holds both spellings of one field the qualified entry wins,
+  so degenerate input resolves the same way every time rather than by seq order."
+  [model m]
+  (let [nsp    (:key-ns model)
+        fields (set (:field-order model))
+        bare   (reduce-kv (fn [acc k v]
+                            (if (simple-keyword? k)
+                              (let [q (keyword nsp (name k))]
+                                (assoc acc (if (contains? fields q) q k) v))
+                              acc))
+                          {} m)
+        given  (reduce-kv (fn [acc k v] (if (simple-keyword? k) acc (assoc acc k v))) {} m)]
+    (conj bare given)))
+
+(defn printable
+  "The map a sealed value prints as. A sealed value holds nothing but its declared fields,
+  every one of them qualified by the namespace the print tag already names, so repeating
+  that namespace on every key would be noise."
+  [x]
+  (into (sorted-map) (map (fn [[k v]] [(keyword (name k)) v])) x))
+
 ;;; ------------------------------------------ Draft ------------------------------------------
 
 (def unset
@@ -310,11 +342,21 @@
 (defmacro defrecord
   "Define a validated map-like type with a real field per declared key, so reads and writes
   are field access rather than map lookups. Each field carries a `^{:valid pred}` predicate;
-  `invariants` is a vector of {:doc :keys :pred} maps."
+  `invariants` is a vector of {:doc :keys :pred} maps.
+
+  A field becomes a key qualified by the namespace this form is written in -- a `Heist`
+  defined in `my.app.heist` answers to `:my.app.heist/name`, which is `::name` here and
+  `::h/name` wherever the namespace is aliased. An invariant's `:keys` names fields the same
+  way. A bare keyword is a key the type does not declare, so two types that happen to share a
+  field name share nothing else."
   [tname fields invariants]
   (let [model-sym (symbol (str tname "-model"))
         fsyms     (mapv #(with-meta % nil) fields)
-        ks        (mapv keyword fields)
+        ;; The defining namespace qualifies the keys, so a field named `name` is
+        ;; `:this.ns/name` and two types sharing a field name share nothing else.
+        key-ns    (str (ns-name *ns*))
+        qkey      (fn [f] (keyword key-ns (str f)))
+        ks        (mapv qkey fields)
         n         (count fsyms)
         ;; every local is gensymed: a field could be named k, v, o, acc ...
         [ksym vsym dsym osym hsym essym ovsym accsym mtasym mta2sym msym thunksym tgtsym]
@@ -332,15 +374,13 @@
         pred-var  (fn [f] (symbol (str tname "--pred-" f)))
         inv-var   (fn [i] (symbol (str tname "--inv-" i)))
         invp-var  (fn [i] (symbol (str tname "--inv-" i "-pred")))
-        ;; resolved at macroexpansion: which invariants does each field appear in?
-        invs-for  (fn [k] (filterv #(contains? (:keys (nth inv-maps %)) k) (range (count inv-maps))))
         xsym      (with-meta (gensym "x") {:tag tname})
         params    (conj fsyms mtasym)
         ;; (Heist. a b c mta) with position i replaced by `x`
         ctor-with (fn [i x] `(new ~tname ~@(assoc fsyms i x) ~mtasym))
-        field-map (into {} (map (fn [f] [(keyword f) {:form (list 'quote (:valid (meta f)))}])) fields)
-        pred-map  (into {} (map (fn [f] [(keyword f) (:valid (meta f))])) fields)
-        tagsym    (symbol (str (ns-name *ns*)) (str tname))]
+        field-map (into {} (map (fn [f] [(qkey f) {:form (list 'quote (:valid (meta f)))}])) fields)
+        pred-map  (into {} (map (fn [f] [(qkey f) (:valid (meta f))])) fields)
+        tagsym    (symbol key-ns (str tname))]
     `(do
        (declare ~model-sym)
        ~@(map (fn [f] `(def ~(with-meta (pred-var f) {:private true}) ~(:valid (meta f)))) fields)
@@ -436,6 +476,7 @@
             :fields      ~field-map
             :preds       ~pred-map
             :field-order ~ks
+            :key-ns      ~key-ns
             :invariants  invs#
             :index       (build-index invs#)
             :tag         '~tagsym
@@ -470,9 +511,13 @@
        (defn ~(symbol (str "map->" tname))
          ~(str "Construct a validated " tname " from a map holding exactly its declared keys.\n"
                "  A key it does not declare is an error; a key it declares and the map omits is\n"
-               "  reported as :missing-field, so `nil` and absent stay distinct.")
+               "  reported as :missing-field, so `nil` and absent stay distinct.\n\n"
+               "  Keys may be written qualified or bare: a bare keyword naming a declared field is\n"
+               "  qualified into " key-ns ", which is what lets a printed literal -- whose tag\n"
+               "  already carries the namespace -- read back through here and be validated.")
          [~msym]
-         (seal ~model-sym (reduce-kv assoc ((:draft-empty ~model-sym) nil) ~msym)))
+         (seal ~model-sym (reduce-kv assoc ((:draft-empty ~model-sym) nil)
+                                     (qualify-keys ~model-sym ~msym))))
 
        (register! ~tname ~model-sym)
        (register-draft! ~dname ~model-sym)
@@ -486,7 +531,7 @@
        ;; The tag is namespace-qualified, so it escapes the reader's record-literal path and is
        ;; the exact symbol to hand `clojure.edn/read` as a key in `:readers`.
        (defmethod print-method ~tname [x# ^java.io.Writer w#]
-         (.write w# (str "#" '~tagsym (into (sorted-map) x#))))
+         (.write w# (str "#" '~tagsym (printable x#))))
        ~tname)))
 
 
