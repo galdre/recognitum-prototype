@@ -9,6 +9,39 @@ A record-like type that carries proof of its own validation. If you are holding 
 check declared on `Heist` passed. A bare map with the right keys is not a `Heist`, `assoc`-ing
 garbage into one does not produce one, and there is no constructor that skips the checks.
 
+## The baseline is `defrecord`
+
+This is `clojure.core/defrecord` with a set of deliberate, opinionated changes. When any behaviour
+is in question, the first question is what `defrecord` does for the same operation; the answer is
+to match it unless this document records a deviation on purpose. A deviation this document does
+not record is a defect.
+
+**Deliberate deviations:** two generated types rather than one; checks run on every write;
+`dissoc` of a declared field refused; undeclared keys refused on a sealed value; field keys
+qualified by the defining namespace; a namespace-qualified print tag, because the reader's
+record-literal path needs a static `create` a `deftype` cannot supply; the library's keys merged
+over `meta`; and everything under Drafts, Certificates and IO dependencies, which `defrecord` has
+no counterpart for.
+
+**Defects, found by measuring against the baseline** — every one of these comes from
+`potemkin/def-map-type` building a generic map rather than a record, and every one is to be
+fixed:
+
+| operation | `defrecord` | today | consequence |
+|---|---|---|---|
+| `(= x plain-map)` | false | true | "a bare map with the right keys is not a `Heist`" is false under `=` |
+| `(= (->A 1) (->B 1))` | false | true | two unrelated types with the same fields are equal |
+| `hash` | type-aware | the map's | follows from the above |
+| `(record? x)` | true | false | `clojure.walk` does not recognise it as a record … |
+| `(empty x)` | throws | `{}` | … so `postwalk` rebuilds it as a plain map and hands that back |
+| `Serializable` | yes | no | |
+
+The `walk` consequence is the sharpest: `(clojure.walk/postwalk identity heist)` returns a
+`PersistentArrayMap` today, silently — the exact degradation the type exists to prevent, through
+the most ordinary tool in the standard library. The fix is to emit a record — implementing
+`IRecord`, type-aware `equiv` and `hasheq`, `empty` refusing, `Serializable` — rather than a map
+type, which `CONSIDERATIONS.md` already anticipated as "a real `emit-defrecord` fork".
+
 ## Defining a type
 
 ```clojure
