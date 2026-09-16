@@ -133,6 +133,17 @@
 
 (rec/defrecord Blank [a] {})
 
+;; The same certificate written twice: once as a set, once as a vector repeating itself.
+;; A certificate is the collection of check names it covers, so the two are one declaration.
+(rec/defrecord Twice
+  [a b]
+  {:checks
+   {::a int?
+    ::b int?}
+   :certificates
+   {::as-set    #{::a ::b}
+    ::as-vector [::a ::a ::b ::b ::a]}})
+
 ;;; ------------------------------ the section is declared ------------------------------
 
 (deftest a-populated-certificates-section-compiles
@@ -160,6 +171,22 @@
   ;; sees is hash order rather than written order -- stable, and what every failure report
   ;; on this type follows.
   (mapv :name (:checks (internal/model-of Ten))))
+
+(deftest a-repeated-check-name-is-deduplicated-while-the-macro-runs
+  ;; A certificate names a set of checks whatever collection it was written as, so writing
+  ;; one twice cannot make it count twice: the mask has one bit per check, and the checks a
+  ;; certificate covers are read back in the type's own order with no repeats.
+  (let [certs (:certificates (internal/model-of Twice))
+        as-set (get certs ::as-set)
+        as-vec (get certs ::as-vector)]
+    (is (= as-set as-vec) "the vector and the set are the same certificate")
+    (is (= [::a ::b] (:checks as-vec)))
+    (is (= [0 1] (:ids as-vec)))
+    (is (= 2r11 (:mask as-vec))))
+  (testing "and the two answer alike at run time"
+    (let [d (-> (rec/draft Twice) (assoc ::a 1) (assoc ::b 2))]
+      (is (true? (rec/check d ::as-vector)))
+      (is (= #{::as-set ::as-vector ::rec/every-check} (rec/certificates d))))))
 
 (deftest a-certificate-is-read-in-the-type-s-own-check-order
   ;; Written backwards as a vector; what comes out follows the order the type's checks are

@@ -114,6 +114,28 @@
 (def led (->Ledger "zoe" 0 10))
 (def tag (->Tag "t"))
 
+;; `recur` in a method body. A `defrecord` method body is a function body, so `recur`
+;; targets it with the receiver excluded; a body written here has to mean the same thing,
+;; on both generated types -- including the sealed one, where the body sits inside the
+;; `try` that pops the ownership frame.
+(defprotocol Counting
+  (countdown [c n]     "recurs, as a defrecord method body may")
+  (sum-down  [c n acc] "two extra arguments, both of them rebound by the recur")
+  (no-recur  [c n]     "an ordinary body, to show the loop changes nothing")
+  (label     [c]       "nothing but the receiver -- there is no binding to rebind"))
+
+(rec/defrecord Counter
+  [tag]
+  {:checks {::tag string?}}
+
+  Counting
+  (countdown [c n]     (if (pos? n) (recur (dec n)) [:done (::tag c)]))
+  (sum-down  [c n acc] (if (pos? n) (recur (dec n) (+ acc n)) [:sum acc (::tag c)]))
+  (no-recur  [c n]     [:plain n (::tag c)])
+  (label     [c]       (::tag c)))
+
+(def counter (->Counter "c"))
+
 ;;; ------------------------------- installed on both types -------------------------------
 
 (deftest one-body-is-installed-on-both-generated-types
@@ -130,6 +152,29 @@
 (deftest a-second-protocol-on-the-same-form-is-installed-too
   (is (= "zoe:10" (describe led)))
   (is (= "zoe:10" (describe (rec/draft led)))))
+
+;;; ------------------------------------ recur in a body ------------------------------------
+
+(deftest recur-in-a-method-body-targets-the-body-itself
+  ;; The arity is the one a `defrecord` method body has: the receiver is not rebound, so
+  ;; `(recur (dec n))` on a two-argument method takes one argument.
+  (testing "on the sealed type, where the body sits inside the ownership try"
+    (is (= [:done "c"] (countdown counter 3)))
+    (is (= [:done "c"] (countdown counter 0)))
+    (is (= [:sum 6 "c"] (sum-down counter 3 0))))
+  (testing "and on the draft type, where the body is an argument to the return wrapper"
+    (let [d (rec/draft counter)]
+      (is (= [:done "c"] (countdown d 3)))
+      (is (= [:sum 6 "c"] (sum-down d 3 0)))))
+  (testing "the receiver the loop carries is still a draft of this type"
+    (is (= "c" (::tag (rec/seal (rec/draft counter)))))))
+
+(deftest a-body-that-does-not-recur-is-unchanged
+  (is (= [:plain 2 "c"] (no-recur counter 2)))
+  (is (= [:plain 2 "c"] (no-recur (rec/draft counter) 2)))
+  (testing "including one taking nothing but the receiver, whose loop binds nothing"
+    (is (= "c" (label counter)))
+    (is (= "c" (label (rec/draft counter))))))
 
 ;;; ------------------------------- what the receiver is -------------------------------
 
