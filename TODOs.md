@@ -168,6 +168,15 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       entry, and the old `check-all` ambiguity (raw return vs gate-failure map) no longer
       exists. Update README's draft-level sections and the surface test's expected set.
 
+- [ ] **I2. Two small fixes ruled on 2026-09-16.** (a) Protocol method bodies are emitted as
+      `(loop [~@non-receiver-args] ~@body)` on both the sealed and draft types, so a user's
+      `(recur …)` targets the loop with exactly the arity a `defrecord` method body has —
+      receiver excluded — allocates nothing, and works inside the sealed side's `try`. Test
+      with a `countdown` method that recurs, on both forms. (b) A certificate accepts any
+      collection of check names and duplicates are removed at macroexpansion; documentation
+      shows the set form everywhere. Test that `[::a ::a ::b]` and `#{::a ::b}` yield the same
+      certificate. Do not edit TODOs.md or SPEC.md; report.
+
 ### H — later, low priority
 
 - [ ] **H1. `recognitum.walk`.** `clojure.walk/walk` is a plain `cond`: on `IRecord` it does
@@ -467,21 +476,21 @@ so far, or the options if it is still open. None is implemented.
       name, and the key is what says a check failed -- so one that returned `nil` or
       `false` is reported as faithfully as one that returned a map.
 
-- [ ] **D3 — the built-in certificate is called `:recognitum.core/every-check`.**
+- [x] **D3 — the built-in certificate is called `:recognitum.core/every-check`.**
       `SPEC.md`'s "Open" section left the name to whoever needed it; D3 needed it, so it
       is settled there and the bullet is gone. `recognitum.core/every-check` is the var
       holding it, a type may not declare a certificate of that name
       (`::reserved-certificate`), and it is the last entry of every model's
       `:certificates`, so `holding` and `certify` need no special case for it. A type
-      with no checks holds it vacuously, which is honest rather than a carve-out.
+      with no checks holds it vacuously, which is honest rather than a carve-out. Confirmed by galdre 2026-09-16.
 
-- [ ] **D3 — a certificate may be written as a vector as well as a set.** `SPEC.md` says
+- [x] **D3 — a certificate may be written as a vector as well as a set.** `SPEC.md` says
       "a set of check names", and a set is what the example writes. The macro accepts any
       set or sequential collection, because a vector of check names means exactly the same
       thing and refusing it would buy nothing: the order it is written in is discarded
       either way, since a certificate is read back in the type's own check order so that
       failures report in the order every other entry point reports in. A map, a keyword, a
-      bare symbol and a number are refused as `::malformed-certificate`.
+      bare symbol and a number are refused as `::malformed-certificate`. Ruled 2026-09-16: accept any collection, remove duplicates at compile time, documentation shows the set form. Queued as step I2.
 
 - [x] **D3 — `certify`, `certify!` and `holding` refuse a sealed value, as `check` and
       `passing` do.** Same note as D2's, now with two more functions in it: a sealed value
@@ -533,7 +542,7 @@ so far, or the options if it is still open. None is implemented.
       `definition-test/a-section-with-no-implementation-behind-it-is-accepted-only-empty`
       is now `every-section-now-has-something-behind-it`.
 
-- [ ] **C1 — only `:options` was added to the model, and nothing reads it.** The model
+- [x] **C1 — only `:options` was added to the model, and nothing reads it.** The model
       carries `:options` (an empty map where the section was left out) so that E4 has
       somewhere to look for `:io-limited`; `:io-deps` and `:certificates` are not on the
       model at all, because they can only be empty. Whoever lands E1/D3/E4 adds theirs the
@@ -544,7 +553,7 @@ so far, or the options if it is still open. None is implemented.
       option outside it is a compile error, so a new option is declared there or it does
       not compile. E4 made `:options` read: `:io-limited` resolves at macroexpansion into
       `:io-limited-keys`, the fields a direct write to a sealed value is refused for, so
-      nothing on the model is now carried and ignored.
+      nothing on the model is now carried and ignored. 2026-09-16: stale — the note itself records every later step adding its section; the option is read.
 
 - [x] **C1 — the definition map is required, not optional.** `SPEC.md` says three
       positions and every *section* optional, so a type with no checks is written
@@ -558,13 +567,13 @@ so far, or the options if it is still open. None is implemented.
       `protocol-test/the-definition-map-is-still-required-before-the-implementations`.
       Nothing is gained by letting a type be written two ways.
 
-- [ ] **C2 — `recur` to a method head does not work in either implementation.** Both
+- [x] **C2 — `recur` to a method head does not work in either implementation.** Both
       wrap the body: the draft type in a call to `draft-impl-return`, the sealed type in
       a `let`/`binding` inside a call to `sealed-impl-return`. So a protocol method body
       written with a tail `recur` back to its own arglist is a compile error that a plain
       `deftype` would have accepted. Nothing in `SPEC.md` asks for it and no test wants
       it; a body needing a loop writes `loop` explicitly. Recorded because the error, if
-      someone hits it, will not obviously be about this.
+      someone hits it, will not obviously be about this. Ruled 2026-09-16: fix. Emit the body inside `(loop [args…] …)` over the non-receiver arguments; `recur` then targets the loop with the same arity a defrecord method has, allocates nothing, and works inside the `try`. Verified on both emission shapes. Queued as step I2.
 
 - [x] **C2 — the example model, the demo and the README carry no protocol
       implementation.** `SPEC.md`'s `Heist` implements `some.ns/SomeProtocol`, and
@@ -703,10 +712,10 @@ so far, or the options if it is still open. None is implemented.
       nothing while it sits there: it is unreachable code rather than a false claim.
       `io-deps-test/an-io-dep-nothing-names-never-fetches` pins the behaviour either way.
 
-- [ ] **E1 — the batched form is refused as an unresolvable arglist entry.** `[[crew] :as
+- [x] **E1 — the batched form is refused as an unresolvable arglist entry.** `[[crew] :as
       rows]` is E2. Until then `[crew]` is an entry naming neither a field nor an io-dep and
       is reported as `::unknown-dependency`, which is true but says nothing about the form
-      being a batched fetch written too early. E2 owns the message either way.
+      being a batched fetch written too early. E2 owns the message either way. 2026-09-16: moot — the batched form has existed since the first run.
 
 - [x] **E2 — a batch of one is the only batch there is yet.** A validation call spans one
       value, so a batched fetch is handed exactly one tuple and the deduplication the form
