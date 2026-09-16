@@ -168,6 +168,62 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
 - [x] **F2. Re-measure and re-record the performance table.** Checks called with direct field
       access rather than keyword lookup is the change most likely to move it.
 
+## For discussion
+
+Design questions raised while walking the deferred list on 2026-09-16. Each carries the ruling
+so far, or the options if it is still open. None is implemented.
+
+- [ ] **`check` versus `certify`, and an explicit re-run.** Proposal from galdre: `check` and
+      `certify` *establish* — they skip whatever the verdict mask already says passes, keeping
+      the fast path fast — and on a sealed value, where everything is established, they return
+      `true` without running anything. New verbs `recheck` and `recertify` *run it now*
+      regardless of the mask: on a draft the result sets or clears bits, so a passed IO check
+      that fails against today's world is un-passed; on a sealed value they run and answer.
+      This replaces the `:not-a-draft` refusal on every checking function, which galdre ruled
+      wrong. Open: how many of the eight existing checking names (`check`, `certify`, their
+      bangs, their `-all` forms, and those bangs) get a `re-` twin. Re-verifying a batch against
+      the database is a real case; `recheck-all` for one check across a group is harder to
+      picture.
+
+- [ ] **`passing` and `holding` are misnamed.** Agents named them; galdre has not seen them.
+      Present participles read as scoping forms — `drafting` already is one in this library —
+      and these are queries returning sets. Options: rename to match the `meta` keys they
+      duplicate (`passed`, `certificates`) and widen them to answer for a sealed value too (all
+      checks, all certificates), which closes three deferred notes about whether they should;
+      or remove them, since `(::recognitum.core/passed (meta d))` already answers and two
+      spellings of one question is surface. Ruling pending.
+
+- [ ] **Groups of mixed types are allowed.** Ruled by galdre: the contract is "recognitum
+      types," and `check-all`/`certify-all` over drafts of more than one type should work. The
+      `:mixed-types` refusal goes. Batched fetches are declared per type, so a mixed group is
+      one fetch pass per type, still batched within each. A check or certificate name resolves
+      per type. An unknown certificate fails the whole call — it is a programmer error, the
+      same rule a single `certify` already applies, and burying it among per-value failures is
+      how a typo hides.
+
+- [ ] **How exceptions are documented.** The keyword tables in README and SPEC answer "what
+      keywords exist"; the reader's question is "what can this call throw, and what is in it."
+      Galdre: a table is the wrong mechanism. Direction: each function's docstring names what it
+      throws and the ex-data keys, so `(doc check)` answers; a README section organised by
+      operation rather than by keyword. Compile-time refusals and typo-catchers
+      (`:unknown-check`) are not worth documenting in a table at all. Undecided in shape.
+
+- [ ] **README gaps from the exception audit.** Once the above settle: `:malformed-batch` and
+      `:incomplete-batch` (a batched fetch returned the wrong shape) get documented; whatever
+      replaces `:not-a-draft` gets documented; `certify`'s docstring names
+      `:unknown-certificate` as a possibility. `:io-limited` is already in README.
+
+- [ ] **SPEC.md's future.** It began as the target for the rewrite and drifted into a design
+      rationale document without that being decided. Galdre: make a list of what it holds that
+      could move to README, and walk that list one item at a time — some of the rationale is
+      not important in the grand scheme. Until then, no new rulings are written into it.
+
+- [ ] **`run-checks!` per-call overhead** (perf, later). Reported by the merge-fix agent: per
+      validation it builds three phase vectors, a failure set, a lazy `remove` over the pure
+      phase, and a `some` per check in the gate test — a fixed cost on every sealed write, not
+      just `merge`. Alongside the existing note that `equiv`/`equals`/`hashCode` build a map per
+      call. Galdre: perf work is later.
+
 ## Deferred during implementation
 
 - [x] **G2 — `postwalk` over an `:io-limited` sealed value throws where the step's
