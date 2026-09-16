@@ -5,8 +5,8 @@
   `^{:valid pred}` fields, and the only reader who finds out is the one who tried it. The
   history here is exactly that -- the prose was left behind by four separate changes before
   anyone counted the damage. So the claims the README makes that can be mechanically
-  checked are checked: that every type definition in it compiles, that the errors it
-  documents are the errors the library throws, that the commands it gives are commands this
+  checked are checked: that every type definition in it compiles, that the errors it names
+  by name are errors the library throws, that the commands it gives are commands this
   project has, and that the facilities it omits mentioning are not the ones a reader would
   most need told about.
 
@@ -83,30 +83,37 @@
 
 ;;; ---------------------------------------- the errors ----------------------------------------
 
-(defn- error-rows
-  "The `:error` values the README's error table lists, in the order it lists them."
+(defn- errors-section
+  "The `## Errors` section, up to whatever heading follows it."
   []
-  (let [table (second (str/split @readme #"## Errors"))
-        lines (take-while #(not (str/starts-with? % "## ")) (str/split-lines (or table "")))
-        ;; past the header row and its separator, so `:error` -- the column's name -- is
-        ;; not read as one of the errors it heads.
-        rows  (rest (drop-while #(not (re-find #"^\|\s*-" (str/trim %))) lines))]
-    (->> rows
-         (keep #(second (re-find #"^\|\s*`:(\S+)`" (str/trim %))))
-         (mapv keyword))))
+  (str (first (str/split (str (second (str/split @readme #"## Errors"))) #"\n## "))))
 
-(deftest the-error-table-lists-exactly-what-the-library-throws
-  (is (= #{:check-failed :unknown-field :extraneous-keys
-           :cannot-dissoc :cannot-seal :io-limited}
-         (set (error-rows)))
-      "every error a caller can dispatch on, and nothing that is no longer thrown")
-  (testing "and each one is a keyword the source actually throws"
-    (doseq [e (error-rows)]
-      (is (str/includes? @core-source (str "::" (name e)))
-          (str "core.clj never throws ::" (name e))))))
+(deftest the-errors-section-states-the-one-shape
+  ;; It used to carry a table of keywords, which is a second place for the set of errors to
+  ;; live and therefore a second place for it to be wrong. What each operation throws is in
+  ;; that operation's docstring now; what the README owes a reader is the shape they all
+  ;; share, and these are the parts of that shape a test can hold it to.
+  (let [s (errors-section)]
+    (is (seq s) "the README still says what a refusal looks like")
+    (is (str/includes? s ":error") "the key a caller dispatches on")
+    (is (str/includes? s ":record") "the key that says which type refused")
+    (is (str/includes? s ":failures") "and where the failures themselves are")
+    (is (re-find #"(?s)shape validations.*invariant validations.*external validations" s)
+        "failures come back in phase order, and the section has to say which order that is")
+    (is (str/includes? s "`check`")
+        "the same keys check answers with, so a reader learns one shape rather than two")
+    (is (str/includes? s "docstring")
+        "and where to find what any one operation throws")))
+
+(deftest every-error-the-errors-section-names-is-one-the-library-throws
+  (let [named (distinct (map second (re-seq #":recognitum\.core/([a-z-]+)" (errors-section))))]
+    (is (seq named) "the section shows at least one error under its real name")
+    (doseq [e named]
+      (is (str/includes? @core-source (str "{:error ::" e))
+          (str "core.clj never throws ::" e)))))
 
 (deftest the-readme-says-the-error-keys-are-namespaced
-  ;; The table writes them short for readability, which is a trap unless the text says so:
+  ;; Worth saying outright, because the short spelling is the one a reader reaches for:
   ;; `(= :check-failed (:error (ex-data e)))` is false for every value the library throws.
   (is (mentions? ":recognitum.core/check-failed")))
 

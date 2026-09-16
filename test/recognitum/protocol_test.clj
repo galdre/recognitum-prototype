@@ -176,6 +176,47 @@
     (is (= "c" (label counter)))
     (is (= "c" (label (rec/draft counter))))))
 
+;;; --------------------------- a primitive-hinted parameter ---------------------------
+
+(deftest a-primitive-hinted-parameter-is-refused-by-clojure-and-not-by-this-library
+  ;; Deferred from the protocol work: can a method body take `^long n`, as a `defrecord`
+  ;; method body appears to be able to? It cannot, and the refusal is Clojure's rather than
+  ;; anything the wrapper does -- which is what these two assertions are for. Each form is
+  ;; written twice, once against `clojure.core/defrecord` and once against this library's,
+  ;; and the two fail the same way at the same point.
+  (testing "hinted where the protocol is declared, the form compiles and the call site does not"
+    ;; `defprotocol` generates a dispatch fn that implements IFn and nothing narrower, so a
+    ;; call the compiler emits as a primitive invocation has nothing to invoke.
+    (doseq [[what form]
+            [["clojure.core/defrecord"
+              '(do (clojure.core/defprotocol PrimDecl (prim-a [h ^long n]))
+                   (clojure.core/defrecord PlainPrimA [label]
+                     PrimDecl (prim-a [h n] (+ n 1)))
+                   (prim-a (->PlainPrimA "p") 3))]
+             ["recognitum.core/defrecord"
+              '(do (recognitum.core/defrecord RecPrimA
+                     [label] {:checks {:recognitum.protocol-scratch/label string?}}
+                     PrimDecl (prim-a [h n] (+ n 1)))
+                   (prim-a (->RecPrimA "p") 3))]]]
+      (let [t (some-> (compiles form) root-cause)]
+        (is (instance? ClassCastException t) (str what " compiled and ran it"))
+        (is (re-find #"IFn\$OLO" (str (some-> t .getMessage)))
+            (str what ": the dispatch fn is not a primitive-capable one")))))
+  (testing "hinted on the implementation's arglist, deftype* refuses the method outright"
+    ;; The interface a protocol generates takes Objects, so there is no method with a long
+    ;; parameter for the hinted arglist to match.
+    (doseq [[what form]
+            [["clojure.core/defrecord"
+              '(do (clojure.core/defprotocol PrimImpl (prim-b [h n]))
+                   (clojure.core/defrecord PlainPrimB [label]
+                     PrimImpl (prim-b [h ^long n] (+ n 1))))]
+             ["recognitum.core/defrecord"
+              '(recognitum.core/defrecord RecPrimB
+                 [label] {:checks {:recognitum.protocol-scratch/label string?}}
+                 PrimImpl (prim-b [h ^long n] (+ n 1)))]]]
+      (is (re-find #"leave off hints" (str (compile-message form)))
+          (str what " accepted a primitive hint on a protocol method's arglist")))))
+
 ;;; ------------------------------- what the receiver is -------------------------------
 
 (deftest the-receiver-is-a-draft-in-both-implementations
