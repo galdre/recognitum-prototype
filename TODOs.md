@@ -89,10 +89,31 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       the faked in-memory source from E1: a fetch resolving, the gate refusing to query on a
       malformed value, deduplication, and a check judging the result. The bench's hand-rolled side needs the same
       checks written out by hand again, or the comparison stops being apples-to-apples.
-- [ ] **F2. Re-measure and re-record the performance table.** Checks called with direct field
+- [x] **F2. Re-measure and re-record the performance table.** Checks called with direct field
       access rather than keyword lookup is the change most likely to move it.
 
 ## Deferred during implementation
+
+- [ ] **F2 — `merge` on a sealed value is the one row the library loses.** 1251ns against
+      814ns hand-rolled, and the only row over 1.2x that is not a `drafting`. Nothing here
+      regressed -- it read 1.6x in the table F1 inherited -- so F2 left it, having spent its
+      fix on the drafting rows the deferral named. Where it goes: `checks-for` builds a
+      `sorted-set` per write out of the field -> checks index, where the macro already
+      computes a per-field mask for exactly this question (D1's invalidation masks), so the
+      union could be one `bit-or` per key and an expansion over the set bits; and `cons`
+      builds an intermediate map of the entries before constructing through `get` per field.
+      The first is the cheaper win and touches only `checks-for` and its two callers.
+
+- [ ] **F2 — `recognitum.cost-test`'s bounds are loose, and one of them is very loose.**
+      The rename row is held to 12x where the benchmark reads 3.5x, because the suite is a
+      bad place to measure the library: by the time forty-odd types have been defined across
+      the other files every call site into `recognitum.core` is megamorphic, which roughly
+      doubles the library side and costs the hand-rolled side nothing. Inside the suite the
+      row reads 7-8x where the benchmark reads 3.5x, and the regression the bound exists to
+      catch read 15-17x. So it catches a fixed cost per call and nothing subtler. A tighter
+      guard would have to run in its own JVM -- a `-X:cost` alias running only that
+      namespace would read the benchmark's numbers and could be held to 5x -- which is a
+      test-runner question rather than a library one.
 
 - [x] **B1 — the audit is inert but not yet gone.** `*audit-invariant-keys*`,
       `recognitum.audit-fixture`, the `:test-audit` alias and the README section all survive
@@ -343,7 +364,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       end-to-end cases are in `recognitum.io-deps-test`, and `resolution-test` keeps the
       direct ones as the smallest statement of the same rules.
 
-- [ ] **A1 — the README performance table was not re-measured.** The bench runs and its
+- [x] **A1 — the README performance table was not re-measured.** The bench runs and its
       numbers sit inside the run-to-run spread the table already warns about, but qualified
       keys are exactly the kind of change F2 exists to re-record. Left to F2, which owns the
       table. F1 relabelled its rows -- they said "invs" -- and said in the text that the
@@ -351,7 +372,15 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       without recording it, and the drafting rows have moved a long way in the wrong
       direction: N=1 renames read 2992ns against 260ns hand-rolled where the table says
       1220 against 862 for N=15. F2 should find out where that went rather than simply
-      writing the new number down; nothing in F1 touched `src/`.
+      writing the new number down; nothing in F1 touched `src/`. Found in F2: it was not the
+      checks, it was `establish-all`. E3 gave every entry point the group machinery, and a
+      call with nothing pending still built a plan per value, asked what each was waiting on,
+      and ran an empty pass over each phase -- about 2us of it, whatever the call had been
+      asked to do. A call now answers before it enters a phase where nothing is pending, and
+      the passes that remain are loops rather than `mapv` over several collections at once.
+      A seal of an unwritten draft went 2286ns -> 279ns, N=1 renames 3060 -> 838 against 237
+      hand-rolled, construct 5138 -> 1532 against 1358. Table re-recorded on the same
+      machine, with every shape the bench measures now carrying a row.
 - [ ] **A1 — `CONSIDERATIONS.md` still shows bare field keys throughout.** It is scratch,
       kept but not maintained, and TODOs already says not to trust it.
 

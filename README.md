@@ -589,22 +589,43 @@ it.
 
 Against a plain `defrecord` carrying the same checks written by hand, so the validation work is
 identical on both sides (`bench/recognitum/bench.clj`). Criterium `quick-benchmark` on an AMD
-Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-15:
+Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-16:
 
 | | hand-rolled | this library |
 |---|---|---|
-| read a field | 2.1 ns | 1.9 ns |
-| write, no cross-field check on the key | 19.9 ns | 31.4 ns |
-| write, two cross-field checks on the key | 246 ns | 305 ns |
-| `merge` two keys | 933 ns | 604 ns |
-| construct | 1478 ns | 1410 ns |
-| 15 writes in one `drafting` | 862 ns | 1220 ns |
+| read a field | 2.2 ns | 2.3 ns |
+| write one field, no cross-field check on it | 16.5 ns | 10.4 ns |
+| write one field, two cross-field checks on it | 203 ns | 172 ns |
+| `merge` two fields | 814 ns | 1251 ns |
+| construct | 1358 ns | 1532 ns |
+| one rename in a `drafting` | 237 ns | 838 ns |
+| 15 renames in a `drafting` | 700 ns | 1294 ns |
+| one add-member (3 writes) in a `drafting` | 1384 ns | 1655 ns |
+| 15 add-members in a `drafting` | 4394 ns | 5007 ns |
 
-Two caveats. Run-to-run spread is real: the two-cross-check row moved between 1.0× and 1.2×
-across consecutive runs on an idle machine. And these numbers were taken before checks became
-arglist-declared and started being called with direct field access, which is the change most
-likely to have moved them. Re-measure rather than trust either column to three figures:
+A write to a sealed value costs less than the hand-rolled twin, which is the arglists paying
+for themselves: the checks depending on the field are known when the type is compiled, and each
+one is called with the fields it named handed to it directly rather than looked up out of the
+value.
+
+A `drafting` costs a fixed few hundred nanoseconds beyond the checks it runs — a draft opened, a
+seal performed, a verdict mask consulted — which is the whole of the gap at one write and is
+most of the way amortized by fifteen. Where a draft is opened and written to with nothing that
+invalidates anything, the seal runs nothing and costs nothing beyond that fixed part.
+
+`merge` is the row the library loses, and loses honestly: it refuses an undeclared key, builds
+one intermediate map for the whole write so that the checks run once at the end rather than per
+entry, and constructs the new value through it.
+
+Two caveats. Run-to-run spread is real — a few percent between consecutive runs on an idle
+machine, more on a busy one — so do not trust either column to three figures. And a table is
+only ever as current as its last run:
 
 ```
 clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"
 ```
+
+What does not depend on re-running it is the shape of the comparison. `recognitum.cost-test`
+holds three of these rows to a multiple of the hand-rolled side, so a change that makes a
+validation call pay a large fixed cost — which is what the `drafting` rows read before this
+table was last re-measured — fails the suite rather than waiting to be noticed here.

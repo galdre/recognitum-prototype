@@ -187,6 +187,18 @@
 (defn io-of "Those of `idxs` that reach one." [model idxs]
   (filterv #(io-bound? model %) idxs))
 
+(defn- split-pending
+  "`[pure io]`: those of `idxs` that reach no io-dep, and those that do.
+
+  Asked as one question because the usual answer is that none of them do -- a type with no
+  `:io-deps` cannot have an IO-bound check at all -- and that answer is reached in one pass
+  over the indices rather than two passes building two vectors."
+  [model idxs]
+  (let [cs (:checks model)]
+    (if (some #(seq (:io (nth cs %))) idxs)
+      [(pure-of model idxs) (io-of model idxs)]
+      [idxs []])))
+
 (defn- batch-answer!
   "What a batched fetch returned, insisted on: a map holding an entry for every tuple it was
   handed, which is the one thing the batched form contracts to do.
@@ -329,8 +341,7 @@
   all passed when it was made, so the only ones that can be in doubt are those naming a
   field being written -- and those are exactly the ones in `idxs`."
   [model run x idxs]
-  (let [pure (pure-of model idxs)
-        io   (io-of model idxs)]
+  (let [[pure io] (split-pending model idxs)]
     (run-group! model run x pure {})
     (when (seq io) (run-group! model run x io (fetch-io model x io)))))
 
@@ -531,14 +542,19 @@
   is waiting: nothing else here stops at the first anything, and a caller told about one
   unwritten field at a time would write one and be told about the next."
   [model d idxs]
-  (let [missing (set ((:draft-missing model) d))
-        cs      (:checks model)]
-    (apply array-map
-           (into [] (mapcat (fn [i]
-                              (let [c  (nth cs i)
-                                    ks (filterv missing (:field-closure c))]
-                                (when (seq ks) [(:name c) ks]))))
-                 idxs))))
+  (let [missing ((:draft-missing model) d)]
+    ;; A complete draft is the ordinary case and has nothing to answer here, so it does not
+    ;; pay for the search: no field is unwritten, so no check is waiting on one.
+    (if (empty? missing)
+      {}
+      (let [missing (set missing)
+            cs      (:checks model)]
+        (apply array-map
+               (into [] (mapcat (fn [i]
+                                  (let [c  (nth cs i)
+                                        ks (filterv missing (:field-closure c))]
+                                    (when (seq ks) [(:name c) ks]))))
+                     idxs))))))
 
 (defn- missing-fields!
   "A check cannot judge a field nobody wrote. \"Never written\" and \"written to nil\" are
@@ -651,6 +667,40 @@
            (failure-entry c ret (dep-values model c d cache))))
        fs))
 
+(def ^:private established
+  "The answer for a draft with nothing left to establish: nothing ran and nothing was
+  fetched. Shared rather than rebuilt, since it is the answer most calls get."
+  {:failures [] :cache {}})
+
+(defn- plan-for
+  "What is left to do about the checks at `idxs` for the draft `d`: the pure checks to run
+  -- those asked for that are not already passing, together with whatever gates a fetch
+  among them -- the IO-bound ones, and what any of them is waiting on.
+
+  `nil` where there is nothing to do at all, which is the case worth not paying for: a
+  draft of a sealed value that has not been written to, a check an earlier call already
+  established, a certificate already held. Every entry point asks this before it does
+  anything, so what is skipped here is the whole of what a call with nothing pending
+  costs."
+  [model d idxs]
+  (when (seq idxs)
+    (let [pending (not-established d idxs)]
+      (when (seq pending)
+        (let [[pure io] (split-pending model pending)
+              gate      (if (seq io)
+                          (not-established d (remove (set pure) (gate-of model io)))
+                          [])]
+          (if (seq gate)
+            {:pure    (vec (sort (distinct (concat pure gate))))
+             :io      io
+             :waiting (waiting-on model d (distinct (concat pending gate)))}
+            ;; `idxs` is ascending and distinct wherever it is built -- a certificate's
+            ;; `:ids`, or the single check `check` was asked about -- so `pending` and
+            ;; `pure` already are, and sorting them again would not move them.
+            {:pure    pure
+             :io      io
+             :waiting (waiting-on model d pending)}))))))
+
 (defn- establish-all
   "Establish, against each draft in `ds`, the checks at its own entry of `idxss`, and answer
   with `{:failures [[i ret] ...] :cache {io-dep-name value}}` for each of them, index-aligned
@@ -659,7 +709,10 @@
   What is actually run for a draft is whatever its own mask does not already say is passing,
   together with the pure checks gating any fetch that involves -- so `check` and `certify`
   mean *establish this*, not *run exactly this*, and a satisfied prerequisite is free,
-  value by value.
+  value by value. Where nothing is pending for any of them, no phase is entered at all: a
+  `seal` of a draft nothing has been written to, and a `check` of a check already
+  established, are the calls this library is arranged to make cheap, so they are answered
+  before anything is built rather than by running an empty pass over each phase in turn.
 
   Two phases, because shape gates IO. Everything pure runs first and ungated; a draft any of
   it failed for fetches nothing, and its failures -- the ones asked for and the ones gating
@@ -667,43 +720,52 @@
   fetch, and they reach it together: one pass per io-dep over the whole group, so a batched
   fetch sees every argument tuple in one call and distinct tuples are computed once however
   many values share them. The gate is per value, so one malformed draft holds up nothing but
-  its own fetch.
+  its own fetch. Where no draft owes an IO-bound check the fetch pass is not entered either.
 
   The fields are pre-flighted over every check of every draft first, io-deps included, so a
   group too incomplete to judge says so about all of it at once rather than one at a time.
   `missing!` is handed what is waiting, keyed by the draft's index: what an incomplete draft
   means is the caller's to phrase, and one draft's answer is not the shape a group's is."
   [model ds idxss missing!]
-  (let [plans (mapv (fn [d idxs]
-                      (let [pending (not-established d idxs)
-                            pure    (pure-of model pending)
-                            io      (io-of model pending)
-                            gate    (if (seq io)
-                                      (not-established d (remove (set pure) (gate-of model io)))
-                                      [])]
-                        {:pure    (vec (sort (distinct (concat pure gate))))
-                         :io      io
-                         :waiting (waiting-on model d (distinct (concat pending gate)))}))
-                    ds idxss)
-        w     (apply array-map
-                     (into [] (comp (map-indexed (fn [n p]
-                                                   (when (seq (:waiting p)) [n (:waiting p)])))
-                                    (remove nil?)
-                                    cat)
-                           plans))]
-    (when (seq w) (missing! w))
-    (let [pure-fs (mapv (fn [d p] (record-run model d (:pure p) {})) ds plans)
-          ;; A draft whose shape failed carries nothing to the fetch, and one that owes no
-          ;; IO-bound check asks for none.
-          io-idxss (mapv (fn [fs p] (if (seq fs) [] (:io p))) pure-fs plans)
-          caches   (if (some seq io-idxss)
-                     (fetch-io-all model ds io-idxss)
-                     (vec (repeat (count ds) {})))]
-      (mapv (fn [d fs io cache]
-              (if (or (seq fs) (empty? io))
-                {:failures fs :cache {}}
-                {:failures (record-run model d io cache) :cache cache}))
-            ds pure-fs io-idxss caches))))
+  (let [ds    (vec ds)
+        idxss (vec idxss)
+        n     (count ds)]
+    (loop [i 0, plans (transient []), w (transient []), pending? false]
+      (if (< i n)
+        (let [p (plan-for model (nth ds i) (nth idxss i))]
+          (recur (inc i)
+                 (conj! plans p)
+                 (if (and p (seq (:waiting p))) (conj! (conj! w i) (:waiting p)) w)
+                 (or pending? (some? p))))
+        (if-not pending?
+          (vec (repeat n established))
+          (let [plans (persistent! plans)
+                w     (persistent! w)]
+            (when (seq w) (missing! (apply array-map w)))
+            (loop [i 0, fss (transient []), ios (transient []), fetching? false]
+              (if (< i n)
+                ;; A draft whose shape failed carries nothing to the fetch, and one that
+                ;; owes no IO-bound check asks for none.
+                (let [p  (nth plans i)
+                      fs (if p (record-run model (nth ds i) (:pure p) {}) [])
+                      io (if (or (nil? p) (seq fs)) [] (:io p))]
+                  (recur (inc i) (conj! fss fs) (conj! ios io)
+                         (or fetching? (boolean (seq io)))))
+                (let [fss (persistent! fss)
+                      ios (persistent! ios)]
+                  (if-not fetching?
+                    (mapv (fn [fs] (if (seq fs) {:failures fs :cache {}} established)) fss)
+                    (let [caches (fetch-io-all model ds ios)]
+                      (mapv (fn [i]
+                              (let [fs (nth fss i)
+                                    io (nth ios i)]
+                                (cond
+                                  (seq fs)    {:failures fs :cache {}}
+                                  (empty? io) established
+                                  :else       (let [cache (nth caches i)]
+                                                {:failures (record-run model (nth ds i) io cache)
+                                                 :cache    cache}))))
+                            (range n)))))))))))))
 
 (defn- establish-group
   "[[establish-all]] against one draft: a group of one, so that a call spanning values and a
