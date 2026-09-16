@@ -200,8 +200,11 @@ the checking, not about the world.
 
 ### Certificates
 
-`:certificates` maps a certificate name to a set of check names. Certificates are a
-**draft-level** facility:
+`:certificates` maps a certificate name to a set of check names. A built-in certificate covering
+every check on the type exists without being declared, so bulk checking can run everything in one
+pass rather than leaving whatever a named certificate omitted to run per value.
+
+Certificates are a **draft-level** facility:
 they name a subset of checks you can run early, before the value is complete.
 
 They do not change what a sealed value guarantees. `seal` enforces every check on the type,
@@ -251,7 +254,7 @@ Certificates do not survive serialization and take no part in `=` or `hash`.
 |---|---|
 | `(check d ::check-name)` | `true`, or the failing check's data |
 | `(check! d ::check-name)` | `true`, or throws |
-| `(certify d ::cert-name)` | `true`, or `{check-name failure-data}` for those that failed |
+| `(certify d ::cert-name)` | `true`, or a vector of failures for those that failed |
 | `(certify! d ::cert-name)` | `true`, or throws |
 
 None of them return a draft. The verdict goes in the mask, so the return value is free to be the
@@ -266,6 +269,12 @@ passing and produces it again.
 
 Every one of them checks everything it was asked to check and reports every failure. None stops
 at the first.
+
+Failures come back in declaration order — the order the checks are written in the form, which the
+macro sees before the map literal loses it. That is why a collection of failures is a vector
+rather than a map keyed by check name: a map literal does not preserve insertion order past eight
+entries, and ordering is a guarantee here. Each failure names its own check, so indexing by name
+is one step away when you want it.
 
 ### Checking many drafts at once
 
@@ -283,7 +292,8 @@ already passing and performs no IO.
 
 ### Metadata
 
-`meta` on a draft returns its metadata with the library's own keys merged over the top:
+`meta` returns a value's metadata with the library's own keys merged over the top. Drafts and
+sealed values answer the same way, so nothing has to establish which it is holding before asking:
 
 ```clojure
 (meta d)
@@ -291,6 +301,10 @@ already passing and performs no IO.
 ;    :recognitum.core/passed       #{::name ::crew ::cuts-sum-to-take}
 ;    :recognitum.core/certificates #{::shape}}
 ```
+
+On a sealed value every check passes and every certificate is held, so the same keys are present
+and constant. They carry no information there, but a common interface is worth more than the
+absence of a constant, and the merged portion is a compile-time constant for a sealed type.
 
 Merging over rather than under is deliberate. `with-meta` is public, so anything a user could
 set, a user could forge; keys the library writes last cannot be overridden by anything a caller
@@ -419,8 +433,10 @@ Everything throws `ex-info` with an `:error` key to dispatch on.
 | `:cannot-dissoc` | `dissoc` of a declared field |
 | `:cannot-seal` | sealing something neither a draft nor sealed |
 
-A check failure carries the check's name, its docstring, the fields it declared and their values,
-and whatever the check returned.
+A `:check-failed` carries a vector of failures in declaration order, never a single one — every
+throwing entry point runs everything it was asked to run first. Each failure names its check and
+carries the check's docstring, the fields it declared and their values, and whatever the check
+returned.
 
 ## Performance
 
@@ -431,11 +447,7 @@ keyword lookup.
 
 ## Open
 
-- **Whether "every check" is nameable.** `seal` runs all checks, so bulk-certifying one
-  certificate still leaves other IO-bound checks to run per value. A built-in certificate
-  meaning every check would close that; so would a bulk form that runs everything.
-- **Whether a sealed value reports anything through `meta`.** On a draft the keys carry
-  information; on a sealed value every check passes by definition, so they would be constant.
-- **The order failures are reported in.** Checks come from a map literal, which does not preserve
-  declaration order past eight entries, though the macro can.
-- **What `:options` holds besides `:io-limited`.**
+- **What the built-in every-check certificate is called.** Cheap to settle later; nothing depends
+  on the name.
+
+`:options` holds `:io-limited` and nothing else so far. It exists so that it can hold more.
