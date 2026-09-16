@@ -215,6 +215,17 @@ fields", and "The baseline is `defrecord`". Read those sections before anything 
       parentheses. Placed where the checks are introduced. Do not edit TODOs.md or SPEC.md;
       report. Done 6b63053. Also by galdre's ruling the same day, the six tests that scanned prose or source for forbidden words were deleted ("burn them with fire"); the three tests of what `pr-str` returns stay. Left for a sweep: five demo `show` labels and unset_test's docstring still say "shape check"/"IO-bound check"/"cross-field check".
 
+- [ ] **I6. Finish the vocabulary sweep.** The three ruled names (shape validation, invariant
+      validation, external validation) hold in README's prose, heist.clj, the demo labels and
+      unset_test. The old words remain at ~107 sites: `src/recognitum/core.clj` (51 — the ns
+      docstring, the public docstrings of `defrecord` and `drafting`, many private docstrings and
+      comments, and **two messages the library emits**: the `:io-limited` error text says
+      "IO-bound check(s)", and the malformed-shape-check compile error says "field's shape
+      check"); the test namespaces (49, prose and one deftest name); README's benchmark
+      commentary (4, "cross-field check"); bench.clj (3). Mechanical, but the two emitted
+      messages are user-visible and should go first. Do not add a test scanning for the old
+      words. Do not edit TODOs.md or SPEC.md; report.
+
 ### H — later, low priority
 
 - [ ] **H2. Raise or name the limits.** The verdict mask is one `long`, so a type may declare
