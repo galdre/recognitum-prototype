@@ -30,14 +30,17 @@
   the draft's data is immutable, but which checks have been run against that data is not
   part of the data. See [[passing]]. [[check]] and [[check!]] run one named check against a
   draft and answer the question rather than handing back a value -- the verdict goes in the
-  mask, and a check the mask already says passes is not run again.
+  mask, and a check the mask already says passes is not run again. [[seal]] reads the same
+  mask: it runs whatever is not already passing, so work done a check at a time on a draft
+  is not repeated when the draft closes.
 
   A certificate names a subset of those checks, so a draft can be run through a group of
   them before it is complete. [[certify]] and [[certify!]] establish one; whether a draft
   *holds* one is derived from the mask rather than recorded anywhere ([[holding]]), so
   overlapping certificates need no coordination and individual checks can complete one
   incidentally. Certificates are a draft-level facility and change nothing about what a
-  sealed value guarantees: [[seal]] enforces every check on the type, certified or not.
+  sealed value guarantees: [[seal]] enforces every check on the type, certified or not --
+  it merely finds a certified draft's share of them already established.
 
   `meta` answers the same way from either form. A value's own metadata comes back with
   `::passed` and `::certificates` merged over the top -- read off the mask for a draft, and
@@ -357,6 +360,18 @@
     (record-verdict! d i (true? ret))
     ret))
 
+(defn- not-established
+  "Those of `idxs` that `d`'s mask does not already say are passing, in the order given.
+
+  The one question every entry point that runs a group of checks against a draft asks
+  first. A set bit says that check passed against exactly this data -- a write cleared the
+  bit of everything naming the field it wrote -- so there is nothing left to learn and the
+  check is not called. A clear bit says nothing more than that: it does not distinguish
+  \"failed\" from \"not yet run\", which is why anything not passing is run again."
+  [d idxs]
+  (let [m (verdict-mask d)]
+    (filterv #(not (bit-test m %)) idxs)))
+
 (defn- establish
   "Answer what the check at `i` says about `d`, running it only if its verdict does not
   already say it passes, and recording what it returned.
@@ -476,8 +491,7 @@
   over that same set and in one pass, so a draft too incomplete to judge says so about every
   check that is waiting rather than one at a time."
   [model d cert]
-  (let [m       (verdict-mask d)
-        pending (filterv #(not (bit-test m %)) (:ids cert))
+  (let [pending (not-established d (:ids cert))
         w       (waiting-on model d pending)]
     (when (seq w) (missing-fields! model w))
     (reduce (fn [acc i]
@@ -633,11 +647,16 @@
   (if (instance? Unsealed x) (.-wrapped ^Unsealed x) x))
 
 (defn- seal-draft [model d]
-  ;; Only the checks naming a key the draft wrote are actually run, which is equivalent to
-  ;; running all of them: an untouched field still holds the value it had in the validated
-  ;; source, and a check none of whose fields were touched reads only unchanged values, so
-  ;; its verdict cannot have moved. A check naming no field at all has no verdict to inherit
-  ;; from a write, so it runs here regardless.
+  ;; Only the checks the draft's mask does not already say are passing are actually run,
+  ;; which is equivalent to running all of them: a bit is set only by a check that returned
+  ;; `true`, and only inherited by a draft whose data is the data that check saw -- a draft
+  ;; of a sealed value starts with every bit set because that is what being sealed means,
+  ;; and a write clears exactly the checks naming the field it wrote. So a set bit is a
+  ;; verdict about this data, and re-reaching it would learn nothing.
+  ;;
+  ;; A refusal comes first and costs no check at all. An undeclared key and a field nobody
+  ;; wrote are facts about the draft rather than about any check's judgement, and a check
+  ;; handed the unwritten-field sentinel would be judging the library's internals.
   (when-let [extra (extraneous d)]
     (throw (ex-info (format "%s has no field(s) %s -- use `clean` to strip them"
                             (:name model) (pr-str (vec extra)))
@@ -645,13 +664,26 @@
   (when-let [missing (seq ((:draft-missing model) d))]
     (throw (ex-info (format "%s is missing field %s" (:name model) (first missing))
                     {:error ::missing-field :record (:name model) :key (first missing)})))
-  (let [dirty ((:draft-dirty-keys model) d)]
-    (run-draft-checks! model d (into (checks-for model dirty) (:independent model))))
+  ;; Every check on the type is exactly what the built-in certificate covers, so the vector
+  ;; of indices to select from is one the macro already built.
+  (run-draft-checks! model d (not-established d (:ids (get (:certificates model) every-check))))
   ((:draft-seal model) d))
 
 (defn seal
   "Validate `d` and return the sealed value. What comes back is validated exactly as if
   every check had been rerun.
+
+  What is actually run is whatever `d`'s verdict mask does not already say is passing, so
+  work done incrementally on the draft is not repeated: a check established with [[check]],
+  or a whole certificate established with [[certify]], costs nothing here, and a draft of a
+  sealed value that has been written to pays only for the checks naming the fields written.
+  The guarantee is extensional -- it is about what the returned value satisfies, not about
+  which checks were called -- so a cheaper sound strategy is permitted, and the mask is one.
+
+  A failure is not saved in the same way. Nothing about a cleared bit distinguishes
+  \"failed\" from \"not yet run\", so a check that failed runs again at the next seal and
+  fails again. Every failure is collected and thrown once, which costs nothing where
+  everything passes, since every pending check runs in that case anyway.
 
   Idempotent: an already-sealed value passes straight through, so `seal` is a projection and a
   sealed value is a fixed point of it. That is what lets a `drafting` body end in a call that
@@ -1120,8 +1152,8 @@
         (map gensym ["k" "v" "d" "o" "h" "es" "ov" "acc" "mta" "mta2" "m" "thunk" "target" "i"])
         tgthint   (with-meta tgtsym {:tag tname})
         dname     (symbol (str tname "Draft"))
-        [extsym dirtysym vdsym ownsym tokensym bitsym passym]
-        (map gensym ["ext" "dirty" "verdicts" "own" "token" "bit" "pass"])
+        [extsym vdsym ownsym tokensym bitsym passym]
+        (map gensym ["ext" "verdicts" "own" "token" "bit" "pass"])
         ;; The verdicts are the one thing on a draft that changes in place: running a check
         ;; establishes something about data that is already there rather than producing new
         ;; data. A mutable field is private to its class, so everything outside the type
@@ -1132,8 +1164,8 @@
         svsym     (with-meta (gensym "s") {:tag tname})
         dfield    (fn [f] (list '. dvsym (symbol (str "-" f))))
         sfield    (fn [f] (list '. svsym (symbol (str "-" f))))
-        dctor     (fn [vals ext dirty verdicts own mta]
-                    `(new ~dname ~@vals ~ext ~dirty ~verdicts ~own ~mta))
+        dctor     (fn [vals ext verdicts own mta]
+                    `(new ~dname ~@vals ~ext ~verdicts ~own ~mta))
         dfields   (mapv dfield fsyms)
         params    (conj fsyms mtasym)
         ;; (Heist. a b c mta) with position i replaced by `x`
@@ -1178,7 +1210,6 @@
         ;; in emitted code -- the compiler rebuilds a set literal as a hash set.
         index     (reduce (fn [idx i] (reduce #(update %1 %2 (fnil conj []) i) idx (deps-of i)))
                           {} (range nchecks))
-        independent (filterv #(empty? (deps-of %)) (range nchecks))
         ;; What a write to `k` leaves standing: every verdict except the checks naming `k`.
         ;; Derived from the same index, so a field a check reads is a field that invalidates
         ;; it, and one bitwise `and` seeds the new draft. Computed here, so what the write
@@ -1298,11 +1329,12 @@
 
          ~@sealed-impls)
 
-       ;; The draft: the same real fields, plus a map for keys the type does not declare, a
-       ;; bitmask of which declared fields have been written, and a mutable bitmask of which
-       ;; checks currently pass. Extraneous keys set no bit in either -- no check can name
-       ;; one -- so `clean` only has to empty the map.
-       (p/def-map-type ~dname ~(into fsyms [extsym dirtysym vdfield ownsym mtasym])
+       ;; The draft: the same real fields, plus a map for keys the type does not declare
+       ;; and a mutable bitmask of which checks currently pass. Which fields have been
+       ;; written is read off the fields themselves, through the `unset` sentinel, and
+       ;; which checks are still to run is read off the mask -- so there is nothing else
+       ;; for a write to maintain.
+       (p/def-map-type ~dname ~(into fsyms [extsym vdfield ownsym mtasym])
          (~'get [_# ~ksym ~dsym]
            (case ~ksym
              ~@(mapcat (fn [[k f]] [k `(if (identical? ~f unset) ~dsym ~f)]) (map vector ks fsyms))
@@ -1314,15 +1346,15 @@
          (~'assoc [_# ~ksym ~vsym]
            (case ~ksym
              ~@(mapcat (fn [i k]
-                         [k (dctor (assoc fsyms i vsym) extsym `(bit-set ~dirtysym ~i)
+                         [k (dctor (assoc fsyms i vsym) extsym
                                    `(bit-and ~vdsym ~(survives k)) ownsym mtasym)])
                        (range n) ks)
-             ~(dctor fsyms `(assoc ~extsym ~ksym ~vsym) dirtysym vdsym ownsym mtasym)))
+             ~(dctor fsyms `(assoc ~extsym ~ksym ~vsym) vdsym ownsym mtasym)))
          (~'dissoc [this# ~ksym]
            (case ~ksym
              ~(apply list ks) (no-dissoc! ~model-sym ~ksym)
              (if (contains? ~extsym ~ksym)
-               ~(dctor fsyms `(dissoc ~extsym ~ksym) dirtysym vdsym ownsym mtasym)
+               ~(dctor fsyms `(dissoc ~extsym ~ksym) vdsym ownsym mtasym)
                this#)))
          (~'keys [_#]
            (concat (cond-> [] ~@(mapcat (fn [[k f]] [`(not (identical? ~f unset)) `(conj ~k)])
@@ -1332,7 +1364,7 @@
          ;; fixed: on a draft they are what has actually been established. Merged over the
          ;; caller's metadata for the same reason, and the caller's own keys survive.
          (~'meta [_#] (draft-meta ~model-sym ~vdsym ~mtasym))
-         (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym dirtysym vdsym ownsym mta2sym))
+         (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym vdsym ownsym mta2sym))
          (~'cons [this# ~osym]
            (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym)) this# (entries-of ~osym)))
 
@@ -1361,7 +1393,6 @@
           ;; index, and a scan of `:checks` per call would be the only alternative.
           :check-ids   ~(into {} (map-indexed (fn [i c] [(:name c) i])) parsed)
           :index       ~index
-          :independent ~independent
           ;; certificate name -> what it covers, as check names, indices, and the bits of
           ;; a draft's verdict mask they own -- so holding one is an `and`. `array-map`
           ;; applied to the pairs, rather than a literal, which would promote and reorder
@@ -1384,27 +1415,23 @@
                            nil))
           ;; From the type, nothing is established; from a sealed value, everything is --
           ;; that is what being sealed means, and the draft inherits exactly that claim.
-          :draft-empty      (fn [~ownsym] ~(dctor (repeat n `unset) {} 0 0 ownsym nil))
+          :draft-empty      (fn [~ownsym] ~(dctor (repeat n `unset) {} 0 ownsym nil))
           ;; The metadata comes off the field rather than through `meta`, which would hand
           ;; back the library's keys merged in and store a snapshot of them as though the
           ;; caller had written it. What the draft inherits is what the caller actually set.
           :draft-from       (fn [~svsym ~ownsym]
-                              ~(dctor (mapv sfield fsyms) {} 0 all-pass ownsym (sfield mtasym)))
+                              ~(dctor (mapv sfield fsyms) {} all-pass ownsym (sfield mtasym)))
           :draft-owner      (fn [~dvsym] ~(dfield ownsym))
           :draft-ext        (fn [~dvsym] ~(dfield extsym))
           ;; Neither changes a field, so neither disturbs a verdict: the mask is copied
           ;; across as it stands. (Through the protocol, since a mutable field is private to
           ;; the class that declares it.)
           :draft-with-owner (fn [~dvsym ~tokensym]
-                              ~(dctor dfields (dfield extsym) (dfield dirtysym)
+                              ~(dctor dfields (dfield extsym)
                                       `(verdict-mask ~dvsym) tokensym (dfield mtasym)))
           :draft-clean      (fn [~dvsym]
-                              ~(dctor dfields {} (dfield dirtysym) `(verdict-mask ~dvsym)
+                              ~(dctor dfields {} `(verdict-mask ~dvsym)
                                       (dfield ownsym) (dfield mtasym)))
-          :draft-dirty-keys (fn [~dvsym]
-                              (let [~dirtysym ~(dfield dirtysym)]
-                                (cond-> [] ~@(mapcat (fn [i k] [`(bit-test ~dirtysym ~i) `(conj ~k)])
-                                                     (range n) ks))))
           :draft-missing    (fn [~dvsym]
                               (cond-> [] ~@(mapcat (fn [[k f]] [`(identical? ~(dfield f) unset) `(conj ~k)])
                                                    (map vector ks fsyms))))

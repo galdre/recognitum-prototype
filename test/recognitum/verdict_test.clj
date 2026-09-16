@@ -16,9 +16,10 @@
     written field cleared, and the seed is a snapshot -- the parent keeps its own verdicts,
     so two versions of a draft say nothing about each other.
 
-  Nothing here decides which checks `seal` runs; that is D5. What is pinned here is that
-  the record exists, that it is seeded and invalidated correctly, and that anything which
-  runs a check against a draft writes down what it found."
+  Nothing here decides which checks `seal` runs -- `recognitum.seal-test` is where that
+  selection is pinned. What is pinned here is that the record exists, that it is seeded and
+  invalidated correctly, and that anything which runs a check against a draft writes down
+  what it found."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]))
@@ -42,11 +43,12 @@
 
 (rec/defrecord Nothing [a] {})
 
+;; Two fields, so a verdict about one can stand while the check naming the other throws.
 (rec/defrecord Fragile
-  [n]
+  [n m]
   {:checks
    {::n    number?
-    ::boom ([n] (if (number? n) true (throw (IllegalArgumentException. "boom"))))}})
+    ::boom ([m] (if (number? m) true (throw (IllegalArgumentException. "boom"))))}})
 
 (def led (->Ledger 1 "xxx" :anything))
 
@@ -237,14 +239,14 @@
 
 (deftest a-check-that-throws-leaves-its-verdict-alone
   ;; A throw is a bug in the check rather than a verdict about the data, so there is
-  ;; nothing to record: the bit says what it said before the check was reached.
-  (let [d (assoc (rec/draft Fragile) ::n "not a number")]
-    (rec/record-verdict! d (idx Fragile ::n) true)
-    (rec/record-verdict! d (idx Fragile ::boom) true)
-    (is (= #{::n ::boom} (rec/passing d)))
+  ;; nothing to record: the bit says what it said before the check was reached. Nor is a
+  ;; throw retroactive about anything else -- the verdicts reached before it stand, which
+  ;; is the same rule that keeps the passes of a failed seal.
+  (let [d (-> (rec/draft (->Fragile 1 2)) (assoc ::n 3) (assoc ::m "not a number"))]
+    (is (= #{} (rec/passing d)) "each write cleared the check naming the field it wrote")
     (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/seal d)))
-    (is (= #{::boom} (rec/passing d))
-        "::n ran and failed; ::boom threw before it had a verdict to record")))
+    (is (= #{::n} (rec/passing d))
+        "::n ran and passed; ::boom threw before it had a verdict to record")))
 
 ;;; -------------------------------- passing asks a draft --------------------------------
 

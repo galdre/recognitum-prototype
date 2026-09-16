@@ -64,7 +64,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       built-in certificate covering every check. `certify` / `certify!`.
 - [x] **D4. Uniform `meta`.** Library keys merged over the user's, same answer from drafts and
       sealed values.
-- [ ] **D5. `seal` consults the mask.** Run only what is not passing; collect every failure and
+- [x] **D5. `seal` consults the mask.** Run only what is not passing; collect every failure and
       throw once. Subsumes the current dirty-key logic.
 
 ### E — IO
@@ -143,7 +143,7 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       set of draft-only fns rather than four fns disagreeing about what a sealed value is
       allowed to be asked.
 
-- [ ] **D1 — the mask is written but barely read.** `run-draft-checks!` records what
+- [x] **D1 — the mask is written but barely read.** `run-draft-checks!` records what
       it ran and `seal` is its only caller; the inlined groups at `assoc`, `merge` and the two
       constructors work on sealed values, which have no mask, and `run-checks!` is what
       they still use. D2 landed `check`/`check!` alongside `run-draft-checks!` rather than
@@ -151,7 +151,11 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       shape -- so a second writer of verdicts exists, and `establish` is the only reader of
       the mask so far. D5 makes `seal` select by the mask instead of by the dirty-key set;
       until then a check whose bit is already set is still re-run at seal, so work `check`
-      did on a draft is not yet saved at the seal, only guaranteed to agree with it.
+      did on a draft is not yet saved at the seal, only guaranteed to agree with it. Done
+      in D5: `seal` runs exactly what `not-established` hands it, and the dirty-key
+      machinery it replaced is gone -- the draft's written-field bitmask,
+      `:draft-dirty-keys` and `:independent` are all deleted, so a write maintains the
+      verdict mask and nothing else.
 
 - [ ] **D2 — `check` and `check!` refuse a sealed value, as `passing` does.** Both throw
       `::not-a-draft` for anything but a draft, which is `SPEC.md`'s framing ("Running
@@ -214,13 +218,14 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       to avoid is `meta` answering for a sealed value while the functions behind those keys
       throw on one.
 
-- [ ] **D3 — `certify` does not save work at the seal yet.** Certifying a draft leaves
+- [x] **D3 — `certify` does not save work at the seal yet.** Certifying a draft leaves
       every check it ran marked as passing, but `seal` still selects what to run by the
       dirty-key set rather than by the mask, so a fully certified draft re-runs everything
       when it seals. That is D5, and `SPEC.md`'s "bulk checking leaves the masks populated,
       so sealing each value afterwards finds its checks already passing and performs no IO"
       is not true until it lands. The guarantee is unaffected -- the checks agree, they are
-      merely run twice.
+      merely run twice. Landed in D5: a fully certified draft now seals without running
+      anything, and the half of that sentence about IO waits only on E1.
 
 - [ ] **D3 — `README.md` says nothing about certificates.** F1 owns it. The draft-level
       half of the library -- `check`, `check!`, `certify`, `certify!`, `passing`, `holding`
@@ -327,6 +332,26 @@ own, tests first. Steps within a phase are ordered; phases after A are ordered.
       table.
 - [ ] **A1 — `CONSIDERATIONS.md` still shows bare field keys throughout.** It is scratch,
       kept but not maintained, and TODOs already says not to trust it.
+
+- [ ] **D5 — `seal` believes the mask, so `record-verdict!` is a way past the checks.**
+      The `Verdicts` protocol is public, because the draft type is generated in the
+      caller's namespace and has to implement it there, so a caller can set the bit of a
+      check that never ran and `seal` will skip it. Before D5 it could not: seal selected
+      by the dirty-key set and re-ran whatever a write had touched whatever the mask said.
+      That is the ordinary cost of caching a verdict, and the mask is where this design
+      puts it; what is new is only that the cache is now believed. If it matters, the fix
+      is to narrow the surface rather than the trust -- `verdict-mask` is wanted by tests
+      and by nothing else outside `core`, and `record-verdict!` by nothing outside `core`
+      at all, so both could be `alter-meta!`-ed private with `recognitum.verdict-test`
+      reaching them through the protocol object. Not done here because D1 made them public
+      deliberately and D5 is not the step that should reverse that.
+
+- [ ] **D5 — `seal` is one phase, and `SPEC.md` describes two.** "The gate makes it
+      two-phase: collect all pure failures and throw if there are any, otherwise fetch and
+      collect the IO ones." Every check is pure until E1, so the second phase has nothing
+      to hold and `seal` collects once over everything not already passing. E1 owns
+      splitting what `not-established` hands back at the gate; the selection itself does
+      not change, since a check already passing is run in neither phase.
 
 ## Blocking
 
