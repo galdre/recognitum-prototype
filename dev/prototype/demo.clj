@@ -1,9 +1,7 @@
 (ns prototype.demo
   (:require
    [prototype.heist :as heist]
-   [prototype.validated-record :as v :refer [draft revising seal]])
-  (:import
-   (prototype.heist Heist)))
+   [prototype.validated-record :as v :refer [revising]]))
 
 (defn- show [label f]
   (print (format "%-50s" label))

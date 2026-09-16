@@ -5,6 +5,8 @@
 > why. Where it appears to explain a design choice, it is reconstructing one after the fact —
 > §12's claim that deferring field predicates to `seal` fixed a quadratic is invented, and the
 > deferral it explains is spec. Read every claim as a lead to check, not a fact.
+> Kept as scratch for polishing later, not as a deliverable. Not maintained: claims in here go
+> stale silently and are not covered by the test suite.
 > — galdre
 
 A list of problems, not a plan. No recommendations, no sequencing, no judgement about whether any

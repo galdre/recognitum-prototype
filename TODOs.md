@@ -34,8 +34,9 @@ A previous agent deviated from spec here, was made to fix the code, and left the
 - [x] `CONSIDERATIONS.md:156-158` — **deleted the rationale.** It explains the deferral as a
       performance fix ("Deferring them to seal fixed the quadratic in a loop"). That is not why.
       The deferral is the spec; the quadratic is a side effect.
-  - [ ] Still open: audit the rest of `CONSIDERATIONS.md` for other invented rationale. Every other bullet
-        in §12 records a gap; this one alone narrates a decision, which is why it stands out.
+  - [ ] Deferred. `CONSIDERATIONS.md` is scratch for polishing later, not a deliverable — it is
+        kept but not maintained, and other invented rationale likely remains in it. Do not trust
+        it; re-derive anything you need from the code.
 
 ### 2. `seal` — BY DESIGN, and the contract is extensional
 
@@ -104,12 +105,9 @@ as deliberate.
 
 ## Dead references
 
-- [ ] `src/prototype/validated_record.clj` requires `clojure.set` and `clojure.string`; neither
-      is used.
-- [ ] `draft` and `seal` referred but unused: `dev/prototype/demo.clj`, `dev/prototype/heist.clj`,
-      `bench/prototype/bench4.clj`.
-- [ ] `(:import (prototype.heist Heist))` unused: `dev/prototype/demo.clj`,
-      `bench/prototype/bench3.clj`.
+- [x] Dropped `clojure.set` and `clojure.string` from `src/prototype/validated_record.clj`.
+- [x] Dropped the unused `draft`/`seal` refers from `demo.clj`, `heist.clj`, and `bench.clj`,
+      and the unused `(:import (prototype.heist Heist))` from `demo.clj`.
 
 ## Unverified claims
 
@@ -124,11 +122,12 @@ as deliberate.
 - [x] `clojure.test` suite: 32 tests, 267 assertions, in three namespaces. Verified to have
       teeth by mutating the library — dropping seal's field checks, dropping invariant runs on
       writes, un-refusing extraneous-key detection, and silently disabling the audit are each
-      caught. `CONSIDERATIONS.md` §14 still says the demo scripts are the correctness story;
-      that line is now wrong and is part of the §14 re-read below.
-- [ ] `dev/prototype/ownership_test.clj` is named like a test but is a `println` script. Rename,
-      or convert it into the real suite it is impersonating.
+      caught. Now 32 tests / 270 assertions, and `clojure -X:test-audit` runs them all under the
+      invariant `:keys` audit.
+- [x] `dev/prototype/ownership_test.clj` deleted. Everything it showed was already covered by
+      `prototype.draft-test` except construction from an explicit draft of the type — a case its
+      own comments flagged as a past regression — which is now folded in.
 - [ ] Namespace root is still `prototype.*`. Decide the real name before anything depends on it.
-- [ ] Not a git repo. Nothing here has history, so an agent reading it cold cannot tell spec from
-      accident — and will reconstruct a rationale rather than admit it does not know. That is how
-      §12 got written.
+- [x] Now a git repo. Nothing before the migration has history, so an agent reading the early
+      state cold could not tell spec from accident, and reconstructed a rationale rather than
+      admit it did not know. That is how the invented performance rationale got written.

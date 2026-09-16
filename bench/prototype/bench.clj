@@ -4,7 +4,7 @@
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
-   [prototype.validated-record :refer [defvalidated revising seal draft]]))
+   [prototype.validated-record :refer [defvalidated revising]]))
 
 ;;; ---- the validation code, used by BOTH implementations ----
 

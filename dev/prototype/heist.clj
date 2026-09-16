@@ -5,7 +5,7 @@
   which is the whole reason drafts exist."
   (:require
    [clojure.string :as str]
-   [prototype.validated-record :refer [defvalidated draft revising seal]]))
+   [prototype.validated-record :refer [defvalidated revising]]))
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))

@@ -74,7 +74,12 @@
   (let [h (v/revising [x Heist]
             (merge x {:name "A" :crew #{:x} :take 1 :cuts {:x 1}}))]
     (is (instance? Heist h))
-    (is (= "A" (:name h)))))
+    (is (= "A" (:name h))))
+  (testing "and from an explicit draft of the type, which once did not work"
+    (let [h (v/revising [x (v/draft Heist)]
+              (merge x {:name "B" :crew #{:x} :take 1 :cuts {:x 1}}))]
+      (is (instance? Heist h))
+      (is (= "B" (:name h))))))
 
 (deftest revising-is-re-entrant
   (testing "standalone, the inner form seals"
