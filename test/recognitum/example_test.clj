@@ -242,6 +242,43 @@
     (is (= ::rec/io-limited (:error (err #(assoc job ::heist/crew
                                                  (conj (::heist/crew job) :handsome-rob))))))))
 
+(deftest the-inner-stage-opts-its-return-out-of-the-seal
+  ;; `begin-revision` returns `(unsealed h')` on purpose: the caller asked to start a
+  ;; revision, not to finish one, so what comes back is a free draft to keep working on.
+  (let [d (heist/begin-revision job "The Turin Job")]
+    (is (rec/draft? d))
+    (is (not (rec/sealed? d)))
+    (is (= "The Turin Job" (::heist/name d)))
+    (testing "and it is a draft of this type, adoptable by a later drafting"
+      (is (rec/of-type? Heist d))
+      (let [h (rec/drafting [x d] (heist/promote x :lyle 250))]
+        (is (instance? Heist h))
+        (is (= "The Turin Job" (::heist/name h)))
+        (is (= 3250 (::heist/take h)))))))
+
+(deftest the-outer-stage-calls-the-inner-one-and-seals-what-it-finished
+  ;; Inside a method body the receiver is a draft, so `begin-revision` hits the draft-side
+  ;; implementation, whose wrapper unwraps the marker to a draft the body keeps working on.
+  ;; `revise` hands that draft back bare, so the outer wrapper seals it.
+  (let [h (heist/revise job "The Turin Job" :lyle 250)]
+    (is (instance? Heist h))
+    (is (rec/sealed? h))
+    (is (= "The Turin Job" (::heist/name h)))
+    (is (= 1250 (get (::heist/cuts h) :lyle)))
+    (is (= 3250 (::heist/take h)) "and the promotion funded itself, so the cuts still add up")))
+
+(deftest on-a-draft-the-inner-stage-is-the-same-body-with-nothing-to-opt-out-of
+  (let [d (heist/begin-revision (rec/draft job) "The Turin Job")]
+    (is (rec/draft? d))
+    (is (= "The Turin Job" (::heist/name d))))
+  (testing "and inside drafting the enclosing form still seals, since the marker frees nothing"
+    (let [h (rec/drafting [x job]
+              (let [inner (heist/begin-revision x "The Turin Job")]
+                (is (rec/draft? inner))
+                inner))]
+      (is (instance? Heist h))
+      (is (= "The Turin Job" (::heist/name h))))))
+
 ;;; ------------------------------------------ the demo ------------------------------------------
 
 (def ^:private demo-output (delay (with-out-str (demo/run))))
