@@ -23,6 +23,7 @@
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
+   [recognitum.internal :as internal]
    [recognitum.roster :as roster]))
 
 (defn- err
@@ -149,24 +150,24 @@
 ;;; --------------------------- which fields the option reaches ---------------------------
 
 (deftest the-option-is-carried-on-the-model-and-read-from-it
-  (is (= {:io-limited true} (:options (rec/model-of Job))))
-  (is (true? (:io-limited (rec/model-of Job))))
+  (is (= {:io-limited true} (:options (internal/model-of Job))))
+  (is (true? (:io-limited (internal/model-of Job))))
   (testing "and a type that did not declare it, or declared it false, is not limited"
-    (is (false? (:io-limited (rec/model-of Open))))
-    (is (false? (:io-limited (rec/model-of Unlimited))))
-    (is (= {:io-limited false} (:options (rec/model-of Unlimited))))))
+    (is (false? (:io-limited (internal/model-of Open))))
+    (is (false? (:io-limited (internal/model-of Unlimited))))
+    (is (= {:io-limited false} (:options (internal/model-of Unlimited))))))
 
 (deftest the-draft-only-fields-are-exactly-those-an-io-bound-check-reads
   (testing "cuts is named by an IO-bound check; crew is read by the fetch it names"
-    (is (= #{::cuts ::crew} (:io-limited-keys (rec/model-of Job)))))
+    (is (= #{::cuts ::crew} (:io-limited-keys (internal/model-of Job)))))
   (testing "name is read by a pure check and extra by none, so neither is limited"
-    (is (not (contains? (:io-limited-keys (rec/model-of Job)) ::name)))
-    (is (not (contains? (:io-limited-keys (rec/model-of Job)) ::extra))))
+    (is (not (contains? (:io-limited-keys (internal/model-of Job)) ::name)))
+    (is (not (contains? (:io-limited-keys (internal/model-of Job)) ::extra))))
   (testing "a type that did not declare the option limits nothing, whatever it fetches"
-    (is (= #{} (:io-limited-keys (rec/model-of Open))))
-    (is (= #{} (:io-limited-keys (rec/model-of Unlimited)))))
+    (is (= #{} (:io-limited-keys (internal/model-of Open))))
+    (is (= #{} (:io-limited-keys (internal/model-of Unlimited)))))
   (testing "and a limited type with no io-deps limits nothing either"
-    (is (= #{} (:io-limited-keys (rec/model-of Pure))))))
+    (is (= #{} (:io-limited-keys (internal/model-of Pure))))))
 
 ;;; ------------------------------------ assoc ------------------------------------
 

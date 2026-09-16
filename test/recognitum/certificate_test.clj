@@ -25,8 +25,8 @@
   become a value asserting a validation that never ran."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
   is not an ExceptionInfo propagates, which is the point where a check body throws."
@@ -145,7 +145,7 @@
                           :certificates {:scratch/shape #{:scratch/a}}})))))
 
 (deftest the-model-records-what-each-certificate-covers
-  (let [certs (:certificates (rec/model-of Job))]
+  (let [certs (:certificates (internal/model-of Job))]
     (is (= [::shape ::payroll ::rec/every-check] (vec (keys certs)))
         "the declared ones as written, and the built-in behind them")
     (is (= [::title ::crew ::pay] (:checks (get certs ::shape))))
@@ -159,15 +159,15 @@
   ;; `PersistentHashMap` once a map literal passes eight pairs, so past that the order it
   ;; sees is hash order rather than written order -- stable, and what every failure report
   ;; on this type follows.
-  (mapv :name (:checks (rec/model-of Ten))))
+  (mapv :name (:checks (internal/model-of Ten))))
 
 (deftest a-certificate-is-read-in-the-type-s-own-check-order
   ;; Written backwards as a vector; what comes out follows the order the type's checks are
   ;; recorded in, which is the order every failure report in this library uses.
   (is (= (filterv (complement #{::c0}) ten-order)
-         (:checks (get (:certificates (rec/model-of Ten)) ::nine))))
+         (:checks (get (:certificates (internal/model-of Ten)) ::nine))))
   (is (not= [::c9 ::c8 ::c7 ::c6 ::c5 ::c4 ::c3 ::c2 ::c1]
-            (:checks (get (:certificates (rec/model-of Ten)) ::nine)))
+            (:checks (get (:certificates (internal/model-of Ten)) ::nine)))
       "which is not the order the certificate was written in"))
 
 ;;; ------------------------------ what a declaration must be ------------------------------
@@ -235,8 +235,8 @@
 (deftest every-check-exists-without-being-declared
   (is (= ::rec/every-check rec/every-check))
   (testing "on a type that declares no certificate at all"
-    (is (= [::rec/every-check] (vec (keys (:certificates (rec/model-of Blank))))))
-    (is (= [] (:checks (get (:certificates (rec/model-of Blank)) ::rec/every-check)))))
+    (is (= [::rec/every-check] (vec (keys (:certificates (internal/model-of Blank))))))
+    (is (= [] (:checks (get (:certificates (internal/model-of Blank)) ::rec/every-check)))))
   (testing "and it covers every check the type has"
     (reset! runs {})
     (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]

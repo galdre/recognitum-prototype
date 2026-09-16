@@ -4,7 +4,8 @@
    [clojure.test :refer [deftest is testing]]
    [recognitum.heist :as heist]
    [recognitum.roster :as house]
-   [recognitum.core :as rec])
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal])
   (:import
    (recognitum.heist Heist)))
 
@@ -144,7 +145,7 @@
   ;; under test, so re-running everything is the only honest oracle. Each check is called
   ;; here the way it declared it wanted to be -- its arglist, read off the model, is the
   ;; whole of what it depends on, io-deps included.
-  (let [model     (rec/model-of job)
+  (let [model     (internal/model-of job)
         run       (fn [{:keys [deps pred]} h] (apply pred (map #(dep-value h %) deps)))
         changeset (fn [i] {:op :add-member :who (keyword (str "m" i)) :cut (* 10 (inc i))})
         history   (reductions (fn [h i] (rec/drafting [x h] (heist/apply-changeset x (changeset i))))

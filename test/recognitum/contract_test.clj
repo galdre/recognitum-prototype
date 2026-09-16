@@ -11,8 +11,8 @@
   declaration order."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
   is not an ExceptionInfo propagates, which is the point in half this namespace."
@@ -218,7 +218,7 @@
   ;; failure map is built with `array-map` applied to the pairs instead, which does not
   ;; promote, so the order the checks ran in is the order they are reported in.
   (let [e     (err #(->Ten :no))
-        model (rec/model-of (->Ten :ok))
+        model (internal/model-of (->Ten :ok))
         fs    (:failures e)]
     (is (= 10 (count fs)))
     (is (instance? clojure.lang.PersistentArrayMap fs))
@@ -233,7 +233,7 @@
 (deftest the-order-of-the-failures-is-the-order-of-the-checks
   ;; The invariant that holds at every size: failures come out as a subsequence of the
   ;; model's own check order, which is the order the macro saw them declared in.
-  (let [model (rec/model-of pair)
+  (let [model (internal/model-of pair)
         order (mapv :name (:checks model))]
     (is (= multi-order order) "and at four checks that is the order they are written in")
     (doseq [f [#(->Multi "x" "y") #(merge pair {::a "x" ::b "y"}) #(assoc pair ::a 50)]]

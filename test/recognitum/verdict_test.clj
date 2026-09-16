@@ -22,8 +22,8 @@
   what it found."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing."
   [f]
@@ -58,7 +58,7 @@
   "The index of check `cname` on type `t` -- the bit it owns in the mask."
   [t cname]
   (first (keep-indexed (fn [i c] (when (= cname (:name c)) i))
-                       (:checks (rec/model-of t)))))
+                       (:checks (internal/model-of t)))))
 
 (defn- seen
   "What `f` reports about the draft a `drafting` over `init` binds. The draft itself never
@@ -75,9 +75,9 @@
   (let [d (rec/draft Ledger)]
     (is (rec/draft? d))
     (is (= #{} (rec/passing d)))
-    (is (= 0 (rec/verdict-mask d)) "nothing has been established about a value with no fields"))
+    (is (= 0 (internal/verdict-mask d)) "nothing has been established about a value with no fields"))
   (testing "however it was opened"
-    (is (= #{} (rec/passing ((:draft-empty (rec/model-of Ledger)) nil))))
+    (is (= #{} (rec/passing ((:draft-empty (internal/model-of Ledger)) nil))))
     (is (= #{} (seen Ledger rec/passing)))
     (is (= #{} (seen (rec/draft Ledger) rec/passing)))))
 
@@ -85,7 +85,7 @@
   (is (= all-checks (rec/passing (rec/draft led)))
       "a sealed value is one every check passed on -- the draft inherits exactly that")
   (testing "which is a full mask, one bit per check in declaration order"
-    (is (= 2r1111 (rec/verdict-mask (rec/draft led)))))
+    (is (= 2r1111 (internal/verdict-mask (rec/draft led)))))
   (testing "and it is the same draft a drafting form opens"
     (is (= all-checks (seen led rec/passing))))
   (testing "while drafting an existing draft changes nothing"
@@ -96,18 +96,18 @@
 (deftest a-type-with-no-checks-has-an-empty-mask-either-way
   (is (= #{} (rec/passing (rec/draft Nothing))))
   (is (= #{} (rec/passing (rec/draft (->Nothing 1)))))
-  (is (= 0 (rec/verdict-mask (rec/draft (->Nothing 1))))))
+  (is (= 0 (internal/verdict-mask (rec/draft (->Nothing 1))))))
 
 ;;; ------------------------------- set on pass, clear on fail -------------------------------
 
 (deftest a-verdict-is-set-when-a-check-passes
   (let [d (rec/draft Ledger)]
-    (rec/record-verdict! d (idx Ledger ::b) true)
+    (internal/record-verdict! d (idx Ledger ::b) true)
     (is (= #{::b} (rec/passing d)))
-    (rec/record-verdict! d (idx Ledger ::always) true)
+    (internal/record-verdict! d (idx Ledger ::always) true)
     (is (= #{::b ::always} (rec/passing d)))
     (testing "and recording the same pass twice says the same thing"
-      (rec/record-verdict! d (idx Ledger ::b) true)
+      (internal/record-verdict! d (idx Ledger ::b) true)
       (is (= #{::b ::always} (rec/passing d))))))
 
 (deftest a-verdict-is-cleared-when-a-check-fails
@@ -115,16 +115,16 @@
   ;; fails now must stop counting as passed, and without a clear there is no way to un-pass.
   (let [d (rec/draft led)]
     (is (= all-checks (rec/passing d)))
-    (rec/record-verdict! d (idx Ledger ::a-fits) false)
+    (internal/record-verdict! d (idx Ledger ::a-fits) false)
     (is (= #{::a ::b ::always} (rec/passing d)))
     (testing "and passing it again restores it"
-      (rec/record-verdict! d (idx Ledger ::a-fits) true)
+      (internal/record-verdict! d (idx Ledger ::a-fits) true)
       (is (= all-checks (rec/passing d))))))
 
 (deftest recording-a-verdict-answers-with-the-verdict
   (let [d (rec/draft Ledger)]
-    (is (true? (rec/record-verdict! d (idx Ledger ::a) true)))
-    (is (false? (rec/record-verdict! d (idx Ledger ::a) false)))))
+    (is (true? (internal/record-verdict! d (idx Ledger ::a) true)))
+    (is (false? (internal/record-verdict! d (idx Ledger ::a) false)))))
 
 ;;; ------------------------------- what a write invalidates -------------------------------
 
@@ -171,18 +171,18 @@
     (is (= all-checks (rec/passing d)) "the parent keeps every verdict it had")
     (is (= #{::b ::always} (rec/passing d')))
     (testing "and a verdict recorded on the child says nothing about the parent"
-      (rec/record-verdict! d' (idx Ledger ::b) false)
+      (internal/record-verdict! d' (idx Ledger ::b) false)
       (is (= #{::always} (rec/passing d')))
       (is (= all-checks (rec/passing d))))
     (testing "nor the other way round"
-      (rec/record-verdict! d (idx Ledger ::a) false)
+      (internal/record-verdict! d (idx Ledger ::a) false)
       (is (= #{::b ::a-fits ::always} (rec/passing d)))
       (is (= #{::always} (rec/passing d'))))))
 
 (deftest a-verdict-recorded-before-a-write-carries-into-it
   (let [d (rec/draft Ledger)]
-    (rec/record-verdict! d (idx Ledger ::b) true)
-    (rec/record-verdict! d (idx Ledger ::always) true)
+    (internal/record-verdict! d (idx Ledger ::b) true)
+    (internal/record-verdict! d (idx Ledger ::always) true)
     (is (= #{::b ::always} (rec/passing (assoc d ::c :x))) "c names neither")
     (is (= #{::always} (rec/passing (assoc d ::b "z"))) "b names ::b")))
 
@@ -197,7 +197,7 @@
         (is (= all-checks (:recognitum.core/passed (meta m)))
             "and `meta` reports the same mask the caller's own keys travelled with")))
     (testing "adoption, by hand and by a drafting form"
-      (is (= all-checks (rec/passing (rec/adopt d (Object.)))))
+      (is (= all-checks (rec/passing (internal/adopt d (Object.)))))
       (is (= all-checks (seen d rec/passing))))))
 
 (deftest a-draft-passed-through-a-nested-drafting-keeps-its-verdicts
@@ -304,7 +304,7 @@
         last-check :recognitum.verdict-scratch/c63]
     (is (= 64 (count (rec/passing d))))
     (is (contains? (rec/passing d) last-check))
-    (rec/record-verdict! d (idx t last-check) false)
+    (internal/record-verdict! d (idx t last-check) false)
     (is (= 63 (count (rec/passing d))))
     (is (not (contains? (rec/passing d) last-check)))
     (testing "and a write to the one field they all name clears all 64"

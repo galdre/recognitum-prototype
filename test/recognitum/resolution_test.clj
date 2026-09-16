@@ -11,8 +11,8 @@
   compile."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- root-cause [^Throwable t] (if-let [c (.getCause t)] (recur c) t))
 
 (def ^:private scratch
@@ -178,7 +178,7 @@
 
 (deftest an-arglist-that-resolves-still-says-what-it-said
   (let [v (->Resolved 1 2)
-        model (rec/model-of v)]
+        model (internal/model-of v)]
     (is (rec/sealed? v))
     (is (= [[::a] [::b] [::b ::a]] (mapv :deps (:checks model)))
         "resolution rewrites a field symbol into the type's key, in arglist order")
@@ -195,17 +195,17 @@
 
 (deftest resolve-deps-turns-an-arglist-into-dependency-keys
   (is (= [:t/a :t/roster :t/b]
-         (rec/resolve-deps {:record 'T :what :check :name :t/c
+         (internal/resolve-deps {:record 'T :what :check :name :t/c
                             :fields '{a :t/a b :t/b} :io-deps #{:t/roster}}
                            '[a :t/roster b]))
       "a symbol becomes the field's key; an io-dep name is already one")
-  (is (= [] (rec/resolve-deps {:record 'T :what :check :name :t/c
+  (is (= [] (internal/resolve-deps {:record 'T :what :check :name :t/c
                                :fields '{a :t/a} :io-deps #{}}
                               []))
       "naming nothing is a legal thing to name"))
 
 (deftest resolve-deps-refuses-a-keyword-that-is-not-a-declared-io-dep
-  (let [e (err #(rec/resolve-deps {:record 'T :what :check :name :t/c
+  (let [e (err #(internal/resolve-deps {:record 'T :what :check :name :t/c
                                    :fields '{a :t/a} :io-deps #{:t/roster}}
                                   '[:t/vetted]))]
     (is (= ::rec/unknown-dependency (:error e)))
@@ -213,7 +213,7 @@
     (is (= #{:t/roster} (:io-deps e)) "and what it could have named")))
 
 (deftest resolve-deps-reports-an-io-dep-under-its-own-kind
-  (let [e (err #(rec/resolve-deps {:record 'T :what :io-dep :name :t/vetted
+  (let [e (err #(internal/resolve-deps {:record 'T :what :io-dep :name :t/vetted
                                    :fields '{a :t/a} :io-deps #{:t/roster}}
                                   '[nope]))]
     (is (= ::rec/unknown-dependency (:error e)))
@@ -221,12 +221,12 @@
     (is (nil? (:check e)))))
 
 (deftest a-name-cannot-be-both-a-check-and-an-io-dep
-  (let [e (err #(rec/reject-duplicate-names! 'T [:t/a :t/roster :t/b] #{:t/roster}))]
+  (let [e (err #(internal/reject-duplicate-names! 'T [:t/a :t/roster :t/b] #{:t/roster}))]
     (is (= ::rec/duplicate-name (:error e)))
     (is (= 'T (:record e)))
     (is (= :t/roster (:name e)))
-    (is (re-find #":t/roster" (try (rec/reject-duplicate-names! 'T [:t/roster] #{:t/roster})
+    (is (re-find #":t/roster" (try (internal/reject-duplicate-names! 'T [:t/roster] #{:t/roster})
                                    (catch clojure.lang.ExceptionInfo ex (ex-message ex))))))
   (testing "while distinct names are fine"
-    (is (nil? (rec/reject-duplicate-names! 'T [:t/a :t/b] #{:t/roster})))
-    (is (nil? (rec/reject-duplicate-names! 'T [] #{})))))
+    (is (nil? (internal/reject-duplicate-names! 'T [:t/a :t/b] #{:t/roster})))
+    (is (nil? (internal/reject-duplicate-names! 'T [] #{})))))

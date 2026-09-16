@@ -194,8 +194,6 @@
                      (watching #(mapv rec/seal group))))))
 
     (section "io-limited: the fields behind a fetch are draft-only")
-    (show "(:io-limited-keys (rec/model-of Heist))"
-          (fn [] (:io-limited-keys (rec/model-of Heist))))
     (show "assoc ::heist/crew on a sealed value"
           (fn [] (assoc job ::heist/crew #{:charlie :lyle})))
     (show "...and what it fetched to tell you that"

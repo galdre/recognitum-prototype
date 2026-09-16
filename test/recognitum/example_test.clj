@@ -17,6 +17,7 @@
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.bench :as bench]
    [recognitum.core :as rec]
+   [recognitum.internal :as internal]
    [recognitum.demo :as demo]
    [recognitum.heist :as heist]
    [recognitum.roster :as roster])
@@ -32,7 +33,7 @@
 (defn- err [f]
   (try (f) nil (catch ExceptionInfo e (ex-data e))))
 
-(defn- model [] (rec/model-of Heist))
+(defn- model [] (internal/model-of Heist))
 
 (defn- check-names [] (mapv :name (:checks (model))))
 
@@ -289,10 +290,10 @@
          (catch Throwable _ :threw))))
 
 (deftest the-bench-compares-like-with-like
-  (is (= 6 (count (:checks (rec/model-of BenchHeist))))
+  (is (= 6 (count (:checks (internal/model-of BenchHeist))))
       "four fields and two cross-field checks")
   (is (= 4 (count bench/field-preds)))
-  (is (= (count (:checks (rec/model-of BenchHeist)))
+  (is (= (count (:checks (internal/model-of BenchHeist)))
          (+ (count bench/field-preds) 2))
       "the hand-rolled side carries one predicate per check and no more")
   (doseq [m [{:name "Job" :crew #{:a :b} :take 3 :cuts {:a 1 :b 2}}

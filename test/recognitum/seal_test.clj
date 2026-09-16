@@ -22,8 +22,8 @@
   \"never run\", so a check that failed runs again at the next seal and fails again."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
   is not an ExceptionInfo propagates, which is where a check body throws."
@@ -341,7 +341,7 @@
   selected: the claim is not that seal ran a particular set, but that the result is valid
   as if all of them had."
   [x]
-  (let [model (or (rec/model-of x) (rec/draft-model x))]
+  (let [model (or (internal/model-of x) (internal/draft-model x))]
     (into {} (map (fn [{:keys [name deps pred]}]
                     [name (apply pred (map #(get x %) deps))]))
           (:checks model))))

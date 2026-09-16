@@ -19,8 +19,8 @@
   form is the author asking to seal."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing."
   [f]
@@ -242,7 +242,7 @@
     (is (not (rec/sealed? d)))
     (is (= "ivy" (::owner d)))
     (testing "what the caller receives is a free draft, owned by nothing"
-      (is (nil? (rec/owner-of d))))
+      (is (nil? (internal/owner-of d))))
     (testing "adoptable by a later drafting"
       (let [l (rec/drafting [x d] (assoc x ::credits 20))]
         (is (rec/sealed? l))
@@ -268,7 +268,7 @@
          (rec/drafting [x led]
            (let [y (me x)]
              (is (identical? x y))
-             (is (rec/owned-here? y) "still owned by the enclosing form")
+             (is (internal/owned-here? y) "still owned by the enclosing form")
              y))))))
 
 (deftest unsealed-refuses-anything-that-is-not-a-draft

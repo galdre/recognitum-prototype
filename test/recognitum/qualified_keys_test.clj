@@ -8,6 +8,7 @@
    [clojure.edn :as edn]
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
+   [recognitum.internal :as internal]
    [recognitum.heist :as heist])
   (:import
    (recognitum.heist Heist)))
@@ -78,7 +79,7 @@
 ;;; --------------------------- the model and the invariant index ---------------------------
 
 (deftest the-model-carries-qualified-keys-throughout
-  (let [model (rec/model-of job)]
+  (let [model (internal/model-of job)]
     (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts] (:field-order model)))
     (is (= #{::heist/name ::heist/crew ::heist/take ::heist/cuts} (:field-set model)))
     (is (= #{::heist/name ::heist/crew ::heist/take ::heist/cuts}

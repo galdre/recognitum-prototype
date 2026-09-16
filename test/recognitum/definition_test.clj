@@ -13,8 +13,8 @@
   and one that names no section is a compile error naming the offender."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
-
+   [recognitum.core :as rec]
+   [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing."
   [f]
@@ -59,7 +59,7 @@
       (is (= {:doc "a is below the length of b" :values {::a 9 ::b "yy"} :returned false}
              (get (:failures e) ::a-below-count)))))
   (testing "and the field -> checks index is built from them as before"
-    (let [model (rec/model-of Wrapped)]
+    (let [model (internal/model-of Wrapped)]
       (is (= [::a ::b-string ::a-below-count] (mapv :name (:checks model))))
       (is (= [::a ::a-below-count]
              (mapv (comp :name (:checks model)) (get (:index model) ::a))))
@@ -82,7 +82,7 @@
   {:options {} :checks {} :io-deps {} :certificates {}})
 
 (deftest an-empty-definition-defines-a-type-with-no-checks
-  (let [model (rec/model-of Bare)]
+  (let [model (internal/model-of Bare)]
     (is (= [] (vec (:checks model))))
     (is (= {} (:index model))))
   (testing "which is still a validated type in every other respect"
@@ -95,7 +95,7 @@
 
 (deftest a-section-may-be-present-and-empty
   (is (rec/sealed? (->Empties 1)))
-  (is (= [] (vec (:checks (rec/model-of Empties)))))
+  (is (= [] (vec (:checks (internal/model-of Empties)))))
   (testing "and any subset of the sections may simply be absent"
     (doseq [form ['(recognitum.core/defrecord S1 [a] {:checks {:scratch/a int?}})
                   '(recognitum.core/defrecord S2 [a] {:options {}})
@@ -112,11 +112,11 @@
    :checks  {::a int?}})
 
 (deftest options-are-carried-on-the-model
-  (is (= {:io-limited true} (:options (rec/model-of Optioned))))
+  (is (= {:io-limited true} (:options (internal/model-of Optioned))))
   (testing "and an absent section is an empty one, so nothing has to ask which"
-    (is (= {} (:options (rec/model-of Bare))))
-    (is (= {} (:options (rec/model-of Wrapped))))
-    (is (= {} (:options (rec/model-of Empties)))))
+    (is (= {} (:options (internal/model-of Bare))))
+    (is (= {} (:options (internal/model-of Wrapped))))
+    (is (= {} (:options (internal/model-of Empties)))))
   (testing "declaring the option changes nothing yet: no check here reaches IO"
     (is (rec/sealed? (assoc (->Optioned 1) ::a 2)))
     (is (= ::rec/check-failed (:error (err #(assoc (->Optioned 1) ::a "x")))))))
@@ -250,7 +250,7 @@
 
 (deftest the-order-the-sections-are-written-in-does-not-matter
   (is (rec/sealed? (->Reordered 1 "x")))
-  (is (= {:io-limited false} (:options (rec/model-of Reordered))))
+  (is (= {:io-limited false} (:options (internal/model-of Reordered))))
   (testing "while the order within :checks is still the order failures report in"
     (let [e (err #(->Reordered "x" 1))]
       (is (= [::r-b ::r-a] (keys (:failures e))))
@@ -260,18 +260,18 @@
 
 (deftest parse-definition-fills-in-the-sections-nobody-wrote
   (is (= {:options {} :checks {} :io-deps {} :certificates {}}
-         (rec/parse-definition 'T {})))
+         (internal/parse-definition 'T {})))
   (is (= {:options {:io-limited true} :checks {:t/a 'int?} :io-deps {} :certificates {}}
-         (rec/parse-definition 'T {:checks {:t/a 'int?} :options {:io-limited true}})))
+         (internal/parse-definition 'T {:checks {:t/a 'int?} :options {:io-limited true}})))
   (testing "and refuses everything the macro refuses, since it is what the macro calls"
-    (is (= ::rec/malformed-definition (:error (err #(rec/parse-definition 'T "no")))))
-    (is (= ::rec/unknown-section (:error (err #(rec/parse-definition 'T {:cheks {}})))))
-    (is (= ::rec/malformed-section (:error (err #(rec/parse-definition 'T {:checks [1]})))))
-    (is (= ::rec/unknown-option (:error (err #(rec/parse-definition 'T {:options {:nope 1}})))))
+    (is (= ::rec/malformed-definition (:error (err #(internal/parse-definition 'T "no")))))
+    (is (= ::rec/unknown-section (:error (err #(internal/parse-definition 'T {:cheks {}})))))
+    (is (= ::rec/malformed-section (:error (err #(internal/parse-definition 'T {:checks [1]})))))
+    (is (= ::rec/unknown-option (:error (err #(internal/parse-definition 'T {:options {:nope 1}})))))
     (is (= {:options {} :checks {} :io-deps {:t/r 'identity} :certificates {}}
-           (rec/parse-definition 'T {:io-deps {:t/r 'identity}}))
+           (internal/parse-definition 'T {:io-deps {:t/r 'identity}}))
         "and a populated :io-deps is a section like any other, now that it means something")))
 
 (deftest the-sections-are-named-once-and-in-spec-order
-  (is (= [:options :checks :io-deps :certificates] (vec rec/definition-sections)))
-  (is (= #{:io-limited} (set rec/known-options))))
+  (is (= [:options :checks :io-deps :certificates] (vec internal/definition-sections)))
+  (is (= #{:io-limited} (set internal/known-options))))
