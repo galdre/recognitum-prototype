@@ -678,7 +678,7 @@ so far, or the options if it is still open. None is implemented.
       Landed in E3: `fetch-one` is gone and `fetch-io-all` fetches a group in one pass per
       io-dep, with `fetch-io` a group of one through the same code.
 
-- [ ] **E2 — a batched fetch's return shape is policed and a singular one's is not.**
+- [x] **E2 — a batched fetch's return shape is policed and a singular one's is not.**
       `SPEC.md` gives the batched form a return contract ("a map keyed by the argument
       tuple") and gives the singular form none, on the grounds that a singular fetch's only
       consumers are the checks naming it. The library is the batched form's first consumer,
@@ -686,7 +686,7 @@ so far, or the options if it is still open. None is implemented.
       `::malformed-batch` for a result that is not a map, `::incomplete-batch` for one that
       omits a tuple it was handed. A tuple answered `nil` is an answer and passes through;
       one left out is not, and reading it as `nil` would have a check judge a fetch that
-      never happened. If that reading is wrong, `batch-answer!` is the only place it lives.
+      never happened. If that reading is wrong, `batch-answer!` is the only place it lives. 2026-09-16: consistent with galdre's ruling that a fetch returns what it returns and the checks decide; the batched form is policed only because the library must distribute it.
 
 - [x] **E2 — the batched form appears in no example.** The demo, the README and the example
       model still have no io-dep in them at all (E1's deferral above), let alone a batched
