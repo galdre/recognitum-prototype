@@ -37,14 +37,25 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       pass, a forced `recheck` on a sealed value included. Today that pass reads
       prerequisites off every-check-passing and runs them anyway. (1) The runner gates on
       what the current pass found on every path; `recheck`'s docstring changes from
-      "prerequisites are read off the mask" to the rule. (2) Every `:check-failed` report
-      entry for a shape validation gains `:stopped`, the names, in declaration order, of the
-      checks that did not run because it failed; the message names them too. The answering
-      forms keep their shape, check name to what it returned. Tests first: a forced
-      `recheck!` on a sealed value whose shape validation fails runs no invariant validation
-      over that field and fetches nothing; `:stopped` on the shape entry from `seal`,
-      `check!`, `recheck!`, the constructors, `assoc`, `merge`, and the bulk forms; absent
-      from an entry that stopped nothing.
+      "prerequisites are read off the mask" to the rule. (2) One report shape everywhere,
+      ruled: `check`, `recheck`, `check-all`, and `recheck-all` answer `true` or the same
+      map the throwing forms put under `:failures`, keyed by check name in declaration
+      order, each entry `{:doc :values :returned}` and, on a shape validation that stopped
+      checks, `:stopped`, the names of the checks that did not run because it failed, in
+      declaration order; absent from an entry that stopped nothing. The thrown message names
+      the stopped checks too. Where a caller wrote `(get (rec/check d ::cuts) ::cuts)` it
+      now writes `(:returned (::cuts (rec/check d ::cuts)))`; the callers are the tests,
+      the README, and the demo. Tests first: a forced `recheck!` on a sealed value whose
+      shape validation fails runs no invariant validation over that field and fetches
+      nothing; the one shape and `:stopped` from every entry point, answering and throwing,
+      single and bulk; the README tables and docstrings of the six answering forms.
+
+- [ ] **I18. A shorthand check takes its `:doc` from the predicate's var.** `::cuts
+      cuts-map?` parses with `:doc nil` because only the long form carries a docstring. At
+      expansion, resolve the shorthand's symbol and use the var's `:doc` when it has one, so
+      a documented predicate documents its check and the report carries it. Tests first: a
+      shorthand over a documented predicate reports that docstring; over an undocumented one,
+      `nil`; the long form's own docstring wins. Small.
 
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
       - Tighten the two method-row bounds in `cost_test`: the write bound is 110x, set to
