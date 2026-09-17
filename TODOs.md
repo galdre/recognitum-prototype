@@ -9,13 +9,17 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
-- [ ] **I8. A primitive-hinted `definterface` method breaks the `loop` emission.** With
-      `(definterface ITally (tally [^long n]))`, `deftype` compiles it and `rec/defrecord` does
-      not: `recurrable-body` interleaves `(rest args)` verbatim, so the `^long` rides into the
-      binding position and the compiler refuses "Can't type hint a local with a primitive
-      initializer". Fix: strip metadata from the binding names only:
-      `(interleave (map #(with-meta % nil) (rest args)) (rest args))`. Test first with a
-      `definterface` carrying `^long`, on both types, with and without `recur`.
+- [ ] **I8. A primitive hint on a method's own arglist breaks the `loop` emission.** With
+      `(definterface ITally (tally [^long n]))`, an implementation written `(tally [h n] ...)`
+      compiles on both types, with and without `recur`. One written `(tally [h ^long n] ...)`,
+      which `deftype` accepts and which an interface overloaded by type requires, does not:
+      `recurrable-body` emits `(loop [^long n n] ...)` and the compiler refuses "Can't type
+      hint a local with a primitive initializer". Fix: strip metadata from the binding names
+      only; the loop local takes its type from the initializer, primitive or hinted object.
+      Tests first, with `definterface`, on both types: a hinted `^long` parameter without
+      `recur` and with it; a `^double`; an interface overloading one name by `long` and
+      `String` with both implementations hinted; and a hinted `^String` parameter used with a
+      method call, compiled with reflection warnings on and stderr captured, producing none.
 
 - [ ] **I10. The 20-field cap, by `defrecord`'s recipe.** Plain `defrecord` with 21 fields
       compiles: `build-positional-factory` takes the first 20 positionally and the rest as
@@ -64,6 +68,16 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       dispatched; it is macro core.
 
 ### H — later
+
+- [ ] **H3. A primitive return type with a hinted parameter.** `(^long total [^long n])`
+      implemented as `(total [h ^long n] (+ n 1))` fails with "Mismatched return type:
+      expected long, had Object": the method wrapper makes the body's static type `Object`,
+      and with hinted parameters the compiler checks it against the primitive return. Plain
+      `deftype` accepts the same body because it is a primitive expression, so this is a
+      deviation. The unhinted implementation compiles and unboxes at run time. Fix: resolve
+      the interface at macro time, read the matched method's return type, and wrap the
+      wrapper's result in the primitive cast. Narrow and low priority.
+
 
 - [ ] **H1. `recognitum.walk`.** `clojure.walk/walk` is a plain `cond`: on `IRecord` it does
       `(reduce conj form form)`, one write per entry, with no protocol or multimethod to
