@@ -31,6 +31,21 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       seal short-circuit on the all-pass constant, and the duplicated lookups between
       `seal`'s two arities.
 
+- [ ] **I15. A value is not callable; a definition may implement `IFn` itself.** Ruled. A
+      plain `defrecord` is not a function, and the template's map-style `invoke` (from
+      potemkin's `PotemkinFn` in `AbstractRecord`) is a deviation nobody asked for that
+      also blocks a definition from implementing `clojure.lang.IFn` at one or two
+      arguments. Remove `PotemkinFn` and its `invoke` methods from the template; `invoke`
+      then leaves the derived reserved set on its own. Delete the README's deliberate-change
+      lines "A value is callable as a function of its keys, as a map is" and "A definition
+      may not implement `clojure.lang.IFn` at one or two arguments". Tests first: a
+      definition implementing `clojure.lang.IFn` with `invoke` at one and two arguments
+      installs on both types and is called; a value is not `ifn?` and calling one throws
+      `ClassCastException` as calling a `defrecord` does, twinned against a plain
+      `defrecord`; any existing assertion that a value is callable as a map is inverted,
+      and every such assertion is listed in the report. `applyTo` is the author's business,
+      as on a `defrecord`.
+
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
       - Tighten the two method-row bounds in `cost_test`: the write bound is 110x, set to
         pass the pre-change wrapper, and now guards nothing at a measured 0.8x; the read
