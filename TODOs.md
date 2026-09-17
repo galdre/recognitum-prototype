@@ -20,7 +20,7 @@ the order listed.
       commit, each leaving the suite green: (a) `core.clj` and `collections.clj`, the
       namespace docstring reduced to purpose and public surface, landed as bf56501 and, after a
       tightening pass on Fable, 2163166; (b) README, the cost section
-      as one table plus how to re-run it; (c) `dev/`, `bench/`, and test-namespace prose;
+      as one table plus how to re-run it, landed as 311329e; (c) `dev/`, `bench/`, and test-namespace prose;
       (d) thrown messages, which are operator-facing under the standard and are pinned by
       tests, so each message edit lands with its test. Renames of code names are not part of
       this pass; galdre rules on them after reading the code, which the pass is meant to make
@@ -119,8 +119,14 @@ the order listed.
       "a pure check over more than one field". A pure check over one field that is not named
       after it, such as `::valid-name ([name] ...)`, is classified by the code as an invariant
       validation (second phase) and is not covered by that sentence. "A pure check not named
-      after a field" matches the code. The README pass uses the code-accurate wording; revert
-      if the ruled definition was meant to exclude that case.
+      after a field" matches the code. The README and the namespace docstring now both carry
+      the code-accurate wording (3c4da2e); revert both if the ruled definition was meant to
+      exclude that case.
+- [ ] **README facts that restate a docstring.** After the passes, the README's three io-dep
+      fetch rules, its `unsealed` paragraph, and its constructor paragraph restate the
+      `defrecord`, `unsealed`, and generated `map->` docstrings nearly word for word. The
+      standard says each fact has one home. Rule whether the README keeps its own statement
+      (it is the document a reader starts from) or defers to the docstring with a pointer.
 
 - [ ] **I11 marker spelling.** Metadata on the method name, `(^:drafting add-member [h who cut] ...)`,
       is the recommendation: it names what the wrapper does (opens a draft) rather than what
