@@ -27,6 +27,12 @@
   same index from the arglists."
   {:take [cuts-add-up?] :cuts [cuts-add-up? only-crew?] :crew [only-crew?]})
 
+;;; ---- the protocol both sides carry ----
+
+(defprotocol Job
+  (total-payout [h]    "What the cuts come to.")
+  (rename       [h nm] "Retitle the job."))
+
 ;;; ---- library version ----
 
 (rec/defrecord BenchHeist
@@ -37,11 +43,13 @@
     ::take non-neg-int?
     ::cuts cuts-map?
     ::cuts-add-up ("cuts add up" [take cuts] (= take (reduce + 0 (vals cuts))))
-    ::only-crew   ("only crew"   [crew cuts] (every? crew (keys cuts)))}})
+    ::only-crew   ("only crew"   [crew cuts] (every? crew (keys cuts)))}}
+
+  Job
+  (total-payout [h]    (reduce + 0 (vals (::cuts h))))
+  (rename       [h nm] (assoc h ::name nm)))
 
 ;;; ---- hand-rolled version ----
-
-(defrecord PlainHeist [name crew take cuts])
 
 (defn- bad! [k] (throw (ex-info "invalid" {:k k})))
 
@@ -50,6 +58,13 @@
   (let [r' (assoc r k v)]
     (doseq [p (invariant-index k)] (when-not (p r') (bad! k)))
     r'))
+
+(defrecord PlainHeist [name crew take cuts]
+  Job
+  (total-payout [h]    (reduce + 0 (vals (:cuts h))))
+  ;; The library's `rename` runs the checks reading `:name`; `m-assoc` is that same
+  ;; selection, written out.
+  (rename       [h nm] (m-assoc h :name nm)))
 
 (defn m-merge [r kvs]
   (doseq [[k v] kvs] (when-not ((field-preds k) v) (bad! k)))
@@ -113,6 +128,8 @@
                                 (ns-per #(merge h {::take 3000 ::cuts valid-cuts})))
   (line "construct"             (ns-per #(m-validate! (map->PlainHeist base) [:name :crew :take :cuts]))
                                 (ns-per #(drafting [x BenchHeist] (into x qbase))))
+  (line "read method on a sealed value" (ns-per #(total-payout r)) (ns-per #(total-payout h)))
+  (line "write method on a sealed value" (ns-per #(rename r "x")) (ns-per #(rename h "x")))
   (println)
   (println (format "%-40s %10s %10s %8s" "batch: N renames" "manual" "library" "ratio"))
   (doseq [n [1 3 5 10 15]]

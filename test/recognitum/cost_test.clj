@@ -99,6 +99,21 @@
            (ratio #(b/m-merge b/r {:take 3000 :cuts b/valid-cuts})
                   #(merge b/h {::b/take 3000 ::b/cuts b/valid-cuts}))))
 
+(deftest a-read-method-on-a-sealed-value-stays-within-its-multiple
+  ;; The body is the same arithmetic over the same cuts on both sides and answers with a
+  ;; number, so the whole of the difference is what a method call on a sealed value costs
+  ;; around the body.
+  (within? "read method on a sealed value" 12.0
+           (ratio #(b/total-payout b/r) #(b/total-payout b/h))))
+
+(deftest a-write-method-on-a-sealed-value-stays-within-its-multiple
+  ;; One field written and the checks reading it run, on both sides: the hand-rolled twin
+  ;; runs the same selection of checks, written out. `::name` has no invariant validation
+  ;; on it, so that side is one predicate and an `assoc`, and any fixed cost the library
+  ;; pays around the body reads as a large multiple of it.
+  (within? "write method on a sealed value" 110.0
+           (ratio #(b/rename b/r "n0") #(b/rename b/h "n0"))))
+
 ;;; ------------------------- what a call with nothing to run still does -------------------------
 
 (def ^:private runs (atom []))
