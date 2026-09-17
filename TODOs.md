@@ -9,36 +9,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
-- [ ] **I15. A value is not callable; a definition may implement `IFn` itself.** Ruled. A
-      plain `defrecord` is not a function, and the template's map-style `invoke` (from
-      potemkin's `PotemkinFn` in `AbstractRecord`) is a deviation nobody asked for that
-      also blocks a definition from implementing `clojure.lang.IFn` at one or two
-      arguments. Remove `PotemkinFn` and its `invoke` methods from the template; `invoke`
-      then leaves the derived reserved set on its own. Delete the README's deliberate-change
-      lines "A value is callable as a function of its keys, as a map is" and "A definition
-      may not implement `clojure.lang.IFn` at one or two arguments". Tests first: a
-      definition implementing `clojure.lang.IFn` with `invoke` at one and two arguments
-      installs on both types and is called; a value is not `ifn?` and calling one throws
-      `ClassCastException` as calling a `defrecord` does, twinned against a plain
-      `defrecord`; any existing assertion that a value is callable as a map is inverted,
-      and every such assertion is listed in the report. `applyTo` is the author's business,
-      as on a `defrecord`.
-
-- [ ] **I15. A value is not callable; a definition may implement `IFn` itself.** Ruled. A
-      plain `defrecord` is not a function, and the template's map-style `invoke` (from
-      potemkin's `PotemkinFn` in `AbstractRecord`) is a deviation nobody asked for that
-      also blocks a definition from implementing `clojure.lang.IFn` at one or two
-      arguments. Remove `PotemkinFn` and its `invoke` methods from the template; `invoke`
-      then leaves the derived reserved set on its own. Delete the README's deliberate-change
-      lines "A value is callable as a function of its keys, as a map is" and "A definition
-      may not implement `clojure.lang.IFn` at one or two arguments". Tests first: a
-      definition implementing `clojure.lang.IFn` with `invoke` at one and two arguments
-      installs on both types and is called; a value is not `ifn?` and calling one throws
-      `ClassCastException` as calling a `defrecord` does, twinned against a plain
-      `defrecord`; any existing assertion that a value is callable as a map is inverted,
-      and every such assertion is listed in the report. `applyTo` is the author's business,
-      as on a `defrecord`.
-
 - [ ] **I16. Untouched-seal short-circuit and `seal`'s duplicated lookups.** Two tiny
       follow-ons to the runner step. (1) In `seal-draft`, compare the mask to the all-pass
       constant before reading anything else off the model; an untouched seal is 60 ns and
@@ -136,6 +106,12 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       and `passed-in` read fine against the published vocabulary. Public names stay.
 
 ## For discussion
+
+- [ ] **An intermittent single failure in the suite.** Three times on 2026-09-17 a full run
+      reported one failure, and the immediate rerun was green; the failing test was not
+      captured any of the three times. Every verification run now tees its output to the
+      scratchpad so the next one is named. The cost tests are the suspects, and if one of
+      them is the cause its bound is the thing to loosen, not the test.
 
 - [ ] **Value-keyed lookups in class-keyed maps.** The runner agent found `model-of` and
       `open` asking the class-keyed registry about a value as a fallback for the type
