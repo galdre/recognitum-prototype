@@ -25,11 +25,8 @@ The deliberate changes:
 - Field keys are qualified by the namespace the type is defined in.
 - The print tag is namespace-qualified.
 - The library's keys are merged over `meta`.
-- A value is callable as a function of its keys, as a map is.
 - A protocol method marked `^:drafting` is handed a draft of the receiver on the sealed
   type, and what it returns is sealed.
-- A definition may not implement `clojure.lang.IFn` at one or two arguments; those calls
-  are the map's.
 
 ## Defining a type
 

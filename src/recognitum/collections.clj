@@ -9,8 +9,10 @@
   `APersistentMap`'s map contract, as a record's are.
 
   Everything else is `AbstractMap`'s: `IPersistentMap`, `Associative`, `ILookup`, `Counted`,
-  `Seqable`, `IFn`, `IObj`, `java.util.Map`, and iteration. The six-method contract is
-  unchanged, so [[def-record-type]] takes the same body `potemkin/def-map-type` does.
+  `Seqable`, `IObj`, `java.util.Map`, and iteration. `clojure.lang.IFn` is not: a value is
+  not callable, as a record is not, and `invoke` is free for a type to declare. The
+  six-method contract is unchanged, so [[def-record-type]] takes the same body
+  `potemkin/def-map-type` does.
 
   Nothing here is part of the library's surface."
   (:require
@@ -161,14 +163,7 @@
       (throw (Exception. "Key or value already present"))
       (assoc this k v)))
   (without [this k]
-    (potemkin.collections/dissoc* this k))
-
-  potemkin.collections/PotemkinFn
-
-  (invoke [this k]
-    (potemkin.collections/get* this k nil))
-  (invoke [this k default]
-    (potemkin.collections/get* this k default)))
+    (potemkin.collections/dissoc* this k)))
 
 (def ^:private method-renames
   "A method name as a [[def-record-type]] body writes it -> the name [[AbstractRecord]] calls

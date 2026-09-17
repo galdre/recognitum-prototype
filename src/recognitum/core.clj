@@ -1825,13 +1825,14 @@
   [[unsealed]] opts a returned draft out of the seal.
 
   A method may not take both the name and the arity of one the generated types already carry
-  -- `(seq [this])`, `(count [this])`, `(invoke [this k])` and the rest of the map and record
+  -- `(seq [this])`, `(count [this])`, `(valAt [this k])` and the rest of the map and record
   interfaces -- since it would replace that one rather than add to it. The same name at
   another arity is a method of its own: `(count [this unit])` installs beside the `count`
   that counts the fields, as it does on a `defrecord`. `get`, `assoc`, `dissoc`, `keys`,
   `empty`, `with-meta` and `meta` are reserved at every arity, since a method of one of those
-  names is taken as the map operation itself whatever its arity. `toString` is not
-  reserved.
+  names is taken as the map operation itself whatever its arity. `toString` is not reserved,
+  and neither is any arity of `invoke`: the template declares no `clojure.lang.IFn`, so a
+  definition may implement it.
 
   Both constructors this generates, `->Type` and `map->Type`, validate; there is no
   unvalidated one."
