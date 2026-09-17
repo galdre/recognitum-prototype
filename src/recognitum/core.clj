@@ -155,28 +155,6 @@
                      :indexes (vec (keys fs))
                      :failures fs}))))
 
-(defn- phases
-  "`[shape pure io]`: `idxs` split into the three phases the checks run in -- the shape
-  validations, then the other pure checks, then the external validations -- each keeping the
-  order it was given in."
-  [model idxs]
-  (let [cs (:checks model)]
-    (reduce (fn [[s p i] j]
-              (let [c (nth cs j)]
-                (cond
-                  (:shape c)    [(conj s j) p i]
-                  (seq (:io c)) [s p (conj i j)]
-                  :else         [s (conj p j) i])))
-            [[] [] []] idxs)))
-
-(defn- gate-broken?
-  "Did a shape validation the check at `i` waits on (its `:shape-gate`) fail in this pass?
-  `failed` is the set of check indices that did; a shape validation not among them counts as
-  passing, which is correct only for a value every check outside this pass has already
-  passed on."
-  [model i failed]
-  (boolean (some failed (:shape-gate (nth (:checks model) i)))))
-
 (defn- batch-answer!
   "`res`, what the batched fetch `d` returned, once it is known to be a map holding an entry
   for every tuple in `tuples`.
@@ -276,23 +254,6 @@
   must have passed before this runs."
   [model x idxs]
   (run-group! model (:run-sealed model) x idxs (fetch-io model x idxs)))
-
-(defn- run-checks!
-  "Run the checks at `idxs` against `x` and throw one `:check-failed` with every failure:
-  shape validations first, then the other pure checks, then external validations. A check is
-  neither run nor reported where a shape validation it waits on failed in this pass, and
-  nothing is fetched unless every pure check passed.
-
-  A shape validation not among `idxs` counts as passing, so `x` must be a value every check
-  outside `idxs` has already passed on."
-  [model run x idxs]
-  (let [[shape pure io] (phases model idxs)
-        f1     (failures-of run x shape {})
-        failed (into #{} (map first) f1)
-        f2     (failures-of run x (remove #(gate-broken? model % failed) pure) {})
-        fs     (into f1 f2)]
-    (when (seq fs) (checks-failed! model (failure-entries model x fs {})))
-    (when (seq io) (run-group! model run x io (fetch-io model x io)))))
 
 (defn- entries-of
   "The entries `o` contributes to a `conj` onto a value of this type: a map's, or the one a
@@ -438,11 +399,17 @@
                               what (pr-str x))
                       {:error ::not-a-value :value x}))))
 
+(defn- live-mask
+  "The mask a check's prerequisites are read off: a draft's own record of which checks pass,
+  or, for a sealed value, the type's constant with every bit set."
+  [model draft? x]
+  (if draft? (verdict-mask x) (:all-pass model)))
+
 (defn- value-mask
   "The mask of checks passing on `x`: a draft's own, or, for a sealed value, the type's
   constant with every bit set."
   [model x]
-  (if (draft-model x) (verdict-mask x) (:all-pass model)))
+  (live-mask model (some? (draft-model x)) x))
 
 (defn- passed-in
   "The names of the checks `mask` says are passing."
@@ -482,35 +449,12 @@
                       {:error ::unknown-check :record (:name model) :check cname
                        :checks (mapv :name (:checks model))}))))
 
-(defn- not-established
-  "Those of `idxs` that `d`'s verdict mask does not already say are passing, in the order
-  given."
-  [d idxs]
-  (let [m (verdict-mask d)]
-    (filterv #(not (bit-test m %)) idxs)))
+;;; ----------------------------------------- Runner -----------------------------------------
 
-(defn- record-run
-  "Run the checks at `idxs` against `d`, reading io-dep values from `cache`, and return
-  `[i ret]` for each that did not return `true`. Where `draft?`, each result is written into
-  `d`'s verdict mask; a sealed value has no mask.
-
-  A check whose `:shape-mask` the mask does not cover does not run, records nothing, and is
-  not among the failures. The mask is what is read, so the shape validations must have run
-  before the checks waiting on them. A check that throws records nothing, and the throw
-  propagates."
-  [model draft? d idxs cache]
-  (let [run  (if draft? (:run-draft model) (:run-sealed model))
-        cs   (:checks model)
-        mask (if draft? (verdict-mask d) (:all-pass model))]
-    (reduce (fn [acc i]
-              (let [g (:shape-mask (nth cs i))]
-                (if-not (or (zero? g) (= g (bit-and mask g)))
-                  acc
-                  (let [ret  (run i d cache)
-                        pass (true? ret)]
-                    (when draft? (record-verdict! d i pass))
-                    (if pass acc (conj acc [i ret]))))))
-            [] idxs)))
+;; Work is named by a mask: bit `i` for the check at index `i` of the type's `:checks`, which
+;; is also that check's bit in a draft's verdict mask. Every mask the phases and the
+;; prerequisites are read out of is a constant the macro computed, so what a call derives is
+;; the one thing that varies -- which checks the value already records as passing.
 
 (defn- mask-indices
   "The indices of the bits set in `m`, ascending -- which is check declaration order, since a
@@ -522,137 +466,231 @@
       (recur (bit-and m (dec m)) (conj! acc (Long/numberOfTrailingZeros m))))))
 
 (defn- checks-for
-  "The indices of the checks reading any of the fields `entries` writes, in declaration
-  order: what a merge onto a sealed value has to run."
+  "The checks reading any of the fields `entries` writes, as a mask: what a merge onto a
+  sealed value has to run."
   [model entries]
   (let [ms (:field-checks model)]
-    (mask-indices (reduce (fn [m e] (bit-or (long m) (long (get ms (nth e 0) 0)))) 0 entries))))
+    (reduce (fn [m e] (bit-or (long m) (long (get ms (nth e 0) 0)))) 0 entries)))
 
-(defn- wants
-  "`idxs` plus everything that has to pass before any of them can run, as a mask. A check
-  that is not a shape validation waits on the shape validations of the fields it names
-  (`:shape-mask`); an external validation waits as well on every pure check over the fields
-  its io-deps name (`:gate-mask`). Taken to a fixed point, since a prerequisite has
-  prerequisites of its own."
-  [model idxs]
-  (let [cs  (:checks model)
-        add (fn [m i] (let [c (nth cs i)] (bit-or m (:shape-mask c) (:gate-mask c))))]
-    (loop [m (reduce bit-set 0 idxs), fresh idxs]
-      (let [m' (reduce add m fresh)]
-        (if (= m' m)
-          m
-          (recur m' (mask-indices (bit-and-not m' m))))))))
+(defn- closure-of
+  "Everything the checks `m` names wait on, transitively, as a mask. Each check's own closure
+  is a constant of the type, so this is their union."
+  [^longs closures m]
+  (loop [m (long m), acc 0]
+    (if (zero? m)
+      acc
+      (recur (bit-and m (dec m))
+             (bit-or acc (aget closures (Long/numberOfTrailingZeros m)))))))
+
+(defn- plan-mask
+  "What is left to do about `requested` for a value whose verdict mask is `mask`, as a mask:
+  what the mask does not already say is passing, together with whatever that waits on. `0`
+  where there is nothing left to do, as for a sealed value's mask.
+
+  `closure` is everything `requested` waits on, which the type carries per check name and per
+  certificate name. `force?` puts everything `requested` names into the answer whatever the
+  mask says; prerequisites are still read off the mask."
+  [model mask requested closure force?]
+  (if force?
+    (bit-or (long requested) (bit-and-not (long closure) (long mask)))
+    (let [pending (bit-and-not (long requested) (long mask))]
+      (if (zero? pending)
+        0
+        ;; What is pending decides what its prerequisites are, so the closure the type
+        ;; carries for the whole request is too much here: a check already passing drags
+        ;; nothing in.
+        (bit-and-not (bit-or pending (closure-of (:closures model) pending)) (long mask))))))
 
 (def ^:private established
   "The result for a value on which nothing needed to run: no failures and no fetches."
   {:failures [] :cache {}})
 
-(defn- plan-for
-  "What is left to do about the checks at `idxs` for a value whose verdict mask is `mask`:
-  `{:shape :pure :io}`, holding the indices of each phase -- what the mask does not already
-  say is passing, together with whatever prerequisites those have. `nil` where there is
-  nothing left to do, as for a sealed value's mask.
+(defn- run-bits
+  "Run the checks `m` names against `x`, ascending -- which is declaration order -- reading
+  io-dep values from `cache`, and return `acc` with `[i ret]` added for each that did not
+  return `true`. `acc` starts as `nil`, and the vector is allocated at the first failure.
 
-  `force?` puts everything `idxs` names into the answer whatever the mask says. Prerequisites
-  are still read off the mask."
-  [model mask idxs force?]
-  (when (seq idxs)
-    (let [pending (if force?
-                    (vec idxs)
-                    (filterv #(not (bit-test (long mask) (long %))) idxs))]
-      (when (seq pending)
-        (let [pm   (reduce bit-set 0 pending)
-              want (wants model pending)
-              todo (if (= want pm)
-                     pending
-                     (mask-indices (bit-or pm (bit-and-not want (long mask)))))]
-          (when (seq todo)
-            (let [[shape pure io] (phases model todo)]
-              {:shape shape :pure pure :io io})))))))
+  A check whose `:shape-mask` `live` does not cover does not run, records nothing, and is not
+  among the failures, so the shape validations must have run before the checks waiting on
+  them. Where `draft?`, each result is written into `x`'s verdict mask; a sealed value has no
+  mask. A check that throws records nothing, and the throw propagates."
+  [model draft? x cache live m acc]
+  (let [^longs gates (:shape-masks model)
+        run          (if draft? (:run-draft model) (:run-sealed model))]
+    (loop [m (long m), acc acc]
+      (if (zero? m)
+        acc
+        (let [i  (Long/numberOfTrailingZeros m)
+              g  (aget gates i)
+              m' (bit-and m (dec m))]
+          (if (and (not (zero? g)) (not= g (bit-and (long live) g)))
+            (recur m' acc)
+            (let [ret  (run i x cache)
+                  pass (true? ret)]
+              (when draft? (record-verdict! x i pass))
+              (recur m' (if pass acc (conj (or acc []) [i ret]))))))))))
+
+(defn- run-pure
+  "Run the shape validations `plan` names against `x`, then the other pure checks it names,
+  and return `[i ret]` for each that did not return `true` -- shape validations first,
+  declaration order within each -- or `nil` where none did. Where `draft?`, each result is
+  written into `x`'s verdict mask.
+
+  The second phase reads its prerequisites off the mask the first one left, so a check whose
+  shape validations did not all pass neither runs nor reports."
+  [model draft? x plan]
+  ;; A shape validation waits on nothing, so the first phase is handed a `live` of 0 and
+  ;; never reads it.
+  (let [f1 (run-bits model draft? x nil 0 (bit-and (long plan) (long (:shape-bits model))) nil)
+        p  (bit-and (long plan) (long (:pure-bits model)))]
+    (if (zero? p)
+      f1
+      (run-bits model draft? x nil (live-mask model draft? x) p f1))))
+
+(defn- run-io
+  "Run the external validations `m` names against `x`, reading what their io-deps returned
+  out of `cache`, as [[run-pure]] runs the pure checks."
+  [model draft? x m cache]
+  (run-bits model draft? x cache (live-mask model draft? x) m nil))
+
+(defn- establish-one
+  "Run the checks `plan` names against `x` and return
+  `{:failures [[i ret] ...] :cache {io-dep-name value}}`. Where `draft?`, each result is
+  written into `x`'s verdict mask.
+
+  A value with a failing pure check fetches nothing and its pure failures are its whole
+  result; otherwise what the external validations name is fetched and they run against it."
+  [model draft? x plan]
+  (if (zero? (long plan))
+    established
+    (let [fs (run-pure model draft? x plan)]
+      (if (seq fs)
+        {:failures fs :cache {}}
+        (let [io (bit-and (long plan) (long (:io-bits model)))]
+          (if (zero? io)
+            established
+            (let [idxs  (mask-indices io)
+                  cache (fetch-io model x idxs)]
+              {:failures (run-io model draft? x io cache) :cache cache})))))))
+
+(defn- run-checks!
+  "Run the checks `m` names against the sealed value `x` and throw one `:check-failed` with
+  every failure: shape validations first, then the other pure checks, then external
+  validations. A check is neither run nor reported where a shape validation it waits on
+  failed in this pass, and nothing is fetched unless every pure check passed.
+
+  A shape validation `m` does not name counts as passing, so `x` must be a value every check
+  outside `m` has already passed on."
+  [model x m]
+  (let [f1 (run-bits model false x nil 0 (bit-and (long m) (long (:shape-bits model))) nil)
+        p  (bit-and (long m) (long (:pure-bits model)))
+        ;; A sealed value carries no record to read a prerequisite off, so what the second
+        ;; phase reads is every check passing less whatever the first phase just failed.
+        fs (if (zero? p)
+             f1
+             (run-bits model false x nil
+                       (reduce (fn [acc e] (bit-clear (long acc) (long (nth e 0))))
+                               (long (:all-pass model)) f1)
+                       p f1))]
+    (when (seq fs) (checks-failed! model (failure-entries model x fs {})))
+    (let [io (bit-and (long m) (long (:io-bits model)))]
+      (when-not (zero? io)
+        (let [idxs (mask-indices io)]
+          (run-group! model (:run-sealed model) x idxs (fetch-io model x idxs)))))))
 
 (defn- establish-all
-  "Run, against each value in `xs`, the checks at its own entry of `idxss` that its verdict
-  mask does not already mark passing, plus their prerequisites (see [[plan-for]]), and return
-  `{:failures [[i ret] ...] :cache {io-dep-name value}}` per value, index-aligned with `xs`.
-  A draft's mask is written with each result. `force?` runs everything named whatever the
-  mask says.
+  "[[establish-one]] against each value in `xs`, with `req` asked of every one of them, and
+  one result per value index-aligned with `xs`.
 
-  A value with a failing pure check fetches nothing, and its failures -- those asked for and
-  the prerequisites alike -- are its result. The io-deps of the remaining values are fetched
-  together, one pass per io-dep over the whole group, so a batched fetch sees every argument
-  tuple in one call."
-  [model xs idxss force?]
-  (let [xs     (vec xs)
-        idxss  (vec idxss)
-        n      (count xs)
-        drafts (mapv #(some? (draft-model %)) xs)]
-    (loop [i 0, plans (transient []), pending? false]
-      (if (< i n)
-        (let [p (plan-for model
-                          (if (nth drafts i) (verdict-mask (nth xs i)) (:all-pass model))
-                          (nth idxss i) force?)]
-          (recur (inc i) (conj! plans p) (or pending? (some? p))))
-        (if-not pending?
-          (vec (repeat n established))
-          (let [plans (persistent! plans)]
-            (loop [i 0, fss (transient []), ios (transient []), fetching? false]
-              (if (< i n)
-                (let [p  (nth plans i)
-                      dr (nth drafts i)
-                      fs (if p
-                           (let [x (nth xs i)]
-                             (into (record-run model dr x (:shape p) {})
-                                   (record-run model dr x (:pure p) {})))
-                           [])
-                      io (if (or (nil? p) (seq fs)) [] (:io p))]
-                  (recur (inc i) (conj! fss fs) (conj! ios io)
-                         (or fetching? (boolean (seq io)))))
-                (let [fss (persistent! fss)
-                      ios (persistent! ios)]
-                  (if-not fetching?
-                    (mapv (fn [fs] (if (seq fs) {:failures fs :cache {}} established)) fss)
-                    (let [caches (fetch-io-all model xs ios)]
-                      (mapv (fn [i]
-                              (let [fs (nth fss i)
-                                    io (nth ios i)]
-                                (cond
-                                  (seq fs)    {:failures fs :cache {}}
-                                  (empty? io) established
-                                  :else       (let [cache (nth caches i)]
-                                                {:failures (record-run model (nth drafts i)
-                                                                       (nth xs i) io cache)
-                                                 :cache    cache}))))
-                            (range n)))))))))))))
+  Every plan is computed before anything runs, and the io-deps of the values that reach the
+  fetch phase are fetched together, one pass per io-dep over the whole group, so a batched
+  fetch sees every argument tuple in one call."
+  [model xs req force?]
+  (let [xs        (vec xs)
+        n         (count xs)
+        requested (:mask req)
+        closure   (:closure req)
+        drafts    (boolean-array n)
+        plans     (long-array n)
+        ;; Every plan first, off masks none of the running has touched yet, so one draft
+        ;; appearing twice in the group is asked the same question twice.
+        pending?  (loop [i 0, any? false]
+                    (if (= i n)
+                      any?
+                      (let [x  (nth xs i)
+                            dr (some? (draft-model x))
+                            p  (long (plan-mask model (live-mask model dr x)
+                                                requested closure force?))]
+                        (aset drafts i dr)
+                        (aset plans i p)
+                        (recur (inc i) (or any? (not (zero? p)))))))]
+    (if-not pending?
+      (vec (repeat n established))
+      (let [iob (long (:io-bits model))
+            fss (object-array n)
+            ios (long-array n)
+            ;; Then every value's pure checks, in order. A value that failed one of them
+            ;; owes no fetch, whether or not the failure was among what was asked for.
+            fetching?
+            (loop [i 0, any? false]
+              (if (= i n)
+                any?
+                (let [p  (aget plans i)
+                      fs (when-not (zero? p) (run-pure model (aget drafts i) (nth xs i) p))
+                      io (if (seq fs) 0 (bit-and p iob))]
+                  (aset fss i fs)
+                  (aset ios i (long io))
+                  (recur (inc i) (or any? (not (zero? (long io))))))))
+            ;; The fetches are the one thing the group does together rather than per value.
+            caches (when fetching?
+                     (fetch-io-all model xs (mapv mask-indices (vec ios))))]
+        (loop [i 0, acc (transient [])]
+          (if (= i n)
+            (persistent! acc)
+            (let [fs (aget fss i)
+                  io (aget ios i)]
+              (recur (inc i)
+                     (conj! acc
+                            (cond
+                              (seq fs)   {:failures fs :cache {}}
+                              (zero? io) established
+                              :else      (let [cache (nth caches i)]
+                                           {:failures (run-io model (aget drafts i) (nth xs i)
+                                                              io cache)
+                                            :cache    cache})))))))))))
 
 (defn- establish-group
-  "[[establish-all]] against one value."
-  [model x idxs force?]
-  (first (establish-all model [x] [idxs] force?)))
+  "[[establish-one]] against one value, with the plan computed from its own record of which
+  checks pass. `req` is what a name asked for: [[request-for]]'s answer."
+  [model x req force?]
+  (let [draft? (some? (draft-model x))]
+    (establish-one model draft? x
+                   (plan-mask model (live-mask model draft? x)
+                              (:mask req) (:closure req) force?))))
 
 (defn- run-draft-checks!
-  "Run the checks at `idxs` against the draft `d` as [[establish-group]] does, and throw one
+  "Run the checks `plan` names against the draft `d` as [[establish-one]] does, and throw one
   `:check-failed` with every failure."
-  [model d idxs]
-  (let [{:keys [failures cache]} (establish-group model d idxs false)]
+  [model d plan]
+  (let [{:keys [failures cache]} (establish-one model true d plan)]
     (when (seq failures)
       (checks-failed! model (failure-entries model d failures cache)))))
+
 
 (def every-check
   "The certificate covering every check a type declares. It exists on every type without
   being declared, and is the one certificate name a type may not declare for itself."
   ::every-check)
 
-(defn- ids-for
-  "The check indices `cname` names on this type: one where it is a check's name, the
-  certificate's where it is a certificate's.
+(defn- request-for
+  "What `cname` asks for on this type: `{:mask :closure}`, the checks it names as bits of a
+  draft's verdict mask, and, transitively, everything those wait on. `cname` is a check's
+  name or a certificate's; a lone check is a certificate containing itself.
 
   Throws `:unknown-check` where it is neither, carrying `:record`, `:check`, and the check
   and certificate names it could have been given."
   [model cname]
-  (if-let [i (get (:check-ids model) cname)]
-    [i]
-    (if-let [c (get (:certificates model) cname)]
-      (:ids c)
+  (or (get (:requests model) cname)
       (throw (ex-info (format (str "%s declares no check or certificate named %s -- its "
                                    "checks are %s and its certificates are %s")
                               (:name model) (pr-str cname)
@@ -660,7 +698,7 @@
                               (pr-str (vec (keys (:certificates model)))))
                       {:error ::unknown-check :record (:name model) :check cname
                        :checks (mapv :name (:checks model))
-                       :certificates (vec (keys (:certificates model)))})))))
+                       :certificates (vec (keys (:certificates model)))}))))
 
 (defn certificates
   "The set of certificate names `x` currently holds: those every check of which is currently
@@ -689,22 +727,22 @@
                               ::certificates (held-in model mask))))
 
 (defn- returned-by-name
-  "[[record-run]]'s answer as check name -> what that check returned, in the order of `fs`."
+  "[[run-bits]]'s answer as check name -> what that check returned, in the order of `fs`."
   [model fs]
   (apply array-map
          (into [] (mapcat (fn [[i ret]] [(:name (nth (:checks model) i)) ret])) fs)))
 
 (defn- answered
   "`true`, or what each check that did not pass returned, keyed by check name."
-  [model x idxs force?]
-  (let [fs (:failures (establish-group model x idxs force?))]
+  [model x req force?]
+  (let [fs (:failures (establish-group model x req force?))]
     (if (seq fs) (returned-by-name model fs) true)))
 
 (defn- insisted-one
   "`true`, or one `:check-failed` carrying the full report for every check that did not
   pass."
-  [model x idxs force?]
-  (let [{:keys [failures cache]} (establish-group model x idxs force?)]
+  [model x req force?]
+  (let [{:keys [failures cache]} (establish-group model x req force?)]
     (if (seq failures)
       (checks-failed! model (failure-entries model x failures cache))
       true)))
@@ -740,7 +778,7 @@
   what the fetch returned."
   [x cname]
   (let [model (value-model! "check" x)]
-    (answered model x (ids-for model cname) false)))
+    (answered model x (request-for model cname) false)))
 
 (defn check!
   "[[check]], throwing on failure: `true`, or one `:check-failed` carrying every failure,
@@ -753,7 +791,7 @@
   not pass, carrying `:record` and `:failures`."
   [x cname]
   (let [model (value-model! "check!" x)]
-    (insisted-one model x (ids-for model cname) false)))
+    (insisted-one model x (request-for model cname) false)))
 
 (defn recheck
   "[[check]], with every check `cname` names run whether or not `x` already records it as
@@ -774,7 +812,7 @@
   `:malformed-batch` and `:incomplete-batch`."
   [x cname]
   (let [model (value-model! "recheck" x)]
-    (answered model x (ids-for model cname) true)))
+    (answered model x (request-for model cname) true)))
 
 (defn recheck!
   "[[recheck]], throwing on failure: `true`, or one `:check-failed` carrying every failure,
@@ -785,7 +823,7 @@
   `:record` and `:failures`, exactly as [[check!]] does."
   [x cname]
   (let [model (value-model! "recheck!" x)]
-    (insisted-one model x (ids-for model cname) true)))
+    (insisted-one model x (request-for model cname) true)))
 
 ;;; --------------------------- Checking many values at once ---------------------------
 
@@ -794,13 +832,19 @@
   and the position of the first thing that is neither a draft nor a sealed value, carrying
   `:index` and `:value`."
   [what xs]
-  (mapv (fn [n x]
-          (or (value-model x)
-              (throw (ex-info (format (str "%s expects drafts or sealed values, and the "
-                                           "value at index %d is neither: %s")
-                                      what n (pr-str x))
-                              {:error ::not-a-value :index n :value x}))))
-        (range) xs))
+  (let [n (count xs)]
+    (loop [i 0, acc (transient [])]
+      (if (= i n)
+        (persistent! acc)
+        (let [x (nth xs i)]
+          (recur (inc i)
+                 (conj! acc
+                        (or (value-model x)
+                            (throw (ex-info (format (str "%s expects drafts or sealed values, "
+                                                         "and the value at index %d is "
+                                                         "neither: %s")
+                                                    what i (pr-str x))
+                                            {:error ::not-a-value :index i :value x}))))))))))
 
 (defn- partition-by-model
   "`[[model [index ...]] ...]` -- the positions of `xs` grouped by the type they belong to,
@@ -823,24 +867,37 @@
   `cname` is resolved against every type in the group before anything runs, so a type that
   does not declare it fails the whole call before any value is run."
   [what xs cname force?]
-  (let [xs (vec xs)]
-    (when (seq xs)
+  (let [xs (vec xs)
+        n  (count xs)]
+    (when (pos? n)
       (let [models (group-models! what xs)
-            groups (mapv (fn [[m is]] [m is (ids-for m cname)]) (partition-by-model models))
-            out    (object-array (count xs))]
-        (doseq [[m is idxs] groups]
-          (let [vs (mapv #(nth xs %) is)
-                rs (establish-all m vs (repeat (count is) idxs) force?)]
-            (dotimes [k (count is)] (aset out (nth is k) (nth rs k)))))
-        [models (vec out)]))))
+            m0     (nth models 0)]
+        ;; One type is the ordinary case and needs no partition: the values are already in
+        ;; the order the answer is wanted in.
+        (if (loop [i 1] (cond (= i n)                             true
+                              (identical? m0 (nth models i))      (recur (inc i))
+                              :else                               false))
+          [models (establish-all m0 xs (request-for m0 cname) force?)]
+          (let [groups (mapv (fn [[m is]] [m is (request-for m cname)])
+                             (partition-by-model models))
+                out    (object-array n)]
+            (doseq [[m is req] groups]
+              (let [vs (mapv #(nth xs %) is)
+                    rs (establish-all m vs req force?)]
+                (dotimes [k (count is)] (aset out (nth is k) (nth rs k)))))
+            [models (vec out)]))))))
 
 (defn- answered-all
   "One answer per value, index-aligned with the group: `true`, or what each check that did not
   pass returned, keyed by check name."
   [models rs]
-  (mapv (fn [m {:keys [failures]}]
-          (if (seq failures) (returned-by-name m failures) true))
-        models rs))
+  (let [n (count rs)]
+    (loop [i 0, acc (transient [])]
+      (if (= i n)
+        (persistent! acc)
+        (let [fs (:failures (nth rs i))]
+          (recur (inc i)
+                 (conj! acc (if (seq fs) (returned-by-name (nth models i) fs) true))))))))
 
 (defn- insisted
   "`true`, or one throw carrying every failure of every value in `rs`."
@@ -928,7 +985,10 @@
 (defn- model-of
   "The model for `x`, whether `x` is a sealed value or the type itself."
   [x]
-  (let [r @registry] (or (r (class x)) (r x))))
+  ;; The registry is keyed by class, so only a class can be found under `x` itself. Asking
+  ;; for a value would hash it, and a value of this library's is a record over whatever its
+  ;; fields hold.
+  (let [r @registry] (or (r (class x)) (when (class? x) (r x)))))
 
 (defn sealed?
   "Is `x` a sealed value of any type this library defines?"
@@ -962,9 +1022,9 @@
   empty draft where `x` is the type, and otherwise a draft of the sealed value `x`."
   [model x token already-draft?]
   (cond
-    already-draft?                   (adopt model x token)
-    (identical? model (@registry x)) ((:draft-empty model) token)
-    :else                            ((:draft-from model) x token)))
+    already-draft? (adopt model x token)
+    (class? x)     ((:draft-empty model) token)
+    :else          ((:draft-from model) x token)))
 
 (defn draft
   "A draft of `x`: `x` itself where it is a draft, an empty draft where `x` is a registered
@@ -977,7 +1037,7 @@
   (if (draft? x)
     x
     (if-let [model (model-of x)]
-      (if (identical? model (@registry x))
+      (if (class? x)
         ((:draft-empty model) *owner*)
         ((:draft-from model) x *owner*))
       (throw (ex-info (format (str "draft expects a sealed value, a draft, or a registered "
@@ -1046,8 +1106,9 @@
     (throw (ex-info (format "%s does not declare %s -- clean removes undeclared keys from a draft"
                             (:name model) (pr-str (vec extra)))
                     {:error ::extraneous-keys :record (:name model) :keys (vec extra)})))
-  ;; Every check on the type, as the index vector the built-in certificate already holds.
-  (run-draft-checks! model d (not-established d (:ids (get (:certificates model) every-check))))
+  ;; Every check on the type that the draft's record does not already say is passing. What
+  ;; those wait on is among them already, so no closure is read.
+  (run-draft-checks! model d (bit-and-not (long (:all-pass model)) (long (verdict-mask d))))
   ((:draft-seal model) d))
 
 (defn seal
@@ -1935,6 +1996,36 @@
                                                      fs))))]
                             (assoc c :gate g :gate-mask (reduce bit-set 0 g))))
                         parsed)
+        ;; The three phases as masks, so splitting a plan into them is three `and`s.
+        shape-bits (reduce (fn [m i] (if (shape? i) (bit-set m i) m)) 0 (range nchecks))
+        pure-bits  (reduce (fn [m i] (if (and (pure? i) (not (shape? i))) (bit-set m i) m))
+                           0 (range nchecks))
+        io-bits    (reduce (fn [m i] (if (pure? i) m (bit-set m i))) 0 (range nchecks))
+        ;; What each check waits on, taken to a fixed point here rather than at every call: a
+        ;; prerequisite has prerequisites of its own, and an external validation reaches the
+        ;; shape validations of the fields its fetches name through the pure checks over
+        ;; them. There is no cycle to fall into -- a shape validation waits on nothing.
+        direct    (mapv (fn [c] (bit-or (long (:shape-mask c)) (long (:gate-mask c)))) parsed)
+        closure   (fn [m]
+                    (loop [acc (long m)]
+                      (let [acc' (reduce (fn [a i] (bit-or (long a) (long (nth direct i))))
+                                         acc (mask-indices acc))]
+                        (if (= acc' acc) acc (recur (long acc'))))))
+        closures  (mapv closure direct)
+        ;; check or certificate name -> the bits it names and what those wait on, so a call
+        ;; resolves its name into a plan without walking anything.
+        requests  (into {}
+                        (concat (map-indexed (fn [i c]
+                                               [(:name c) {:mask    (bit-set 0 i)
+                                                           :closure (nth closures i)}])
+                                             parsed)
+                                (map (fn [[cname {:keys [ids mask]}]]
+                                       [cname {:mask mask
+                                               :closure (reduce (fn [a i]
+                                                                  (bit-or (long a)
+                                                                          (long (nth closures i))))
+                                                                0 ids)}])
+                                     certs)))
         pure-idxs (fn [idxs] (filterv pure? idxs))
         io-idxs   (fn [idxs] (filterv (complement pure?) idxs))
         ;; What a write to `k` leaves standing: every verdict but those of the checks reading
@@ -2088,7 +2179,7 @@
               ;; Emitted only where the option reaches a field.
               ~@(when (seq limited)
                   [`(~(internal 'io-limited-write!) ~model-sym (map first ~essym))])
-              (~(internal 'run-checks!) ~model-sym (:run-sealed ~model-sym) ~hsym
+              (~(internal 'run-checks!) ~model-sym ~hsym
                (~(internal 'checks-for) ~model-sym ~essym))
               ~hsym))
 
@@ -2218,6 +2309,22 @@
           ;; Every check of this type passing, as a mask: what a draft of a sealed value
           ;; starts from, and what a sealed value answers with wherever a mask is read.
           :all-pass    ~all-pass
+          ;; The three phases a validation call runs in, as masks over the same bits, so
+          ;; splitting a plan into them is three `and`s and each phase is walked bit by bit
+          ;; in ascending order, which is declaration order.
+          :shape-bits  ~shape-bits
+          :pure-bits   ~pure-bits
+          :io-bits     ~io-bits
+          ;; Per check, indexed by its own bit: the shape validations it waits on, which is
+          ;; `:shape-mask` again in the form the runner tests one check against the live
+          ;; record with; and `:closures`, everything it waits on transitively, which is what
+          ;; a call unions to find what has to run before what it was asked for.
+          :shape-masks (long-array ~(mapv :shape-mask parsed))
+          :closures    (long-array ~closures)
+          ;; check or certificate name -> `{:mask :closure}`: the checks that name covers and
+          ;; what those wait on, so resolving a name is one lookup and planning a call is
+          ;; three bitwise operations.
+          :requests    ~requests
           :index       ~index
           ;; field -> the bits of the checks reading it, which is `:index` in the shape a
           ;; merge can union in one `bit-or` per entry.
