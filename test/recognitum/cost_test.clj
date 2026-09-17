@@ -6,7 +6,11 @@
   regression fails on a busy machine. What they catch is a fixed cost paid per validation
   call, large enough to swamp the checks it runs.
 
-  The second half pins what a call with nothing to run still does: refuse an undeclared
+  Two of the bounds compare the library against itself rather than against the hand-rolled
+  side: what a validation call costs around the one check it has to run, and what a group
+  call costs per value against the same work asked for one value at a time.
+
+  The last section pins what a call with nothing to run still does: refuse an undeclared
   key, fetch nothing, and answer from the record of which checks pass."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
@@ -113,6 +117,30 @@
   ;; pays around the body reads as a large multiple of it.
   (within? "write method on a sealed value" 110.0
            (ratio #(b/rename b/r "n0") #(b/rename b/h "n0"))))
+
+;;; ---------------------- what the runner costs around the checks it runs ----------------------
+
+(deftest a-seal-with-one-pending-check-stays-within-its-multiple
+  ;; The same check over the same field, reached two ways: as the inline compiled path a
+  ;; write to a sealed value takes, and through the runner, after a draft is opened and one
+  ;; field written. The predicate and the value allocated are identical, so the multiple is
+  ;; the draft, the seal, and whatever the runner does to decide that one check is pending.
+  ;; The bound is a third of what the shape cost when the runner derived that decision at
+  ;; every call, which leaves the opening of the draft and the writing of the field, both
+  ;; of them several times the inline write, with room above them for a busy machine.
+  (within? "seal a draft with one pending check" 25.0
+           (ratio #(assoc b/h ::b/name "n0")
+                  #(rec/seal (assoc (rec/draft b/h) ::b/name "n0")))))
+
+(deftest a-group-call-stays-within-its-multiple-of-the-same-values-one-at-a-time
+  ;; A hundred drafts of the bench value, each with one field written and so one check to
+  ;; run. The group resolves the name once and the type once; asking one value at a time
+  ;; resolves both per value and can only lose on the fetch, which this type does not have.
+  ;; So the group is held at parity, with half again for a busy machine.
+  (let [ds (mapv (fn [_] (assoc (rec/draft b/h) ::b/name "n0")) (range 100))]
+    (within? "check-all over a hundred drafts" 1.5
+             (ratio #(mapv (fn [d] (rec/check d ::b/name)) ds)
+                    #(rec/check-all ds ::b/name)))))
 
 ;;; ------------------------- what a call with nothing to run still does -------------------------
 

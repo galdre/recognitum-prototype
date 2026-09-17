@@ -252,6 +252,22 @@
     (is (= 1 (ran ::one)))
     (is (= 1 (ran ::two)))))
 
+(deftest a-check-waits-on-the-fields-of-the-fetches-behind-the-fetch-it-names
+  ;; `::sum` names `::two`, which names `::one`, which is the only thing that reads `a`.
+  ;; What `::sum` waits on is `a`'s shape validation, two links away from anything it
+  ;; mentions.
+  (let [d (assoc (rec/draft Chain) ::a "two")]
+    (is (= [::a] (vec (keys (rec/check d ::sum))))
+        "the shape validation of the field, and nothing else, is what came back")
+    (is (= 0 (ran ::sum)) "so the check itself never ran")
+    (is (= 0 (ran ::one)))
+    (is (= 0 (ran ::two)) "and neither fetch happened"))
+  (testing "and once the field is well-formed the whole chain runs"
+    (reset-log!)
+    (let [d (assoc (rec/draft Chain) ::a 2)]
+      (is (true? (rec/check d ::sum)))
+      (is (= [::a ::one ::two ::sum] (order ::a ::one ::two ::sum))))))
+
 ;;; ------------------------------ what a fetch waits on ------------------------------
 
 (deftest a-fetch-waits-on-the-checks-over-the-fields-it-names
