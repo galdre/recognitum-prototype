@@ -9,19 +9,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
-- [ ] **I9. Reserved method names are derived, not listed.** `reserved-methods` is a
-      hand-written set of ten names; the template defines about thirty. A protocol method
-      named `seq` compiles and replaces `Seqable/seq` (reproduced: a body returning a keyword
-      makes `(seq v)` throw ClassCastException from the runtime). One named `count` gets past
-      the check and fails in the bytecode verifier with "Bad type on operand stack". Plain
-      `defrecord` refuses both at compile time with "Duplicate method". Fix: build the set at
-      macro time from (a) the method names in `AbstractRecord`'s body, which potemkin stores as
-      the var's value, a quoted `(deftype AbstractRecord [] ...)` form, under both the
-      user-facing and the `*`-suffixed spellings; and (b) the method names the macro itself
-      emits into the two `def-record-type` bodies. Refuse with the existing `::reserved-method`
-      error. Tests: `seq`, `count`, `equiv`, `hasheq`, `invoke`, `valAt`, `hashCode`,
-      `toString` each refused on both types; a method with a non-colliding name still installs.
-
 - [ ] **I8. A primitive-hinted `definterface` method breaks the `loop` emission.** With
       `(definterface ITally (tally [^long n]))`, `deftype` compiles it and `rec/defrecord` does
       not: `recurrable-body` interleaves `(rest args)` verbatim, so the `^long` rides into the
@@ -89,6 +76,15 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       and nothing else. Nothing needs it yet.
 
 ## Needs a ruling
+
+- [ ] **Method-name reservation is wider than `defrecord`'s.** A protocol method is now
+      refused when its name matches any of the 42 names the generated types carry, at any
+      arity (12ba5d4). Plain `defrecord` refuses only an exact interface signature, so a
+      same-name, different-arity method is legal there and not here. `values`, `remove`,
+      `size`, `count`, `invoke`, and `seq` are the plausible domain names lost. Rule: keep
+      by-name (simple, and named in the `defrecord` docstring), or narrow to name and arity
+      to match the baseline. If by-name stays, the README's list of deliberate changes
+      gains a line.
 
 - [ ] **README facts that restate a docstring.** After the passes, the README's three io-dep
       fetch rules, its `unsealed` paragraph, and its constructor paragraph restate the
