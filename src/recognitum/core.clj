@@ -1120,7 +1120,8 @@
   puts the body in tail position of the method, so the `loop` is the recur target instead.
   The receiver is left out because a `defrecord` method body's recur leaves it out."
   [args body]
-  `(loop [~@(interleave (rest args) (rest args))] ~@body))
+  ;; The binding names are stripped: the compiler refuses a primitive hint in a binding position.
+  `(loop [~@(interleave (map #(with-meta % nil) (rest args)) (rest args))] ~@body))
 
 (defn- owned-here?
   "Is `x` a draft belonging to a `drafting` form already on the stack?"
