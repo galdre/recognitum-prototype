@@ -6,9 +6,10 @@
   regression fails on a busy machine. What they catch is a fixed cost paid per validation
   call, large enough to swamp the checks it runs.
 
-  Two of the bounds compare the library against itself rather than against the hand-rolled
-  side: what a validation call costs around the one check it has to run, and what a group
-  call costs per value against the same work asked for one value at a time.
+  Three of the bounds compare the library against itself rather than against the hand-rolled
+  side: what a seal costs with nothing at all to run, what a validation call costs around the
+  one check it has to run, and what a group call costs per value against the same work asked
+  for one value at a time.
 
   The last section pins what a call with nothing to run still does: refuse an undeclared
   key, fetch nothing, and answer from the record of which checks pass."
@@ -131,6 +132,20 @@
   (within? "seal a draft with one pending check" 25.0
            (ratio #(assoc b/h ::b/name "n0")
                   #(rec/seal (assoc (rec/draft b/h) ::b/name "n0")))))
+
+(deftest a-seal-with-nothing-to-run-stays-within-its-multiple-of-opening-the-draft
+  ;; A draft of a sealed value records every check as passing, so this seal runs none of
+  ;; them and the whole of what it costs is what it does around running nothing. The one
+  ;; draft is sealed over and over, which leaves it as it was. Opening a draft is the
+  ;; comparison because it allocates a value of the same width off the same model, so the
+  ;; multiple is what the seal spends deciding there is no work.
+  ;;
+  ;; A seal that reaches the runner to be told there is nothing pending costs twice the
+  ;; open; one that reads the draft's record itself costs about what the open costs. The
+  ;; bound sits between them, a quarter above what the shape measures.
+  (let [d (rec/draft b/h)]
+    (within? "seal an untouched draft" 1.6
+             (ratio #(rec/draft b/h) #(rec/seal d)))))
 
 (deftest a-group-call-stays-within-its-multiple-of-the-same-values-one-at-a-time
   ;; A hundred drafts of the bench value, each with one field written and so one check to

@@ -307,6 +307,18 @@
   (testing "and something that is neither is still refused"
     (is (= ::rec/cannot-seal (:error (err #(rec/seal {::a 1})))))))
 
+(deftest a-refused-seal-names-the-type-where-one-was-asking
+  (testing "sealed by hand, with no type in the call"
+    (let [e (err #(rec/seal {::a 1}))]
+      (is (= ::rec/cannot-seal (:error e)))
+      (is (= {::a 1} (:value e)))
+      (is (nil? (:record e)))))
+  (testing "sealed as a drafting body's value, which the type asks for"
+    (let [e (err #(rec/drafting [x led] {::a 1}))]
+      (is (= ::rec/cannot-seal (:error e)))
+      (is (= {::a 1} (:value e)))
+      (is (= 'Ledger (:record e))))))
+
 ;;; ---------------------------------- the seal leaves ----------------------------------
 
 (deftest a-successful-seal-leaves-every-check-passing-on-the-draft
