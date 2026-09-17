@@ -20,8 +20,8 @@ the order listed.
       commit, each leaving the suite green: (a) `core.clj` and `collections.clj`, the
       namespace docstring reduced to purpose and public surface, landed as bf56501 and, after a
       tightening pass on Fable, 2163166; (b) README, the cost section
-      as one table plus how to re-run it, landed as 311329e; (c) `dev/`, `bench/`, and test-namespace prose;
-      (d) thrown messages, which are operator-facing under the standard and are pinned by
+      as one table plus how to re-run it, landed as 311329e; (c) `dev/`, `bench/`, and test-namespace prose,
+      landed as eb30b99 and c5c3c41 with 67 test names renamed off the removed coinages; (d) thrown messages, which are operator-facing under the standard and are pinned by
       tests, so each message edit lands with its test. Renames of code names are not part of
       this pass; galdre rules on them after reading the code, which the pass is meant to make
       possible. Ruled balance: lean toward
