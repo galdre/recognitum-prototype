@@ -11,8 +11,8 @@
 
   - A **check** is named by a namespace-qualified keyword and declares what it reads in its
     arglist. A **shape validation** is a check named after a field, and says what a
-    well-formed value of that field is. An **invariant validation** is a pure check over more
-    than one field. An **external validation** is a check that names an io-dep.
+    well-formed value of that field is. An **invariant validation** is a pure check not named
+    after a field. An **external validation** is a check that names an io-dep.
   - An **io-dep** is a function that fetches something from outside the value. It is declared
     the way a check is, and named in an arglist by a keyword.
   - A **certificate** names a subset of a type's checks, so a group of them can be run
