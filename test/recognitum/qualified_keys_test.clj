@@ -99,12 +99,12 @@
       (is (= [::x ::y] (keys (:values (get (:failures e) ::ordered))))))
     (is (= 0 (::x (assoc origin ::x 0))))))
 
-(deftest dissoc-names-the-qualified-field
+(deftest dissoc-reaches-the-qualified-field
   (let [e (err #(dissoc job ::heist/cuts))]
-    (is (= ::rec/cannot-dissoc (:error e)))
-    (is (= ::heist/cuts (:key e)))
-    (is (= (list 'assoc 'm ::heist/cuts nil) (:instead e))
-        "the proposed rewrite is one the caller can paste"))
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::heist/cuts] (keys (:failures e)))
+        "the qualified field is the one set to nil, and its own check is what judged it")
+    (is (= {::heist/cuts nil} (:values (get (:failures e) ::heist/cuts)))))
   (testing "a bare key is undeclared, so dissoc of one is the ordinary no-op"
     (is (identical? job (dissoc job :cuts)))))
 

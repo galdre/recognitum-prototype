@@ -701,7 +701,7 @@
   (is (rec/sealed? (map->Ledger {::owner "a" ::debits 1 ::credits 2})))
   (is (= ::rec/unknown-field (:error (err #(assoc led :owner "x")))))
   (is (= ::rec/check-failed (:error (err #(assoc led ::owner 1)))))
-  (is (= ::rec/cannot-dissoc (:error (err #(dissoc led ::owner)))))
+  (is (= ::rec/check-failed (:error (err #(dissoc led ::owner)))))
   (is (= "#recognitum.protocol-test/Ledger{:credits 10, :debits 0, :owner \"zoe\"}"
          (pr-str led)))
   (is (re-find #"^#<Ledger draft " (pr-str (rec/draft led))))

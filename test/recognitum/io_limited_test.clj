@@ -1,7 +1,7 @@
 (ns recognitum.io-limited-test
   "`:options {:io-limited true}`: draft-only writes.
 
-  Direct `assoc` and `merge` on a sealed value are refused for any field an external
+  Direct `assoc`, `dissoc` and `merge` on a sealed value are refused for any field an external
   validation reads -- its own fields and those of every fetch it names -- so those writes
   go through `drafting`, where N writes cost one round of checks at the seal. The write
   does not happen, nothing is fetched, and no check runs. Which fields are limited is
@@ -200,10 +200,27 @@
   (is (= ::rec/unknown-field (:error (err #(assoc job :crew #{:charlie})))))
   (is (= ::rec/unknown-field (:error (err #(assoc job ::nonesuch 1))))))
 
-(deftest dissoc-of-a-draft-only-field-is-still-cannot-dissoc
-  (is (= ::rec/cannot-dissoc (:error (err #(dissoc job ::crew)))))
-  (testing "the option is about writes; a declared field is permanent either way"
-    (is (= ::rec/cannot-dissoc (:error (err #(dissoc job ::name)))))))
+(deftest dissoc-of-a-draft-only-field-is-refused-like-the-assoc-of-nil-it-is
+  (let [e (err #(dissoc job ::crew))]
+    (is (= ::rec/io-limited (:error e)))
+    (is (= [::crew] (:keys e)))
+    (is (= 0 (roster/call-count)))
+    (is (= 0 (count @log)) "nothing ran"))
+  (testing "a field no external validation reaches is written, and its own check judges nil"
+    (is (= ::rec/check-failed (:error (err #(dissoc job ::name)))))
+    (is (= 1 (ran ::name))))
+  (testing "while a draft takes the write, as it takes any, and runs nothing"
+    (reset-log!)
+    (roster/reset-calls!)
+    (let [d (dissoc (rec/draft job) ::crew)]
+      (is (rec/draft? d))
+      (is (nil? (::crew d)))
+      (is (= 0 (count @log)))
+      (is (= 0 (roster/call-count)))))
+  (testing "and inside drafting the field can be cleared and written again before the seal"
+    (let [j (rec/drafting [d job] (-> d (dissoc ::crew) (assoc ::crew #{:charlie :lyle})))]
+      (is (rec/sealed? j))
+      (is (= #{:charlie :lyle} (::crew j))))))
 
 (deftest update-and-assoc-in-go-through-assoc-and-are-refused-with-it
   (is (= ::rec/io-limited (:error (err #(update job ::crew conj :mole)))))

@@ -123,6 +123,12 @@
     (testing "and the two together leave only what names neither"
       (is (= #{::always} (rec/passed (-> d (assoc ::a 2) (assoc ::b "yyyy"))))))))
 
+(deftest dissoc-of-a-declared-field-clears-what-the-assoc-of-nil-clears
+  (let [d (rec/draft led)]
+    (is (= #{::b ::always} (rec/passed (dissoc d ::a))))
+    (is (= (rec/passed (assoc d ::a nil)) (rec/passed (dissoc d ::a))))
+    (is (= all-checks (rec/passed d)) "and the draft written from keeps its own")))
+
 (deftest a-write-to-a-field-no-check-names-clears-nothing
   (is (= all-checks (rec/passed (assoc (rec/draft led) ::c :something-else)))
       "c is a declared field no check reads -- nothing about it can have moved a verdict"))

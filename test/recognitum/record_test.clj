@@ -328,12 +328,24 @@
 
 ;;; ======================= where ours departs from defrecord =======================
 
-(deftest ours-departs-dissoc-of-a-declared-field-is-refused-where-a-defrecord-drops-to-a-map
-  ;; A declared field is permanent: it cannot be taken off a value of the type.
+(deftest ours-departs-dissoc-of-a-declared-field-writes-nil-where-a-defrecord-drops-to-a-map
+  ;; A declared field is always present, so there is nothing to take off; what dissoc does
+  ;; is the write that spells absence, and the value keeps its type.
   (is (= {:beta 2} (dissoc theirs :alpha)))
   (is (= clojure.lang.PersistentArrayMap (class (dissoc theirs :alpha))))
-  (is (= ::rec/cannot-dissoc (:error (err #(dissoc ours ::alpha)))))
-  (is (= ::rec/cannot-dissoc (:error (err #(dissoc (rec/draft ours) ::alpha)))))
+  (is (false? (contains? (dissoc theirs :alpha) :alpha)))
+  (let [x (dissoc ours ::alpha)]
+    (is (= (class ours) (class x)))
+    (is (rec/sealed? x))
+    (is (nil? (::alpha x)))
+    (is (true? (contains? x ::alpha)) "as it is for a field nobody wrote")
+    (is (= 2 (count x)))
+    (is (= (assoc ours ::alpha nil) x)))
+  (testing "and a draft answers the same way"
+    (let [d (dissoc (rec/draft ours) ::alpha)]
+      (is (rec/draft? d))
+      (is (nil? (::alpha d)))
+      (is (true? (contains? d ::alpha)))))
   (testing "an undeclared key dissocs the same way on both"
     (is (= theirs (dissoc theirs :nope)))
     (is (= ours (dissoc ours ::nope)))))

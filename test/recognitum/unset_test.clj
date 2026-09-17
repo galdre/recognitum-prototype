@@ -2,8 +2,9 @@
   "Unset is `nil`. A field that has not been written reads as `nil`, as it would on a
   `defrecord` whose field was never set: a draft opened from the type starts with every
   field `nil`, `keys` answers with every declared key, and a check receives `nil` for a
-  field nobody wrote. Whether `nil` is acceptable is the shape validation's business; a
-  field with no shape validation seals holding it."
+  field nobody wrote, and `dissoc` of a declared field is the write that puts it back
+  there. Whether `nil` is acceptable is the shape validation's business; a field with no
+  shape validation seals holding it."
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
@@ -75,6 +76,21 @@
     (is (= [::title] (keys (:failures e))))
     (is (= {::title nil} (:values (get (:failures e) ::title)))
         "and what it was given is written down as nil, which is what it was given")))
+
+;;; ---------------------------- dissoc of a declared field ----------------------------
+
+(deftest dissoc-of-a-declared-field-is-the-write-that-sets-it-to-nil
+  (let [n (map->Note {::title "t" ::body "b"})
+        d (dissoc n ::title)]
+    (is (rec/sealed? d))
+    (is (nil? (::title d)))
+    (is (contains? d ::title))
+    (is (= (assoc n ::title nil) d)))
+  (testing "and the shape validation decides, as it does for the field nobody wrote"
+    (let [e (err #(dissoc (map->Strict {::title "t"}) ::title))]
+      (is (= ::rec/check-failed (:error e)))
+      (is (= [::title] (keys (:failures e))))
+      (is (= {::title nil} (:values (get (:failures e) ::title)))))))
 
 ;;; -------------------------------- the map constructor --------------------------------
 

@@ -67,11 +67,12 @@
           "the failure reports the fields the check declared, in arglist order")
       (is (= 4000 (get (:values f) ::heist/take))))))
 
-(deftest dissoc-refuses-a-declared-field
+(deftest dissoc-of-a-declared-field-writes-nil-and-runs-the-checks-reading-it
   (let [e (err #(dissoc job ::heist/cuts))]
-    (is (= ::rec/cannot-dissoc (:error e)))
-    (is (= ::heist/cuts (:key e)))
-    (is (= '(assoc m ::heist/cuts nil) (:instead e)) "and proposes the rewrite")))
+    (is (= ::rec/check-failed (:error e)) "a map of cuts is what the field's shape is")
+    (is (= [::heist/cuts] (keys (:failures e))))
+    (is (= {::heist/cuts nil} (:values (get (:failures e) ::heist/cuts))))
+    (is (= e (err #(assoc job ::heist/cuts nil))) "the report assoc of nil gives")))
 
 (deftest dissoc-of-an-undeclared-key-is-the-ordinary-no-op
   (is (identical? job (dissoc job :getaway-car))

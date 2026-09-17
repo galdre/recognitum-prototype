@@ -42,8 +42,12 @@
 
 (deftest dissoc-removes-one-undeclared-key-from-a-draft
   (is (instance? Heist (rec/drafting [x job] (-> x (assoc :getaway-car "mini") (dissoc :getaway-car)))))
-  (testing "a declared field is still permanent"
-    (is (= ::rec/cannot-dissoc (:error (err #(dissoc (rec/draft job) ::heist/cuts))))))
+  (testing "while a declared field is set to nil rather than removed"
+    (let [d (dissoc (rec/draft job) ::heist/cuts)]
+      (is (rec/draft? d))
+      (is (nil? (::heist/cuts d)))
+      (is (contains? d ::heist/cuts))
+      (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts] (keys d)))))
   (testing "and removing an absent undeclared key allocates nothing"
     (let [d (rec/draft job)]
       (is (identical? d (dissoc d :never-there))))))
