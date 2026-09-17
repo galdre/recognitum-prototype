@@ -1552,19 +1552,36 @@
     @order))
 
 (defn- refuse-reserved-methods!
-  "Throw where any of `impl-forms` is a method named in `reserved`, the names the generated
-  types already carry. The name alone decides it: `deftype+` merges by name, so a method of
-  a reserved name replaces the one the template or the expansion wrote, at any arity, and
-  the type still compiles."
-  [tname reserved impl-forms]
+  "Throw where any of `impl-forms` is a method the generated types already carry: one whose
+  name and parameter count are a pair in `reserved`, or one whose name is in `names`, which
+  no method may take at any arity."
+  [tname reserved names impl-forms]
+  ;; `deftype+` merges a body into the template by method name and parameter type hints, so a
+  ;; method whose name and parameter count match one already there replaces it and the type
+  ;; still compiles, while another parameter count is added beside it. The names in `names`
+  ;; are the exception: `def-record-type` renames a body's method of one of those into the
+  ;; map operation it stands for whatever arity it was written at, and an arity that
+  ;; operation does not have belongs to no interface the type implements, so `deftype`
+  ;; refuses it with a message that does not name the cause.
   (doseq [[kind form] impl-forms
-          :when (and (= kind :method) (contains? reserved (first form)))]
-    (throw (ex-info (format (str "%s implements %s, which is one of the methods that make a "
-                                 "%s behave as a map or a record -- a method of that name "
-                                 "would replace it")
-                            tname (first form) tname)
-                    {:error ::reserved-method :record tname :method (first form)
-                     :form form :reserved reserved}))))
+          :when (= kind :method)
+          :let  [mname    (first form)
+                 arity    (count (second form))
+                 by-name? (contains? names mname)]
+          :when (or by-name? (contains? reserved [mname arity]))]
+    (throw (ex-info (if by-name?
+                      (format (str "%s implements %s, which is one of the methods that make "
+                                   "a %s behave as a map -- a method of that name replaces "
+                                   "it whatever parameters it takes")
+                              tname mname tname)
+                      (format (str "%s implements %s with %d parameters, which is one of the "
+                                   "methods that make a %s behave as a map or a record -- a "
+                                   "method of that name and parameter count replaces it "
+                                   "rather than adding to it. The same name with a different "
+                                   "number of parameters is a method of its own.")
+                              tname mname arity tname))
+                    {:error ::reserved-method :record tname :method mname :arity arity
+                     :form form :reserved reserved :reserved-names names}))))
 
 (defn- parse-impls
   "`defrecord`'s trailing forms -> `[:type sym]` and `[:method form]` pairs, in the order they
@@ -1705,9 +1722,14 @@
   both cases, so `(instance? Heist h)` inside a body is false where it was meant to hold and
   [[of-type?]] is the question that was meant. [[unsealed]] opts a return out of the seal.
 
-  A method may not be named for one the generated types already carry -- `get`, `assoc`,
-  `seq`, `count`, `iterator` and the rest of the map and record interfaces -- since it would
-  replace that one rather than add to it. `toString` is not among them.
+  A method may not take both the name and the arity of one the generated types already carry
+  -- `(seq [this])`, `(count [this])`, `(invoke [this k])` and the rest of the map and record
+  interfaces -- since it would replace that one rather than add to it. The same name at
+  another arity is a method of its own: `(count [this unit])` installs beside the `count`
+  that counts the fields, as it does on a `defrecord`. `get`, `assoc`, `dissoc`, `keys`,
+  `empty`, `with-meta` and `meta` are reserved at every arity, since a method of one of those
+  names is taken as the map operation itself whatever its arity. `toString` is not
+  reserved.
 
   Both constructors this generates, `->Type` and `map->Type`, validate; there is no
   unvalidated one."
@@ -2089,12 +2111,12 @@
           (~'record-verdict! [_# ~bitsym ~passym]
             (set! ~vdsym (long (if ~passym (bit-set ~vdsym ~bitsym) (bit-clear ~vdsym ~bitsym))))
             ~passym)]
-        ;; Every name a method the caller wrote may not take: what the template already
-        ;; answers, and what the two bodies above define.
+        ;; Every name and arity a method the caller wrote may not take: what the template
+        ;; already answers, and what the two bodies above define.
         reserved  (into rc/template-methods
-                        (comp (filter seq?) (map first))
+                        (comp (filter seq?) (map (fn [[nm args]] [nm (count args)])))
                         (concat sealed-body draft-body))
-        _         (refuse-reserved-methods! tname reserved impl-forms)]
+        _         (refuse-reserved-methods! tname reserved rc/renamed-methods impl-forms)]
     `(do
        (declare ~model-sym)
        ~@(map (fn [i] `(def ~(with-meta (cvar i) {:private true}) ~(:fn (nth parsed i))))

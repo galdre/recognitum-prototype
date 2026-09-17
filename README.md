@@ -26,6 +26,8 @@ The deliberate changes:
 - The print tag is namespace-qualified.
 - The library's keys are merged over `meta`.
 - A value is callable as a function of its keys, as a map is.
+- A definition may not implement `clojure.lang.IFn` at one or two arguments; those calls
+  are the map's.
 
 ## Defining a type
 

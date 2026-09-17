@@ -181,17 +181,22 @@
     with-meta with-meta*
     meta      meta*})
 
+(def renamed-methods
+  "Both spellings of every method name [[def-record-type]] renames. The rename reads the name
+  alone, so a body's method of one of these becomes the map operation it renames to whatever
+  arity it was written at."
+  (into #{} cat method-renames))
+
 (def template-methods
-  "Every method name a type defined by [[def-record-type]] already carries: those
-  [[AbstractRecord]] defines, and both spellings of each name the macro renames. `deftype+`
-  merges a body into the template by name and lets the later definition win, so a body that
-  defines one of these replaces the template's answer rather than adding to it."
+  "Every method [[AbstractRecord]] answers, as a `[name arity]` pair whose arity counts the
+  receiver. A body that defines one of these pairs replaces the template's answer; one of the
+  same name at another arity is added beside it."
   ;; `pt/def-abstract-type` leaves the body unevaluated in the var, as `(deftype <name> []
   ;; <body>)`, and the body is interface names interleaved with method forms.
+  ;; `potemkin.types/merge-deftypes*` keys a method by its name and the `:tag` metadata of
+  ;; its parameters; nothing here is hinted, so the key is the name and the parameter count.
   (let [[_deftype _name _fields & body] AbstractRecord]
-    (into (into #{} cat method-renames)
-          (comp (filter seq?) (map first))
-          body)))
+    (into #{} (comp (filter seq?) (map (fn [[nm args]] [nm (count args)]))) body)))
 
 (defmacro def-record-type
   "`potemkin/def-map-type` over [[AbstractRecord]] rather than `AbstractMap`.
