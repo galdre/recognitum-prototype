@@ -9,21 +9,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
-- [ ] **I9b. Reserve by name and arity, as `defrecord` does.** Ruled: potemkin's merge keys
-      a method by name plus its parameters' tags, so a same-name, different-arity method is
-      added beside the template's, as on a `defrecord`; the by-name refusal landed in 12ba5d4
-      protects nothing there and costs `(count [this unit])`, `(remove [this who reason])`,
-      `(values [this as-of])`. Narrow: a method is refused when its name and parameter count
-      match a reserved method's, tags ignored, except the seven names in the rename map
-      (`get`, `assoc`, `dissoc`, `keys`, `empty`, `with-meta`, `meta`) and their `*`
-      spellings, which stay reserved by name because `def-record-type` renames a user's
-      method into the template's slot whatever its arity. `toString` stays open. Add to the
-      README's list of deliberate changes that the type implements `IFn` as a map does, so a
-      definition cannot implement it otherwise. Tests first: arity-2 `count`, `seq`,
-      `values`, `remove` at arity 3 install and run on both types; arity-1 `seq` and `count`
-      are still refused; `keys` and `dissoc` at any arity are refused; `invoke` at arity 2
-      and 3 is refused.
-
 - [ ] **I8. A primitive-hinted `definterface` method breaks the `loop` emission.** With
       `(definterface ITally (tally [^long n]))`, `deftype` compiles it and `rec/defrecord` does
       not: `recurrable-body` interleaves `(rest args)` verbatim, so the `^long` rides into the
@@ -111,6 +96,15 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       and `passed-in` read fine against the published vocabulary. Public names stay.
 
 ## For discussion
+
+- [ ] **Interface methods the template inherits but does not define.** `java.util.Map` and
+      `Iterable` carry default methods `AbstractRecord` never writes (`merge`, `forEach`,
+      `replace`, `getOrDefault`), and `java.util.Map/remove` has a `boolean` return, so a
+      body may take those names and fail in the compiler ("Must hint overloaded method") or
+      the verifier ("Bad type on operand stack"). Plain `defrecord` fails the same way, so
+      this is baseline behaviour, recorded here so it is not mistaken for a gap in the
+      reservation. Catching it means reflecting over the declared interfaces, which would
+      also reserve `invoke` at every arity. Reported by the reservation agent.
 
 - [ ] **A test that reads the model map's keys.** The comments on `:checks` and `:io-deps`
       inside the `defrecord` macro are the only statement of the model's shape, and nothing
