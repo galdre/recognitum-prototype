@@ -639,29 +639,30 @@ about what a fetch waits on show what happened.
 
 Against a plain `defrecord` carrying the same checks written by hand, so the validation work is
 identical on both sides (`bench/recognitum/bench.clj`). Criterium `quick-benchmark` on an AMD
-Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-16:
+Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-17:
 
 | | hand-rolled | this library |
 |---|---|---|
 | read a field | 2.1 ns | 2.3 ns |
 | write one field, no invariant validation on it | 13.2 ns | 14.8 ns |
 | write one field, two invariant validations on it | 217 ns | 175 ns |
-| `merge` two fields | 860 ns | 962 ns |
-| construct | 1418 ns | 1927 ns |
+| `merge` two fields | 860 ns | 430 ns |
+| construct | 1418 ns | 870 ns |
 | read method on a sealed value | 29.3 ns | 29.5 ns |
 | write method on a sealed value | 15.5 ns | 11.9 ns |
-| one rename in a `drafting` | 257 ns | 888 ns |
-| 15 renames in a `drafting` | 766 ns | 1496 ns |
-| one add-member (3 writes) in a `drafting` | 1450 ns | 1927 ns |
-| 15 add-members in a `drafting` | 4983 ns | 5721 ns |
+| one rename in a `drafting` | 257 ns | 211 ns |
+| 15 renames in a `drafting` | 766 ns | 652 ns |
+| one add-member (3 writes) in a `drafting` | 1450 ns | 982 ns |
+| 15 add-members in a `drafting` | 4983 ns | 4309 ns |
 
-The `drafting` rows carry a fixed cost of a few hundred nanoseconds beyond the checks they run —
-a draft opened, a seal performed, the draft's record consulted — which is the whole of the gap
-at one write and most of the way amortized by fifteen. A write to a sealed value with checks on
-the field costs less than the hand-rolled twin: the checks reading the field are known when the
-type is compiled, and each is called with the fields it named directly rather than looking them
-up out of the value. The rows under 20 ns are noise; both sides are a dozen nanoseconds there
-and run-to-run spread swamps the gap. Do not trust either column to three figures.
+The `drafting` rows carry a fixed cost of about a hundred nanoseconds beyond the checks they
+run — a draft opened, a seal performed, the draft's record of which checks pass consulted — and
+still come in under the hand-rolled side at one write. So does a write to a sealed value with
+checks on the field: the checks reading a field are known when the type is compiled, and each is
+called with the fields it named directly rather than looking them up out of the value, which is
+what the hand-rolled twin has to do. The rows under 20 ns are noise; both sides are a dozen
+nanoseconds there and run-to-run spread swamps the gap. Do not trust either column to three
+figures.
 
 To re-measure:
 
@@ -669,5 +670,7 @@ To re-measure:
 clojure -M:bench -e "(require 'recognitum.bench)(recognitum.bench/run)"
 ```
 
-`recognitum.cost-test` holds four of these rows to a multiple of the hand-rolled side, so a
-change that makes a validation call pay a large fixed cost fails the suite.
+`recognitum.cost-test` holds most of these rows to a multiple of the hand-rolled side, and two
+more — sealing a draft with one check left to run, and a group call against the same values one
+at a time — to a multiple of the library's own cheapest path to the same work, so a change that
+makes a validation call pay a large fixed cost fails the suite.

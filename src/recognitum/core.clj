@@ -2315,10 +2315,10 @@
           :shape-bits  ~shape-bits
           :pure-bits   ~pure-bits
           :io-bits     ~io-bits
-          ;; Per check, indexed by its own bit: the shape validations it waits on, which is
-          ;; `:shape-mask` again in the form the runner tests one check against the live
-          ;; record with; and `:closures`, everything it waits on transitively, which is what
-          ;; a call unions to find what has to run before what it was asked for.
+          ;; Two arrays indexed by check index: the shape validations each check waits on,
+          ;; which is its `:shape-mask` where an array read is cheaper than the entry in
+          ;; `:checks`; and everything it waits on transitively, which is what a call unions
+          ;; to find what has to run before what it was asked for.
           :shape-masks (long-array ~(mapv :shape-mask parsed))
           :closures    (long-array ~closures)
           ;; check or certificate name -> `{:mask :closure}`: the checks that name covers and
