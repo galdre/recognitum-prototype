@@ -9,18 +9,19 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
-- [ ] **I11. Protocol methods are read-only by default; a method opts in to a draft receiver.**
-      Ruled direction. Today every method installed on the sealed type opens a draft, pushes a
-      thread binding, runs the body, pops, and seals, whether or not the body writes. A pure
-      read such as `total-payout` pays all of that. New rule: on the sealed type an unmarked
-      method receives the sealed value and its body runs as written, with no draft, no binding,
-      no seal; a marked method gets today's behaviour. A body that writes without the mark
-      still produces a valid value, because a write to a sealed value runs its checks, so the
-      default is safe and only slower. Open points below under "Needs a ruling". Steps, each
-      its own commit: (1) bench rows and a `cost-test` bound for a read-only method and a
-      writing method on a sealed value against the hand-rolled twin, measured before the
-      change; (2) the change; (3) re-measure and update the README table; (4) README protocol
-      section and the `Heist` example marked accordingly.
+- [ ] **I11. Protocol methods are read-only by default; a drafting method opts in.**
+      Ruled. Most methods are getters and never return a modified receiver, so wrapping
+      every method was a workaround. A method that returns a modified `this` is a
+      **drafting method**, marked `^:drafting (add-member [h who cut] ...)` or, also
+      accepted, `(^:drafting add-member ...)`; no definition-map section. An unmarked method
+      on the sealed type receives the sealed value and its body runs as written, no draft,
+      no binding, no seal; a drafting method gets today's wrapper; the draft type is
+      unchanged for both. `unsealed` in an unmarked method reaches a sealed value and throws
+      the existing `:not-a-draft`; documented, not guarded. Four commits: (1) bench rows and
+      cost-test bounds for a read and a single-field write on a sealed value against the
+      hand-rolled twin, measured before the change; (2) tests, failing; (3) the change,
+      `Heist` marked (`rename`, `add-member`, `promote`, `revise`, `begin-revision`), the
+      vocabulary entry, docstrings; (4) re-measure, README table and protocol section.
 
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
       - Delete `recognitum.core/check-id` and `owned-here?`: defined, never called.
@@ -70,15 +71,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ## Needs a ruling
 
-- [ ] **I11 marker spelling.** Metadata on the method name, `(^:drafting add-member [h who cut] ...)`,
-      is the recommendation: it names what the wrapper does (opens a draft) rather than what
-      the body does (writes), and a read-only-marked body that writes is still correct. The
-      alternative is a `:drafting-methods #{add-member ...}` section in the definition map,
-      which keeps the protocol forms identical to `defrecord`'s.
-- [ ] **I11 and `unsealed` in an unmarked method.** On the sealed type there is no draft to
-      return, so `(unsealed (assoc h ...))` throws `::not-a-draft` at run time. Recommendation:
-      accept that, document it in the `unsealed` docstring and the README, and do not scan
-      bodies for the symbol.
 - [ ] **Renames of private functions**, parked until galdre has read the code. The
       standard's vocabulary section says names carry the vocabulary furthest and renaming
       is part of the cleanup. Candidates, with what each does: `wants` (a mask plus its
