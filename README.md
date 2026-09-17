@@ -132,13 +132,13 @@ Every entry is resolved while the macro runs. A symbol that is not a declared fi
 that is not a declared io-dep, a name used for both a check and an io-dep, or a cycle among
 io-deps is a compile error naming the offender.
 
-There are three kinds of check, and the arglist says which kind one is. A **shape validation** is
-a check named after a field: `::cuts` says what a well-formed `cuts` is. An **invariant
-validation** is a pure check not named after a field: `::cuts-sum-to-take` is a relationship
-between `take` and `cuts` that holds of every valid `Heist`. An **external validation** is a
-check that names an io-dep: `::crew-is-vouched-for` is a relationship between this `Heist` and
-what the house has on file, true as of when it ran. (Refinement, invariant, effectful, in the
-functional vocabulary.)
+There are three kinds of check. A **shape validation** states the shape of a single field, what
+a well-formed value of it is on its own: `::cuts` says what a well-formed `cuts` is. It is named
+after the field and reads only that field. An **invariant validation** states a relational
+invariant across the fields: `::cuts-sum-to-take` is a relationship between `take` and `cuts`
+that holds of every valid `Heist`. An **external validation** states a relational invariant
+between the value and an external resource, read through an io-dep: `::crew-is-vouched-for` is
+a relationship between this `Heist` and what the house has on file, true as of when it ran.
 
 ### Shape validations
 

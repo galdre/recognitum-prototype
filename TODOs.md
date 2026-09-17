@@ -90,13 +90,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ## Needs a ruling
 
-- [ ] **The definition of "invariant validation".** The namespace docstring and the README say
-      "a pure check over more than one field". A pure check over one field that is not named
-      after it, such as `::valid-name ([name] ...)`, is classified by the code as an invariant
-      validation (second phase) and is not covered by that sentence. "A pure check not named
-      after a field" matches the code. The README and the namespace docstring now both carry
-      the code-accurate wording (3c4da2e); revert both if the ruled definition was meant to
-      exclude that case.
 - [ ] **README facts that restate a docstring.** After the passes, the README's three io-dep
       fetch rules, its `unsealed` paragraph, and its constructor paragraph restate the
       `defrecord`, `unsealed`, and generated `map->` docstrings nearly word for word. The
