@@ -38,13 +38,27 @@
   [form]
   (binding [*ns* @scratch] (eval form)))
 
-(defn- template-method-names
-  "Every method name in the body of the template both generated types are built on, read out
-  of the var itself: `potemkin.types/def-abstract-type` leaves the quoted `deftype` form
-  there, and the body is interface names interleaved with method forms."
+(defn- template-method-arities
+  "Every method in the body of the template both generated types are built on, as a
+  `[name arity]` pair whose arity counts the receiver, read out of the var itself:
+  `potemkin.types/def-abstract-type` leaves the quoted `deftype` form there, and the body is
+  interface names interleaved with method forms."
   []
   (let [[_deftype _name _fields & body] rc/AbstractRecord]
-    (into #{} (comp (filter seq?) (map first)) body)))
+    (into #{} (comp (filter seq?) (map (fn [[nm args]] [nm (count args)]))) body)))
+
+(defn- arglist
+  "A method arglist of `n` distinct parameters, the receiver first."
+  [n]
+  (vec (repeatedly n #(gensym "p"))))
+
+(defn- refusal
+  "The ex-data of the refusal a one-method definition of `mname` at `arity` throws, or nil."
+  [mname arity type-name]
+  (compile-data (list 'recognitum.core/defrecord (gensym "Reserved")
+                      '[a] {}
+                      type-name
+                      (list mname (arglist arity) 1))))
 
 ;;; ---------------------------------------- the model ----------------------------------------
 
@@ -456,13 +470,12 @@
 (deftest a-method-named-for-the-map-interface-does-not-compile
   ;; A method called `keys` or `assoc` would silently replace the one that makes the type
   ;; behave as a map -- the generated type would still compile and quietly stop being one.
-  (doseq [m '[get assoc dissoc keys meta with-meta empty cons]]
-    (let [e (compile-data (list 'recognitum.core/defrecord (gensym "Reserved")
-                                '[a] {}
-                                'recognitum.protocol-test/Described
-                                (list m '[x] 1)))]
+  (doseq [[m arity] '[[get 1] [assoc 1] [dissoc 1] [keys 1] [meta 1] [with-meta 1] [empty 1]
+                      [cons 2]]]
+    (let [e (refusal m arity 'recognitum.protocol-test/Described)]
       (is (= ::rec/reserved-method (:error e)) (str m))
-      (is (= m (:method e)) (str m)))))
+      (is (= m (:method e)) (str m))
+      (is (= arity (:arity e)) (str m)))))
 
 (deftest the-definition-map-is-still-required-before-the-implementations
   ;; A protocol name where the definition map goes is not a definition map, and treating it
@@ -483,46 +496,42 @@
 
 (deftest a-method-named-for-anything-the-template-defines-does-not-compile
   ;; The template answers some thirty methods, not just the eight of the map interface
-  ;; above. `deftype+` merges a body into the template by name and lets the later definition
-  ;; win, so any of these would take the template's place and still compile.
-  (doseq [m '[seq count equiv hasheq invoke valAt hashCode equals iterator entrySet
-              meta* get* assoc*]]
-    (let [tname (gensym "Template")
-          e     (compile-data (list 'recognitum.core/defrecord tname
-                                    '[a] {}
-                                    'recognitum.protocol-test/Described
-                                    (list m '[x] 1)))]
-      (is (= ::rec/reserved-method (:error e)) (str m))
-      (is (= m (:method e)) (str m))
-      (is (= tname (:record e)) (str m)))))
+  ;; above. `deftype+` merges a body into the template by name and parameter list and lets
+  ;; the later definition win, so any of these would take the template's place and still
+  ;; compile.
+  (doseq [[m arity] '[[seq 1] [count 1] [equiv 2] [hasheq 1] [invoke 2] [valAt 2] [valAt 3]
+                      [hashCode 1] [equals 2] [iterator 1] [entrySet 1] [coll-reduce 2]
+                      [coll-reduce 3] [meta* 1] [get* 1] [assoc* 1]]]
+    (let [e (refusal m arity 'recognitum.protocol-test/Described)]
+      (is (= ::rec/reserved-method (:error e)) (str m " " arity))
+      (is (= m (:method e)) (str m " " arity))
+      (is (= arity (:arity e)) (str m " " arity)))))
 
 (deftest a-method-named-for-one-the-expansion-writes-itself-does-not-compile
   ;; The thunk a keyword call site caches on the sealed type, and the two methods a draft's
   ;; verdicts are read and written through.
-  (doseq [m '[getLookupThunk verdict-mask record-verdict!]]
-    (let [tname (gensym "Generated")
-          e     (compile-data (list 'recognitum.core/defrecord tname
-                                    '[a] {}
-                                    'recognitum.protocol-test/Described
-                                    (list m '[x] 1)))]
-      (is (= ::rec/reserved-method (:error e)) (str m))
-      (is (= m (:method e)) (str m))
-      (is (= tname (:record e)) (str m)))))
+  (doseq [[m arity] '[[getLookupThunk 2] [verdict-mask 1] [record-verdict! 3]]]
+    (let [e (refusal m arity 'recognitum.protocol-test/Described)]
+      (is (= ::rec/reserved-method (:error e)) (str m " " arity))
+      (is (= m (:method e)) (str m " " arity))
+      (is (= arity (:arity e)) (str m " " arity)))))
 
-(deftest the-refusal-carries-every-name-it-refuses
-  (let [reserved (:reserved (compile-data '(recognitum.core/defrecord Listed
-                                             [a] {}
-                                             recognitum.protocol-test/Described
-                                             (keys [x] 1))))]
+(deftest the-refusal-carries-everything-it-refuses
+  (let [{:keys [reserved reserved-names]}
+        (compile-data '(recognitum.core/defrecord Listed
+                         [a] {}
+                         recognitum.protocol-test/Described
+                         (keys [x] 1)))]
     (testing "the map interface a body is written in terms of, under both spellings"
-      (is (every? reserved '[get assoc dissoc keys meta with-meta empty cons
-                             get* assoc* dissoc* keys* meta* with-meta* empty*])))
-    (testing "every method the template defines"
-      (is (= #{} (into #{} (remove reserved) (template-method-names)))))
+      (is (every? reserved-names '[get assoc dissoc keys meta with-meta empty
+                                   get* assoc* dissoc* keys* meta* with-meta* empty*])))
+    (testing "every method the template defines, at the arity it defines it at"
+      (is (= #{} (into #{} (remove reserved) (template-method-arities)))))
     (testing "the three the expansion writes into the generated bodies"
-      (is (every? reserved '[getLookupThunk verdict-mask record-verdict!])))
+      (is (every? reserved '[[getLookupThunk 2] [verdict-mask 1] [record-verdict! 3]])))
     (testing "and not toString, which the template leaves to Object as a record does"
-      (is (not (contains? reserved 'toString))))))
+      (is (not (contains? reserved-names 'toString)))
+      (is (empty? (filter (comp #{'toString} first) reserved))))))
 
 (deftest a-method-the-template-does-not-define-still-installs
   ;; `toString` is the one name in the map and record interfaces the template leaves alone,
@@ -534,3 +543,84 @@
                          (toString [x] (str "a=" (:recognitum.protocol-scratch/a x)))))))
   (is (= "a=1" (str (in-scratch '(->Stringy 1)))))
   (is (= "a=1" (str (in-scratch '(recognitum.core/draft (->Stringy 1)))))))
+
+;;; ------------------- a reserved name at an arity the template leaves open -------------------
+
+(definterface Shelfish
+  ;; Declared as an interface rather than a protocol: a protocol would intern `count`, `seq`,
+  ;; `values` and `remove` as vars here and shadow the ones the rest of this file calls.
+  (count [unit])
+  (seq [depth])
+  (values [as-of])
+  ;; Three parameters rather than two, because `java.util.Map` declares a two-argument
+  ;; `remove` returning `boolean`: a method of that name and arity on a type implementing
+  ;; `Map` compiles to bytecode the JVM rejects, on a `clojure.core/defrecord` as much as
+  ;; here, so the library has nothing to prove at that arity.
+  (remove [who reason recorded-at]))
+
+(deftest a-name-the-template-carries-installs-at-an-arity-the-template-leaves-open
+  (is (nil? (compiles
+             '(recognitum.core/defrecord Shelf
+                [items]
+                {:checks {:recognitum.protocol-scratch/items vector?}}
+                recognitum.protocol_test.Shelfish
+                (count [s unit]
+                  [unit (count (:recognitum.protocol-scratch/items s))])
+                (seq [s depth]
+                  [depth (first (:recognitum.protocol-scratch/items s))])
+                (values [s as-of]
+                  [as-of (:recognitum.protocol-scratch/items s)])
+                (remove [s who reason recorded-at]
+                  [who reason recorded-at])))))
+  (let [sealed (in-scratch '(->Shelf [:a :b :c]))]
+    (doseq [[what ^Shelfish v] [["on the sealed value" sealed]
+                                ["on its draft" (rec/draft sealed)]]]
+      (testing what
+        (is (= [:apples 3] (.count v :apples)))
+        (is (= [2 :a] (.seq v 2)))
+        (is (= [:now [:a :b :c]] (.values v :now)))
+        (is (= [:zoe "moved out" :friday] (.remove v :zoe "moved out" :friday)))))
+    (testing "and what the same names mean to a map is what it was"
+      (is (= 1 (count sealed)) "count of the receiver alone is still the field count")
+      (is (= {:recognitum.protocol-scratch/items [:a :b :c]} (into {} (seq sealed)))
+          "and seq of it alone is still the entries")
+      (is (= 1 (count (rec/draft sealed))))
+      (is (= {:recognitum.protocol-scratch/items [:a :b :c]}
+             (into {} (seq (rec/draft sealed))))))))
+
+(deftest a-method-at-an-arity-the-template-answers-does-not-compile
+  ;; The counterpart: `count` and `seq` of the receiver alone are the template's own.
+  (doseq [[m arity] '[[count 1] [seq 1] [values 1] [remove 2]]]
+    (let [e (refusal m arity 'recognitum.protocol_test.Shelfish)]
+      (is (= ::rec/reserved-method (:error e)) (str m " " arity))
+      (is (= m (:method e)) (str m " " arity))
+      (is (= arity (:arity e)) (str m " " arity)))))
+
+(deftest a-method-named-for-one-of-the-renamed-seven-does-not-compile-at-any-arity
+  ;; The map contract is renamed by name alone, whatever arity the body wrote it at, so none
+  ;; of these has an arity of its own the way `count` and `seq` do.
+  (doseq [m     '[keys dissoc with-meta get*]
+          arity [1 2 3]]
+    (let [e (refusal m arity 'recognitum.protocol-test/Described)]
+      (is (= ::rec/reserved-method (:error e)) (str m " " arity))
+      (is (= m (:method e)) (str m " " arity))
+      (is (= arity (:arity e)) (str m " " arity)))))
+
+(deftest invoke-is-refused-at-the-two-arities-a-map-answers-and-free-above-them
+  (doseq [arity [2 3]]
+    (let [e (refusal 'invoke arity 'clojure.lang.IFn)]
+      (is (= ::rec/reserved-method (:error e)) (str "invoke " arity))
+      (is (= 'invoke (:method e)) (str "invoke " arity))
+      (is (= arity (:arity e)) (str "invoke " arity))))
+  (is (nil? (compiles '(recognitum.core/defrecord Sum
+                         [tally]
+                         {:checks {:recognitum.protocol-scratch/tally int?}}
+                         clojure.lang.IFn
+                         (invoke [s a b c]
+                           (+ (:recognitum.protocol-scratch/tally s) a b c))))))
+  (let [sealed (in-scratch '(->Sum 1))]
+    (is (= 7 (sealed 1 2 3)))
+    (is (= 7 ((rec/draft sealed) 1 2 3)))
+    (testing "and the calls a map answers still read a key"
+      (is (= 1 (sealed :recognitum.protocol-scratch/tally)))
+      (is (= :missing (sealed :nope :missing))))))
