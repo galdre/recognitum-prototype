@@ -1,16 +1,18 @@
 (ns recognitum.protocol-test
   "Protocol implementations: one body, installed on both generated types. On the draft type
-  the body runs as written. On the sealed type the method opens a draft of the receiver,
-  runs the body against that, and seals a draft of this type that it returns; anything
-  else passes through untouched. `unsealed` marks a draft a method returns as one not to
-  seal, and both implementations unwrap it. `(unsealed x)` throws where `x` is not a draft,
-  and the method throws where it is a draft of another type. `drafting` and `seal` unwrap
-  the marker and seal the draft inside it."
+  the body runs as written. On the sealed type a method marked `^:drafting` opens a draft of
+  the receiver, runs the body against that, and seals a draft of this type that it returns;
+  an unmarked method receives the sealed value and runs its body as written. Either way
+  anything but a draft of this type passes through untouched. `unsealed` marks a draft a
+  method returns as one not to seal, and both implementations unwrap it. `(unsealed x)`
+  throws where `x` is not a draft, and the method throws where it is a draft of another
+  type. `drafting` and `seal` unwrap the marker and seal the draft inside it."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.collections :as rc]
    [recognitum.core :as rec]
-   [recognitum.internal :as internal]))
+   [recognitum.internal :as internal]
+   [recognitum.roster :as roster]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing."
   [f]
@@ -91,6 +93,7 @@
   Ledgerish
   (balance [l] (- (::credits l) (::debits l)))
 
+  ^:drafting
   (spend [l amount]
     ;; Neither write is legal on its own: the first breaks ::in-the-black and the second
     ;; repairs it. On a sealed value the first `assoc` alone would throw.
@@ -98,8 +101,10 @@
         (assoc ::debits (+ (::debits l) amount))
         (assoc ::credits (+ (::credits l) amount))))
 
+  ^:drafting
   (spend-twice [l a b] (spend (spend l a) b))
 
+  ^:drafting
   (receiver-report [l]
     {:draft?    (rec/draft? l)
      :sealed?   (rec/sealed? l)
@@ -107,14 +112,18 @@
      :of-type?  (rec/of-type? Ledger l)
      :owner     (::owner l)})
 
+  ^:drafting
   (me [l] (rec/unsealed l))
 
+  ^:drafting
   (revise [l who] (rec/unsealed (assoc l ::owner who)))
 
   (hand-back [l other] other)
 
+  ^:drafting
   (smuggle [l other] (rec/unsealed (rec/draft other)))
 
+  ^:drafting
   (nested [l amount]
     (rec/drafting [x l]
       (-> x
@@ -146,7 +155,11 @@
   {:checks {::tag string?}}
 
   Counting
+  ;; Marked, so that the two recurring bodies sit inside the ownership frame the wrapper
+  ;; pushes, which is the placement `recur` has to survive.
+  ^:drafting
   (countdown [c n]     (if (pos? n) (recur (dec n)) [:done (::tag c)]))
+  ^:drafting
   (sum-down  [c n acc] (if (pos? n) (recur (dec n) (+ acc n)) [:sum acc (::tag c)]))
   (no-recur  [c n]     [:plain n (::tag c)])
   (label     [c]       (::tag c)))
@@ -479,6 +492,205 @@
            (:error (err #(rec/drafting [x led] (rec/unsealed (assoc x ::owner 1))))))))
   (testing "seal itself ignores the marker too"
     (is (rec/sealed? (rec/seal (rec/unsealed (rec/draft led)))))))
+
+;;; ------------------------------- drafting methods -------------------------------
+
+;; Every method below is written twice, with the mark and without, so that a pair differs in
+;; nothing but the mark.
+(defprotocol Noting
+  (here             [n]   "the receiver, from an unmarked body")
+  (here-drafting    [n]   "the receiver, from a marked one")
+  (retitle          [n s] "one write, unmarked")
+  (retitle-drafting [n s] "the same write, marked")
+  (loosen           [n]   "a write returned `unsealed`, unmarked")
+  (loosen-drafting  [n]   "the same body, marked")
+  (grow-directly    [n k] "two writes, the first of which breaks an invariant, unmarked")
+  (grow             [n k] "the same two, marked on the method form")
+  (grow-by-the-name [n k] "the same two, marked on the method name")
+  (grow-nested      [n k] "the first write inside a `drafting` of its own, marked")
+  (step-down        [n k] "recurs, unmarked"))
+
+(rec/defrecord Note
+  [title pages read]
+
+  {:checks
+   {::title string?
+    ::pages ([pages] (and (int? pages) (not (neg? pages))))
+    ::read  ([read]  (and (int? read) (not (neg? read))))
+    ::read-fits ("no more pages read than the note has"
+                 [pages read] (and (int? pages) (int? read) (<= read pages)))}}
+
+  Noting
+  (here [n]
+    {:draft?    (rec/draft? n)
+     :sealed?   (rec/sealed? n)
+     :instance? (instance? Note n)
+     :of-type?  (rec/of-type? Note n)
+     :title     (::title n)})
+
+  ^:drafting
+  (here-drafting [n]
+    {:draft?    (rec/draft? n)
+     :sealed?   (rec/sealed? n)
+     :instance? (instance? Note n)
+     :of-type?  (rec/of-type? Note n)
+     :title     (::title n)})
+
+  (retitle [n s] (assoc n ::title s))
+  ^:drafting
+  (retitle-drafting [n s] (assoc n ::title s))
+
+  (loosen [n] (rec/unsealed (assoc n ::title "loose")))
+  ^:drafting
+  (loosen-drafting [n] (rec/unsealed (assoc n ::title "loose")))
+
+  ;; The first write leaves more pages read than the note has, so it is a state no single
+  ;; write to a sealed value reaches and the second write repairs it.
+  (grow-directly [n k]
+    (-> n
+        (assoc ::read (+ (::read n) k))
+        (assoc ::pages (+ (::pages n) k))))
+
+  ^:drafting
+  (grow [n k]
+    (-> n
+        (assoc ::read (+ (::read n) k))
+        (assoc ::pages (+ (::pages n) k))))
+
+  (^:drafting grow-by-the-name [n k]
+    (-> n
+        (assoc ::read (+ (::read n) k))
+        (assoc ::pages (+ (::pages n) k))))
+
+  ^:drafting
+  (grow-nested [n k]
+    (-> (rec/drafting [x n] (assoc x ::read (+ (::read x) k)))
+        (assoc ::pages (+ (::pages n) k))))
+
+  (step-down [n k] (if (pos? k) (recur (dec k)) [:done (::title n)])))
+
+(def note (->Note "a note" 10 10))
+
+(defprotocol Enlisting
+  (enlist          [c who] "a write to a draft-only field, unmarked")
+  (enlist-drafting [c who] "the same write, marked"))
+
+(rec/defrecord Crew
+  [lead members]
+
+  {:options {:io-limited true}
+
+   :checks
+   {::lead    keyword?
+    ::members ([members] (and (set? members) (every? keyword? members)))
+    ::all-on-file ("everyone on the crew is someone the house knows"
+                   [::known members] (= (set known) (set members)))}
+
+   :io-deps
+   {::known ([members] (roster/fetch-roster members))}}
+
+  Enlisting
+  (enlist [c who] (assoc c ::members (conj (::members c) who)))
+  ^:drafting
+  (enlist-drafting [c who] (assoc c ::members (conj (::members c) who))))
+
+(def crew (->Crew :charlie #{:charlie :lyle}))
+
+(deftest an-unmarked-method-on-the-sealed-type-receives-the-sealed-value
+  (is (= {:draft? false :sealed? true :instance? true :of-type? true :title "a note"}
+         (here note))
+      "so a body asking `instance?` is answered the way it reads")
+  (testing "and the method answers with what the body answered"
+    (is (= [:done "a note"] (step-down note 0)))))
+
+(deftest an-unmarked-body-that-writes-answers-with-a-sealed-value
+  (let [n (retitle note "another note")]
+    (is (rec/sealed? n))
+    (is (instance? Note n))
+    (is (= "another note" (::title n))))
+  (testing "and a write the checks refuse throws, so the default cannot produce an invalid value"
+    (let [e (err #(retitle note 1))]
+      (is (= ::rec/check-failed (:error e)))
+      (is (= [::title] (keys (:failures e)))))))
+
+(deftest an-unmarked-body-reaches-no-state-a-single-write-could-not
+  (let [e (err #(grow-directly note 5))]
+    (is (= ::rec/check-failed (:error e)))
+    (is (= [::read-fits] (keys (:failures e)))))
+  (testing "the same body marked is handed a draft, so it may"
+    (let [n (grow note 5)]
+      (is (rec/sealed? n))
+      (is (= 15 (::read n)))
+      (is (= 15 (::pages n))))))
+
+(deftest an-unmarked-body-writing-a-draft-only-field-is-refused-as-any-write-is
+  (let [e (err #(enlist crew :left-ear))]
+    (is (= ::rec/io-limited (:error e)))
+    (is (= 'Crew (:record e)))
+    (is (= ::members (:key e))))
+  (testing "and marked it is handed a draft, which is where that write belongs"
+    (let [c (enlist-drafting crew :left-ear)]
+      (is (rec/sealed? c))
+      (is (= #{:charlie :lyle :left-ear} (::members c))))))
+
+(deftest the-mark-is-read-from-the-method-form-and-from-the-method-name
+  ;; Unmarked, this body is refused at its first write, so that both spellings succeed is
+  ;; what says the mark was read.
+  (let [a (grow note 5)
+        b (grow-by-the-name note 5)]
+    (is (rec/sealed? a))
+    (is (rec/sealed? b))
+    (is (= a b))))
+
+(deftest a-drafting-method-still-receives-a-draft-on-the-sealed-type
+  (is (= {:draft? true :sealed? false :instance? false :of-type? true :title "a note"}
+         (here-drafting note)))
+  (testing "and seals the draft the body returns"
+    (let [n (grow note 5)]
+      (is (rec/sealed? n))
+      (is (= 15 (::read n)))))
+  (testing "a drafting inside the body passes its draft straight through, so only the wrapper seals"
+    ;; The inner form's draft is invalid on its own: had it sealed, the write after it would
+    ;; never have run.
+    (let [n (grow-nested note 5)]
+      (is (rec/sealed? n))
+      (is (= 15 (::read n)))
+      (is (= 15 (::pages n))))))
+
+(deftest unsealed-in-an-unmarked-body-is-handed-a-sealed-value-and-refuses-it
+  (let [e (err #(loosen note))]
+    (is (= ::rec/not-a-draft (:error e)))
+    (is (rec/sealed? (:value e)) "what it was handed is the value the write produced")
+    (is (= "loose" (::title (:value e)))))
+  (testing "in a drafting method it hands back a draft owned by no form"
+    (let [d (loosen-drafting note)]
+      (is (rec/draft? d))
+      (is (nil? (internal/owner-of d)))
+      (is (= "loose" (::title d))))))
+
+(deftest on-the-draft-type-a-marked-and-an-unmarked-method-are-the-same
+  (let [d      (rec/draft note)
+        report {:draft? true :sealed? false :instance? false :of-type? true :title "a note"}]
+    (is (= report (here d)))
+    (is (= report (here-drafting d)))
+    (testing "a write answers with a draft either way, and nothing is sealed"
+      (doseq [[what x] [["unmarked" (retitle d "x")] ["marked" (retitle-drafting d "x")]]]
+        (is (rec/draft? x) what)
+        (is (not (rec/sealed? x)) what)
+        (is (= "x" (::title x)) what)))
+    (testing "and the body runs as written, so a broken invariant is left broken"
+      (doseq [[what x] [["unmarked" (grow-directly d 5)] ["marked" (grow d 5)]]]
+        (is (rec/draft? x) what)
+        (is (= 15 (::read x)) what)
+        (is (= 15 (::pages x)) what)))
+    (testing "and `unsealed` is unwrapped either way"
+      (is (rec/draft? (loosen d)))
+      (is (rec/draft? (loosen-drafting d))))))
+
+(deftest recur-works-in-an-unmarked-method-on-both-types
+  (is (= [:done "a note"] (step-down note 3)))
+  (is (= [:done "a note"] (step-down note 0)))
+  (is (= [:done "a note"] (step-down (rec/draft note) 3))))
 
 ;;; ------------------------- everything else about the type still holds -------------------------
 

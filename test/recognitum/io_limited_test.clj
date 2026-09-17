@@ -126,7 +126,9 @@
    {::croster ([crew] (do (note! ::croster) (roster/fetch-roster crew)))}}
 
   Jobbish
+  ^:drafting
   (rename [j s] (assoc j ::name s))
+  ^:drafting
   (recrew [j c] (assoc j ::crew c)))
 
 (def ^:private job (->Job "The Italian Job" #{:charlie :lyle} {:charlie 1 :lyle 1} :anything))
