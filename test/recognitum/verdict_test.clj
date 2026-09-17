@@ -282,9 +282,8 @@
   (testing "the full width itself is fine"
     (is (nil? (compiles (list 'recognitum.core/defrecord 'WideChecks
                               (n-fields 1) {:checks (n-checks 64)})))))
-  (testing "a type of 21 fields does not compile either: its positional constructor would
-            take 21 parameters, and Clojure allows 20"
-    (is (some? (compiles (list 'recognitum.core/defrecord 'WideFields (n-fields 21) {}))))))
+  (testing "while the field count is under no such limit"
+    (is (nil? (compiles (list 'recognitum.core/defrecord 'WideFields (n-fields 21) {}))))))
 
 (deftest the-highest-bit-still-answers
   ;; 64 checks over one field: the last of them owns the sign bit, which is where an
