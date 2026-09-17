@@ -170,6 +170,29 @@
   (invoke [this k default]
     (potemkin.collections/get* this k default)))
 
+(def ^:private method-renames
+  "A method name as a [[def-record-type]] body writes it -> the name [[AbstractRecord]] calls
+  it under. The six of the map contract, and `empty`, whose template answer throws."
+  '{get       get*
+    assoc     assoc*
+    dissoc    dissoc*
+    keys      keys*
+    empty     empty*
+    with-meta with-meta*
+    meta      meta*})
+
+(def template-methods
+  "Every method name a type defined by [[def-record-type]] already carries: those
+  [[AbstractRecord]] defines, and both spellings of each name the macro renames. `deftype+`
+  merges a body into the template by name and lets the later definition win, so a body that
+  defines one of these replaces the template's answer rather than adding to it."
+  ;; `pt/def-abstract-type` leaves the body unevaluated in the var, as `(deftype <name> []
+  ;; <body>)`, and the body is interface names interleaved with method forms.
+  (let [[_deftype _name _fields & body] AbstractRecord]
+    (into (into #{} cat method-renames)
+          (comp (filter seq?) (map first))
+          body)))
+
 (defmacro def-record-type
   "`potemkin/def-map-type` over [[AbstractRecord]] rather than `AbstractMap`.
 
@@ -185,19 +208,12 @@
   -- and anything else the type defines or overrides. What differs is the template they are
   merged into."
   [name params & body]
-  (let [fns '{get       get*
-              assoc     assoc*
-              dissoc    dissoc*
-              keys      keys*
-              empty     empty*
-              with-meta with-meta*
-              meta      meta*}
-        classname (with-meta (symbol (str (namespace-munge *ns*) "." name)) (meta name))]
+  (let [classname (with-meta (symbol (str (namespace-munge *ns*) "." name)) (meta name))]
     `(do
        (pt/deftype+ ~name ~params recognitum.collections/AbstractRecord
          ~@(map
             #(if (sequential? %)
-               (list* (get fns (first %) (first %)) (rest %))
+               (list* (get method-renames (first %) (first %)) (rest %))
                %)
             body))
        ~classname)))

@@ -1551,21 +1551,29 @@
     (doseq [d deps] (visit (:name d) []))
     @order))
 
-(def ^:private reserved-methods
-  "The method names the generated types already carry, and must keep. A protocol method
-  spelled one of these would compile, and would replace the implementation that makes a value
-  behave as a map or the one holding a draft's verdicts."
-  '#{get assoc dissoc keys meta with-meta empty cons getLookupThunk
-     verdict-mask record-verdict!})
+(defn- refuse-reserved-methods!
+  "Throw where any of `impl-forms` is a method named in `reserved`, the names the generated
+  types already carry. The name alone decides it: `deftype+` merges by name, so a method of
+  a reserved name replaces the one the template or the expansion wrote, at any arity, and
+  the type still compiles."
+  [tname reserved impl-forms]
+  (doseq [[kind form] impl-forms
+          :when (and (= kind :method) (contains? reserved (first form)))]
+    (throw (ex-info (format (str "%s implements %s, which is one of the methods that make a "
+                                 "%s behave as a map or a record -- a method of that name "
+                                 "would replace it")
+                            tname (first form) tname)
+                    {:error ::reserved-method :record tname :method (first form)
+                     :form form :reserved reserved}))))
 
 (defn- parse-impls
   "`defrecord`'s trailing forms -> `[:type sym]` and `[:method form]` pairs, in the order they
   were written.
 
   A form that is neither a protocol or interface name nor a method implementation, a method
-  written before any such name, an implementation spelled like one of the
-  [[reserved-methods]], and an arglist with no receiver are each refused here with the
-  offender named."
+  written before any such name, and an arglist with no receiver are each refused here with
+  the offender named. A method's name is not among what this refuses; that is
+  [[refuse-reserved-methods!]]'s question."
   [tname impls]
   (let [bad! (fn [form why]
                (throw (ex-info (format "%s: %s %s" tname (pr-str form) why)
@@ -1589,13 +1597,6 @@
             (when (empty? (second form))
               (bad! form (str "has an empty arglist -- a method implementation's first "
                               "parameter is the receiver")))
-            (when (contains? reserved-methods (first form))
-              (throw (ex-info (format (str "%s implements %s, which is one of the methods "
-                                           "that make a %s behave as a map -- a protocol "
-                                           "method of that name would replace it")
-                                      tname (first form) tname)
-                              {:error ::reserved-method :record tname :method (first form)
-                               :form form :reserved reserved-methods})))
             [(conj acc [:method form]) named?])
 
           :else
@@ -1703,6 +1704,10 @@
   value, a draft of some other type, all pass through untouched. The receiver is a draft in
   both cases, so `(instance? Heist h)` inside a body is false where it was meant to hold and
   [[of-type?]] is the question that was meant. [[unsealed]] opts a return out of the seal.
+
+  A method may not be named for one the generated types already carry -- `get`, `assoc`,
+  `seq`, `count`, `iterator` and the rest of the map and record interfaces -- since it would
+  replace that one rather than add to it. `toString` is not among them.
 
   Both constructors this generates, `->Type` and `map->Type`, validate; there is no
   unvalidated one."
@@ -1965,7 +1970,131 @@
                         `(let [~newsym ~xform]
                            (~(internal 'run-io-checks!) ~model-sym ~newsym ~io)
                            ~newsym)
-                        xform)))]
+                        xform)))
+        ;; The two generated bodies. Built here rather than written inline in the expansion
+        ;; below, so that the names they define are known before a method the caller wrote is
+        ;; allowed to take one.
+        sealed-body
+        `[(~'get [_# ~ksym ~dsym]
+            (case ~ksym ~@(interleave ks fsyms) ~dsym))
+
+          ;; The checks naming this field are known here, so the pure ones are called with the
+          ;; new value and the untouched fields directly -- no lookup, and no allocation
+          ;; unless they all pass. The external validations run after, against the value they
+          ;; are about to admit. Nothing else gates them: every other check on a sealed value
+          ;; passed when it was made, and only this field has moved.
+          (~'assoc [_# ~ksym ~vsym]
+            (case ~ksym
+              ~@(mapcat (fn [j k]
+                          [k (if (limited? k)
+                               `(~(internal 'io-limited!) ~model-sym [~k])
+                               `(do ~(run-group (get index k)
+                                                (fn [i] (map (fn [d]
+                                                               (if (= d k) vsym (key->sym d)))
+                                                             (deps-of i))))
+                                    ~(with-io (get index k) (ctor-with j vsym))))])
+                        (range n) ks)
+              (~(internal 'unknown-key!) ~model-sym ~ksym)))
+
+          ;; A sealed value cannot hold an undeclared key, so dissoc of one is the ordinary
+          ;; map no-op. Only the declared fields are permanent.
+          (~'dissoc [this# ~ksym]
+            (case ~ksym
+              ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
+              this#))
+          (~'keys [_#] ~ks)
+          ;; The library's keys over the caller's. Here they are constant: a sealed value is
+          ;; one every check passed on.
+          (~'meta [_#] (~(internal 'merged-meta) ~mtasym ~sealed-meta))
+          (~'with-meta [_# ~mta2sym] (new ~tname ~@fsyms ~mta2sym))
+
+          (~'cons [_# ~osym]
+            ;; The entries are walked once, into the fields themselves: this type's fields are
+            ;; locals here, so an entry is a rebinding of one of them and the value is built
+            ;; out of what the loop carries. What a merge allocates is the value it returns.
+            (let [~essym (~(internal 'entries-of) ~model-sym ~osym)
+                  ~hsym  (loop [~cursym (seq ~essym)
+                                ~@(interleave fsyms fsyms)]
+                           (if ~cursym
+                             (let [~entsym (first ~cursym)
+                                   ~ksym   (nth ~entsym 0)
+                                   ~vsym   (nth ~entsym 1)]
+                               (case ~ksym
+                                 ~@(mapcat (fn [i k]
+                                             [k `(recur (next ~cursym)
+                                                        ~@(assoc fsyms i vsym))])
+                                           (range n) ks)
+                                 (~(internal 'unknown-key!) ~model-sym ~ksym)))
+                             (new ~tname ~@fsyms ~mtasym)))]
+              ;; After the walk, so every key is known to be declared before this runs.
+              ;; Emitted only where the option reaches a field.
+              ~@(when (seq limited)
+                  [`(~(internal 'io-limited-write!) ~model-sym (map first ~essym))])
+              (~(internal 'run-checks!) ~model-sym (:run-sealed ~model-sym) ~hsym
+               (~(internal 'checks-for) ~model-sym ~essym))
+              ~hsym))
+
+          ;; A keyword call site caches one of these and reads the field directly, as it does
+          ;; on a record; without it `(:k x)` pays the whole Keyword -> RT -> ILookup -> valAt
+          ;; walk.
+          clojure.lang.IKeywordLookup
+          (~'getLookupThunk [_# ~ksym]
+            (case ~ksym
+              ~@(mapcat (fn [[k f]]
+                          [k `(reify clojure.lang.ILookupThunk
+                                (~'get [~thunksym ~tgtsym]
+                                  (if (identical? (class ~tgtsym) ~tname)
+                                    (. ~tgthint ~(symbol (str "-" f)))
+                                    ~thunksym)))])
+                        (map vector ks fsyms))
+              nil))]
+        draft-body
+        `[;; A declared field is present whatever it holds, so `get` never reaches its default
+          ;; for one, as on a record.
+          (~'get [_# ~ksym ~dsym]
+            (case ~ksym
+              ~@(interleave ks fsyms)
+              (get ~extsym ~ksym ~dsym)))
+          ;; A write seeds the new draft's verdicts from this one's, clearing exactly the
+          ;; checks reading the field written. The seed is a snapshot: this draft keeps what
+          ;; it had established, so two versions say nothing about each other.
+          (~'assoc [_# ~ksym ~vsym]
+            (case ~ksym
+              ~@(mapcat (fn [i k]
+                          [k (dctor (assoc fsyms i vsym) extsym
+                                    `(bit-and ~vdsym ~(survives k)) ownsym mtasym)])
+                        (range n) ks)
+              ~(dctor fsyms `(assoc ~extsym ~ksym ~vsym) vdsym ownsym mtasym)))
+          (~'dissoc [this# ~ksym]
+            (case ~ksym
+              ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
+              (if (contains? ~extsym ~ksym)
+                ~(dctor fsyms `(dissoc ~extsym ~ksym) vdsym ownsym mtasym)
+                this#)))
+          ;; Every declared key, always: a draft is a record with a map beside it.
+          (~'keys [_#]
+            (if (seq ~extsym) (concat ~ks (keys ~extsym)) ~ks))
+          ;; The same two keys a sealed value answers with, read off the mask rather than
+          ;; fixed, and merged over the caller's metadata as they are there.
+          (~'meta [_#] (~(internal 'draft-meta) ~model-sym ~vdsym ~mtasym))
+          (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym vdsym ownsym mta2sym))
+          (~'cons [this# ~osym]
+            (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym))
+                    this# (~(internal 'entries-of) ~model-sym ~osym)))
+
+          ;; The only thing about a draft that changes in place, and the only two operations
+          ;; that may change it.
+          Verdicts
+          (~'verdict-mask [_#] ~vdsym)
+          (~'record-verdict! [_# ~bitsym ~passym]
+            (set! ~vdsym (long (if ~passym (bit-set ~vdsym ~bitsym) (bit-clear ~vdsym ~bitsym))))
+            ~passym)]
+        ;; Every name a method the caller wrote may not take: what the template already
+        ;; answers, and what the two bodies above define.
+        reserved  (into rc/template-methods
+                        (comp (filter seq?) (map first))
+                        (concat sealed-body draft-body))
+        _         (refuse-reserved-methods! tname reserved impl-forms)]
     `(do
        (declare ~model-sym)
        ~@(map (fn [i] `(def ~(with-meta (cvar i) {:private true}) ~(:fn (nth parsed i))))
@@ -1974,80 +2103,7 @@
               (range nio))
 
        (rc/def-record-type ~tname ~params
-         (~'get [_# ~ksym ~dsym]
-           (case ~ksym ~@(interleave ks fsyms) ~dsym))
-
-         ;; The checks naming this field are known here, so the pure ones are called with the
-         ;; new value and the untouched fields directly -- no lookup, and no allocation
-         ;; unless they all pass. The external validations run after, against the value they
-         ;; are about to admit. Nothing else gates them: every other check on a sealed value
-         ;; passed when it was made, and only this field has moved.
-         (~'assoc [_# ~ksym ~vsym]
-           (case ~ksym
-             ~@(mapcat (fn [j k]
-                         [k (if (limited? k)
-                              `(~(internal 'io-limited!) ~model-sym [~k])
-                              `(do ~(run-group (get index k)
-                                               (fn [i] (map (fn [d]
-                                                              (if (= d k) vsym (key->sym d)))
-                                                            (deps-of i))))
-                                   ~(with-io (get index k) (ctor-with j vsym))))])
-                       (range n) ks)
-             (~(internal 'unknown-key!) ~model-sym ~ksym)))
-
-         ;; A sealed value cannot hold an undeclared key, so dissoc of one is the ordinary
-         ;; map no-op. Only the declared fields are permanent.
-         (~'dissoc [this# ~ksym]
-           (case ~ksym
-             ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
-             this#))
-         (~'keys [_#] ~ks)
-         ;; The library's keys over the caller's. Here they are constant: a sealed value is
-         ;; one every check passed on.
-         (~'meta [_#] (~(internal 'merged-meta) ~mtasym ~sealed-meta))
-         (~'with-meta [_# ~mta2sym] (new ~tname ~@fsyms ~mta2sym))
-
-         (~'cons [_# ~osym]
-           ;; The entries are walked once, into the fields themselves: this type's fields are
-           ;; locals here, so an entry is a rebinding of one of them and the value is built
-           ;; out of what the loop carries. What a merge allocates is the value it returns.
-           (let [~essym (~(internal 'entries-of) ~model-sym ~osym)
-                 ~hsym  (loop [~cursym (seq ~essym)
-                               ~@(interleave fsyms fsyms)]
-                          (if ~cursym
-                            (let [~entsym (first ~cursym)
-                                  ~ksym   (nth ~entsym 0)
-                                  ~vsym   (nth ~entsym 1)]
-                              (case ~ksym
-                                ~@(mapcat (fn [i k]
-                                            [k `(recur (next ~cursym)
-                                                       ~@(assoc fsyms i vsym))])
-                                          (range n) ks)
-                                (~(internal 'unknown-key!) ~model-sym ~ksym)))
-                            (new ~tname ~@fsyms ~mtasym)))]
-             ;; After the walk, so every key is known to be declared before this runs.
-             ;; Emitted only where the option reaches a field.
-             ~@(when (seq limited)
-                 [`(~(internal 'io-limited-write!) ~model-sym (map first ~essym))])
-             (~(internal 'run-checks!) ~model-sym (:run-sealed ~model-sym) ~hsym
-              (~(internal 'checks-for) ~model-sym ~essym))
-             ~hsym))
-
-         ;; A keyword call site caches one of these and reads the field directly, as it does
-         ;; on a record; without it `(:k x)` pays the whole Keyword -> RT -> ILookup -> valAt
-         ;; walk.
-         clojure.lang.IKeywordLookup
-         (~'getLookupThunk [_# ~ksym]
-           (case ~ksym
-             ~@(mapcat (fn [[k f]]
-                         [k `(reify clojure.lang.ILookupThunk
-                               (~'get [~thunksym ~tgtsym]
-                                 (if (identical? (class ~tgtsym) ~tname)
-                                   (. ~tgthint ~(symbol (str "-" f)))
-                                   ~thunksym)))])
-                       (map vector ks fsyms))
-             nil))
-
+         ~@sealed-body
          ~@sealed-impls)
 
        ;; The draft: the same real fields, plus a map for keys the type does not declare and
@@ -2055,47 +2111,7 @@
        ;; nil, as it would on a `defrecord` whose field was never set, so there is no "never
        ;; written" state to maintain.
        (rc/def-record-type ~dname ~(into fsyms [extsym vdfield ownsym mtasym])
-         ;; A declared field is present whatever it holds, so `get` never reaches its default
-         ;; for one, as on a record.
-         (~'get [_# ~ksym ~dsym]
-           (case ~ksym
-             ~@(interleave ks fsyms)
-             (get ~extsym ~ksym ~dsym)))
-         ;; A write seeds the new draft's verdicts from this one's, clearing exactly the
-         ;; checks reading the field written. The seed is a snapshot: this draft keeps what
-         ;; it had established, so two versions say nothing about each other.
-         (~'assoc [_# ~ksym ~vsym]
-           (case ~ksym
-             ~@(mapcat (fn [i k]
-                         [k (dctor (assoc fsyms i vsym) extsym
-                                   `(bit-and ~vdsym ~(survives k)) ownsym mtasym)])
-                       (range n) ks)
-             ~(dctor fsyms `(assoc ~extsym ~ksym ~vsym) vdsym ownsym mtasym)))
-         (~'dissoc [this# ~ksym]
-           (case ~ksym
-             ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
-             (if (contains? ~extsym ~ksym)
-               ~(dctor fsyms `(dissoc ~extsym ~ksym) vdsym ownsym mtasym)
-               this#)))
-         ;; Every declared key, always: a draft is a record with a map beside it.
-         (~'keys [_#]
-           (if (seq ~extsym) (concat ~ks (keys ~extsym)) ~ks))
-         ;; The same two keys a sealed value answers with, read off the mask rather than
-         ;; fixed, and merged over the caller's metadata as they are there.
-         (~'meta [_#] (~(internal 'draft-meta) ~model-sym ~vdsym ~mtasym))
-         (~'with-meta [_# ~mta2sym] ~(dctor fsyms extsym vdsym ownsym mta2sym))
-         (~'cons [this# ~osym]
-           (reduce (fn [~accsym [~ksym ~vsym]] (assoc ~accsym ~ksym ~vsym))
-                   this# (~(internal 'entries-of) ~model-sym ~osym)))
-
-         ;; The only thing about a draft that changes in place, and the only two operations
-         ;; that may change it.
-         Verdicts
-         (~'verdict-mask [_#] ~vdsym)
-         (~'record-verdict! [_# ~bitsym ~passym]
-           (set! ~vdsym (long (if ~passym (bit-set ~vdsym ~bitsym) (bit-clear ~vdsym ~bitsym))))
-           ~passym)
-
+         ~@draft-body
          ~@draft-impls)
 
        (def ~model-sym
