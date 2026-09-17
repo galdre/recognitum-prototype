@@ -1,8 +1,8 @@
 (ns recognitum.of-type-test
   "`of-type?`: is this a value of that type, in either of its forms?
 
-  `defrecord` generates two classes, so `instance?` stopped answering the question people
-  usually mean by it. The four predicates divide up as:
+  `defrecord` generates two classes, so `instance?` holds of a sealed value only. The four
+  predicates divide up as:
 
       (rec/of-type? Heist x)   either form of Heist
       (instance? Heist x)      a sealed Heist, specifically

@@ -79,7 +79,7 @@
             (merge x {::heist/name "A" ::heist/crew #{:x} ::heist/take 1 ::heist/cuts {:x 1}}))]
     (is (instance? Heist h))
     (is (= "A" (::heist/name h))))
-  (testing "and from an explicit draft of the type, which once did not work"
+  (testing "and from an explicit draft of the type"
     (let [h (rec/drafting [x (rec/draft Heist)]
               (merge x {::heist/name "B" ::heist/crew #{:x} ::heist/take 1 ::heist/cuts {:x 1}}))]
       (is (instance? Heist h))

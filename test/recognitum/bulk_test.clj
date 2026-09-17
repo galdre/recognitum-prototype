@@ -1,28 +1,12 @@
 (ns recognitum.bulk-test
   "Checking many values at once: `check-all` and `check-all!`.
 
-  One call spanning many values, which is what makes a batched fetch worth writing: every
-  argument tuple in the group arrives in one call, and distinct tuples are computed once
-  however many values share them. The singular form deduplicates the same way -- it simply
-  pays one call per distinct tuple instead of one call for all of them.
-
-  A group may hold values of more than one type. Batched fetches are declared per type, so
-  a mixed group is one fetch pass per type and still batched within each; a check or
-  certificate name resolves per type. A name one of the types does not know fails the whole
-  call, which is the rule a single `check` already applies -- a typo is a programmer error,
-  and burying it among per-value failures is how one hides.
-
-  Results are index-aligned with the input. Two drafts holding identical data are `=`, so
-  keying results by the draft would silently collapse them into one; a vector cannot.
-
-  Partial success is a workspace notion, so only the non-throwing forms offer it. They
-  report per value and leave each draft's mask updated to match what was established about
-  it. The bang forms run the same work, collect every failure across every value, and throw
-  once with all of them.
-
-  Nothing bulk produces a sealed value. A guarantee does not come in partial -- and it does
-  not need to, because the masks bulk checking leaves behind are what make sealing each
-  value afterwards free."
+  One call over many values, so a batched fetch sees every argument tuple at once and
+  distinct tuples are fetched once however many values share them. A group may hold more
+  than one type; fetches are declared per type, so a mixed group is one fetch pass per
+  type, and a name one type does not declare fails the whole call. Results are
+  index-aligned, since two drafts holding identical data are `=`. No group call produces a
+  sealed value; each draft's record of which checks pass is written with its results."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
@@ -52,7 +36,7 @@
 
 ;;; ------------------------------------- the types -------------------------------------
 
-;; Pure, for everything that is about alignment, masks and reporting rather than about IO.
+;; Pure, for alignment and reporting.
 (rec/defrecord Ledger
   [a b]
   {:checks
@@ -174,7 +158,7 @@
     (is (true? (rec/check-all! [d] ::a)) "nor does the bang form")
     (is (rec/draft? d) "and the draft it was given is still a draft")))
 
-(deftest bulk-checking-leaves-the-masks-populated-so-sealing-is-free
+(deftest a-group-call-records-what-passed-so-sealing-afterwards-runs-nothing
   (let [ds [(crew-draft "one" #{:charlie} {:charlie 1})
             (crew-draft "two" #{:lyle} {:lyle 1})]]
     (is (= [true true] (rec/check-all ds rec/every-check)))
@@ -187,18 +171,18 @@
       (is (= 0 (roster/call-count)))
       (is (= 0 (ran ::crew)) "and re-runs nothing"))))
 
-;;; ------------------------------------ the masks ------------------------------------
+;;; ------------------------------ what each draft records ------------------------------
 
 (deftest each-draft-is-left-with-its-own-verdicts
   (let [good (ledger 1 "xxx")
         bad  (ledger :nope "xxx")]
     (rec/check-all [good bad] ::a)
     (is (= #{::a} (rec/passed good)))
-    (is (= #{} (rec/passed bad)) "a failure clears the bit rather than setting it")
+    (is (= #{} (rec/passed bad)) "a failure is not recorded as passing")
     (testing "and a second call re-runs only what is not passing"
       (is (= [true {::a {:not-an-int :nope}}] (rec/check-all [good bad] ::a))))))
 
-(deftest a-certificate-a-group-established-is-held-per-value
+(deftest a-certificate-a-group-call-ran-is-held-per-value
   (let [good (ledger 1 "xxx")
         bad  (ledger 1 :nope)]
     (is (= [true {::b :nope}] (rec/check-all [good bad] ::shape)))
@@ -206,14 +190,14 @@
     (is (= #{} (rec/certificates bad)))
     (is (= #{::a} (rec/passed bad)) "what passed for it is still recorded")))
 
-(deftest the-bang-forms-record-what-they-established-too
+(deftest the-bang-forms-record-what-passed-too
   (let [good (ledger 1 "xxx")
         bad  (ledger :nope "xxx")]
     (is (= ::rec/check-failed (:error (err #(rec/check-all! [good bad] ::a)))))
     (is (= #{::a} (rec/passed good)) "work is not lost because the call threw")
     (is (= #{} (rec/passed bad)))))
 
-(deftest a-verdict-already-established-is-not-established-again
+(deftest a-check-already-passing-is-not-run-again
   (let [ds [(crew-draft "one" #{:charlie} {:charlie 1})
             (crew-draft "two" #{:lyle} {:lyle 1})]]
     (is (= [true true] (rec/check-all ds ::known-get-cuts)))
@@ -287,17 +271,17 @@
     (is (= #{[2] [3]} (set (first @handed)))
         "and it was handed the tuples built out of what the first answered")))
 
-;;; ------------------------------------- the gate -------------------------------------
+;;; -------------------------- a value whose shape validation fails --------------------------
 
 (deftest a-value-whose-shape-failed-carries-nothing-to-the-fetch
-  ;; `roster/fetch-rosters` throws on anything that is not a crew, so a leaking gate is an
-  ;; exception rather than a quietly wrong report.
+  ;; `roster/fetch-rosters` throws on anything that is not a crew, so a malformed crew
+  ;; reaching it would be an exception rather than a report.
   (let [ds [(crew-draft "one" #{:charlie}  {:charlie 1})
             (crew-draft "two" "not a crew" {:lyle 1})]
         rs (rec/check-all ds ::known-get-cuts)]
     (is (true? (first rs)))
     (is (= {::crew false} (second rs))
-        "the gate's failure is the only honest answer about a check that never ran")
+        "the shape validation's failure is the answer; the check that waited on it never ran")
     (is (= 1 (count @handed)))
     (is (= [[#{:charlie}]] (first @handed))
         "and only the well-formed value's tuple was carried to the fetch")))
@@ -310,13 +294,13 @@
     (is (= 0 (roster/call-count)))
     (is (= 0 (ran ::known-get-cuts)))))
 
-(deftest the-gate-is-established-as-a-verdict-like-anything-else
+(deftest what-the-fetch-waited-on-is-recorded-as-passing-too
   (let [d (crew-draft "one" #{:charlie} {:charlie 1})]
     (is (= [true] (rec/check-all [d] ::known-get-cuts)))
     (is (= #{::crew ::cuts ::known-get-cuts} (rec/passed d))
-        "the check asked about, the shape validation of the field it names, and the gate its
-         fetch waited on")
-    (is (= 0 (ran ::name)) "and nothing that gates nothing")))
+        "the check asked about, the shape validation of the field it names, and the pure
+         check its fetch waited on")
+    (is (= 0 (ran ::name)) "and not ::name, which nothing waited on")))
 
 ;;; --------------------------------- the bang forms ---------------------------------
 
@@ -383,14 +367,13 @@
 ;;; ------------------------------- a value nobody wrote -------------------------------
 
 (deftest a-field-nobody-wrote-is-judged-as-nil-for-that-value-alone
-  ;; No pre-flight: a draft nobody finished is an ordinary draft holding nils, and the
-  ;; shape validation over each of them says what it thinks. One incomplete value discards
-  ;; nothing about the others.
+  ;; An incomplete draft is an ordinary draft holding nils, and one incomplete value
+  ;; discards nothing about the others.
   (let [ds [(ledger 1 "xxx") (assoc (rec/draft Ledger) ::a 1)]]
     (is (= [true {::b :nope}] (rec/check-all ds ::fits))
         "::fits waits on ::b, which judged the nil nobody wrote")
     (is (= #{::a ::b ::fits} (rec/passed (first ds)))
-        "and the whole value was established, not held up by the other one")))
+        "and every check on the first value ran and passed, not held up by the second")))
 
 (deftest every-value-answers-for-itself
   (let [ds [(assoc (rec/draft Ledger) ::a 1)
@@ -404,10 +387,10 @@
   (let [ds [(crew-draft "one" #{:charlie} {:charlie 1})
             (assoc (rec/draft Crew) ::cuts {:lyle 1})]]
     (is (= [true {::crew false}] (rec/check-all ds ::known-get-cuts))
-        "the gate over the field the fetch names is what the second value failed")
+        "the shape validation of the field the fetch names is what the second value failed")
     (is (= 1 (ran ::roster)) "one fetch, for the value that earned it")
     (is (= [[#{:charlie}]] (first @handed))
-        "and the incomplete value's tuple was not carried to the outside")))
+        "and the incomplete value's tuple was not handed to the fetch")))
 
 ;;; --------------------------------- what is refused ---------------------------------
 
@@ -421,7 +404,6 @@
     (is (= ::rec/not-a-value (:error (err #(rec/check-all! [nil] ::shape)))))))
 
 (deftest a-sealed-value-in-a-group-answers-true-and-runs-nothing
-  ;; A sealed value is one every check passed on, so there is nothing to establish.
   (let [ds [(->Ledger 1 "xxx") (ledger 2 "xxx")]]
     (is (= [true true] (rec/check-all ds ::shape)))
     (is (true? (rec/check-all! ds rec/every-check)))))
@@ -453,7 +435,7 @@
     (is (= [true true] (rec/check-all [(ledger 1 "xxx") (sing #{:charlie})]
                                       rec/every-check)))))
 
-(deftest an-unknown-name-fails-the-whole-call-and-establishes-nothing
+(deftest an-unknown-name-fails-the-whole-call-before-anything-runs
   (let [d  (ledger 1 "xxx")
         s  (sing #{:charlie})]
     (is (= ::rec/unknown-check (:error (err #(rec/check-all [d s] ::shape)))))

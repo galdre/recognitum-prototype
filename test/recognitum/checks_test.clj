@@ -1,11 +1,7 @@
 (ns recognitum.checks-test
-  "The `:checks` map: named checks, the arglist as the dependency declaration, the
-  bare-function shorthand over the single field the key names, and the optional
-  docstring position.
-
-  What a check depends on is exactly what its arglist says. The field -> checks index is
-  derived from that rather than declared alongside it, so it cannot disagree with the body,
-  and the body cannot read what it did not name -- there is nothing else in scope."
+  "The `:checks` map: the three forms a check is written in, and the arglist as the
+  dependency declaration. The field -> checks index is derived from the arglists, and a
+  body can read nothing it did not name."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -115,8 +111,7 @@
     (is (= [[::b ::a]] (mapv :deps (:checks (internal/model-of (->Ordered 1 2))))))))
 
 (deftest a-check-body-cannot-read-a-field-it-did-not-name
-  ;; Nothing but the arglist is in scope, so a dependency that was not declared is not a
-  ;; silently-missing index entry -- it does not compile.
+  ;; Nothing but the arglist is in scope, so an undeclared dependency does not compile.
   (let [t (compiles '(recognitum.core/defrecord Peeker
                        [a b]
                        {:checks {:scratch/peek ([a] (+ a b))}}))]
@@ -234,7 +229,7 @@
 (deftest a-check-with-an-empty-arglist-runs-where-there-is-no-earlier-verdict-to-trust
   (reset! grounded 0)
   (let [g (->Grounded 1)]
-    (is (= 1 @grounded) "construction establishes it")
+    (is (= 1 @grounded) "construction runs it")
     (reset! grounded 0)
     (rec/drafting [x Grounded] (assoc x ::a 2))
     (is (= 1 @grounded) "so does building one from the type")

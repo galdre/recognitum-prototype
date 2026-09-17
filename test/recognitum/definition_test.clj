@@ -1,16 +1,9 @@
 (ns recognitum.definition-test
-  "The definition map: `defrecord`'s third position.
-
-  A type used to be written as a name, a vector of fields and a bare map of checks. It is
-  now a name, a vector of fields and a *definition* map holding named sections --
-  `:options`, `:checks`, `:io-deps`, `:certificates` -- every one of them optional. The
-  checks move under `:checks` and nothing else about them changes.
-
-  A section is a declaration, so a section the macro does not recognise is a declaration
-  that would mean nothing: a mistyped `:cheks` would define a type with no checks at all,
-  which is precisely the failure this library exists to make impossible. Every key of the
-  definition map, and of `:options` inside it, is therefore resolved while the macro runs,
-  and one that names no section is a compile error naming the offender."
+  "The definition map: `defrecord`'s third position, a map of named sections --
+  `:options`, `:checks`, `:io-deps`, `:certificates` -- every one of them optional. Every
+  key of the definition map, and of `:options` inside it, is resolved while the macro runs;
+  a mistyped `:cheks` would otherwise define a type with no checks, so a key that names no
+  section is a compile error naming the offender."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -49,7 +42,7 @@
 
 (deftest the-checks-section-holds-the-checks
   (is (rec/sealed? (->Wrapped 1 "xx")))
-  (testing "all three check forms still mean what they meant unwrapped"
+  (testing "all three check forms"
     (let [e (err #(->Wrapped "x" "yy"))]
       (is (= ::rec/check-failed (:error e)))
       (is (= {:doc nil :values {::a "x"} :returned false} (get (:failures e) ::a))))
@@ -58,7 +51,7 @@
     (let [e (err #(->Wrapped 9 "yy"))]
       (is (= {:doc "a is below the length of b" :values {::a 9 ::b "yy"} :returned false}
              (get (:failures e) ::a-below-count)))))
-  (testing "and the field -> checks index is built from them as before"
+  (testing "and the field -> checks index is built from them"
     (let [model (internal/model-of Wrapped)]
       (is (= [::a ::b-string ::a-below-count] (mapv :name (:checks model))))
       (is (= [::a ::a-below-count]
@@ -118,7 +111,7 @@
     (is (= {} (:options (internal/model-of Bare))))
     (is (= {} (:options (internal/model-of Wrapped))))
     (is (= {} (:options (internal/model-of Empties)))))
-  (testing "declaring the option changes nothing yet: no check here reaches IO"
+  (testing "declaring the option changes nothing here: no check reaches IO"
     (is (rec/sealed? (assoc (->Optioned 1) ::a 2)))
     (is (= ::rec/check-failed (:error (err #(assoc (->Optioned 1) ::a "x")))))))
 
@@ -154,7 +147,7 @@
       (is (re-find #":checks" m)))))
 
 (deftest the-old-spelling-is-refused-rather-than-half-understood
-  ;; A bare map of checks is now a definition map whose sections are check names. Say so.
+  ;; A bare map of checks reads as a definition map whose sections are check names.
   (let [e (compile-data '(recognitum.core/defrecord Old
                            [a b]
                            {:scratch/a int?
@@ -176,7 +169,7 @@
                '(recognitum.core/defrecord NotAMap3 [a] nil)]]
     (let [e (compile-data bad)]
       (is (= ::rec/malformed-definition (:error e)) (str bad))))
-  (testing "the old invariants vector is reported as what it is, not picked apart"
+  (testing "a vector is reported as what it is, not picked apart"
     (let [e (compile-data '(recognitum.core/defrecord NotAMap4 [a] [:x]))]
       (is (= ::rec/malformed-definition (:error e)))
       (is (= 'NotAMap4 (:record e)))
@@ -195,14 +188,9 @@
       (is (= ::rec/malformed-section (:error e)) (str form))
       (is (= section (:section e)) (str form)))))
 
-;;; --------------------------- the sections with nothing behind them ---------------------------
+;;; ------------------------------ :io-deps and :certificates ------------------------------
 
-(deftest every-section-now-has-something-behind-it
-  ;; Each of these was accepted only empty while the library had no implementation for it,
-  ;; because accepting a declaration and then ignoring it is the silent mis-declaration this
-  ;; whole design is arranged to prevent. D3 gave `:certificates` its meaning and E1 gave
-  ;; `:io-deps` theirs, so both now define something; `recognitum.certificate-test` and
-  ;; `recognitum.io-deps-test` own what.
+(deftest a-populated-io-deps-or-certificates-section-compiles
   (is (nil? (compiles '(recognitum.core/defrecord Fetching
                          [a]
                          {:io-deps {:scratch/roster ([a] [a])}}))))
@@ -210,7 +198,7 @@
                          [a]
                          {:checks {:scratch/a int?}
                           :certificates {:scratch/shape #{:scratch/a}}}))))
-  (testing "while a keyword in an arglist still has to name one that was declared"
+  (testing "while a keyword in an arglist has to name a declared io-dep"
     (let [e (compile-data '(recognitum.core/defrecord Fetching2
                              [a]
                              {:io-deps {}
@@ -218,7 +206,7 @@
       (is (= ::rec/unknown-dependency (:error e)))
       (is (= :scratch/roster (:dependency e))))))
 
-;;; ------------------------------ resolution through the wrapper ------------------------------
+;;; ---------------------------------------- resolution ----------------------------------------
 
 (deftest checks-are-still-resolved-against-the-fields
   (testing "a symbol naming no field"
@@ -252,7 +240,7 @@
 (deftest the-order-the-sections-are-written-in-does-not-matter
   (is (rec/sealed? (->Reordered 1 "x")))
   (is (= {:io-limited false} (:options (internal/model-of Reordered))))
-  (testing "while the order within :checks is still the order failures report in"
+  (testing "while the order within :checks is the order failures report in"
     (let [e (err #(->Reordered "x" 1))]
       (is (= [::r-b ::r-a] (keys (:failures e))))
       (is (= 2 (count (:failures e)))))))
@@ -271,7 +259,7 @@
     (is (= ::rec/unknown-option (:error (err #(internal/parse-definition 'T {:options {:nope 1}})))))
     (is (= {:options {} :checks {} :io-deps {:t/r 'identity} :certificates {}}
            (internal/parse-definition 'T {:io-deps {:t/r 'identity}}))
-        "and a populated :io-deps is a section like any other, now that it means something")))
+        "and a populated :io-deps is a section like any other")))
 
 (deftest the-sections-are-named-once-and-in-reading-order
   (is (= [:options :checks :io-deps :certificates] (vec internal/definition-sections)))

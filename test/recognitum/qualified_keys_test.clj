@@ -76,7 +76,7 @@
   (testing "and the type's own key still works"
     (is (= "The Sequel" (::heist/name (assoc job ::heist/name "The Sequel"))))))
 
-;;; --------------------------- the model and the invariant index ---------------------------
+;;; ------------------------ the model and the field -> checks index ------------------------
 
 (deftest the-model-carries-qualified-keys-throughout
   (let [model (internal/model-of job)]

@@ -1,18 +1,9 @@
 (ns recognitum.unset-test
-  "Unset is `nil`.
-
-  A field that has not been written reads as `nil`, everywhere, exactly as it would on a
-  `defrecord` whose field was never set. There is no sentinel and no \"never written\"
-  state distinct from `nil`: a draft opened from the type starts with every field `nil`,
-  `keys` answers with every declared key whatever has been written, and every check
-  receives `nil` for a field nobody wrote. Whether `nil` is acceptable is the shape
-  validation's business and nothing else's; a field with no shape validation seals
-  holding it.
-
-  So `:missing-field` is gone. It was the library reporting on its own internals -- there
-  was a sentinel a check must not be handed, and the error existed to keep it away from
-  one. With the sentinel gone there is nothing to keep away, and a check saying what it
-  thinks of `nil` is a better answer than the library saying nobody wrote anything."
+  "Unset is `nil`. A field that has not been written reads as `nil`, as it would on a
+  `defrecord` whose field was never set: a draft opened from the type starts with every
+  field `nil`, `keys` answers with every declared key, and a check receives `nil` for a
+  field nobody wrote. Whether `nil` is acceptable is the shape validation's business; a
+  field with no shape validation seals holding it."
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
@@ -95,7 +86,7 @@
     (let [e (err #(map->Strict {}))]
       (is (= ::rec/check-failed (:error e)))
       (is (= [::title] (keys (:failures e))))))
-  (testing "while a key the type does not declare is refused as it always was"
+  (testing "while a key the type does not declare is refused"
     (is (= ::rec/extraneous-keys (:error (err #(map->Note {::title "t" :nope 1})))))))
 
 ;;; ----------------------- running checks against an incomplete draft -----------------------
@@ -116,8 +107,6 @@
   (is (true? (rec/check (rec/draft Note) rec/every-check))))
 
 (deftest a-group-of-incomplete-drafts-is-judged-value-by-value
-  ;; There is no pre-flight left to throw before the first check of the first value: an
-  ;; incomplete draft is an ordinary draft holding nils.
   (let [empty-one (rec/draft Strict)
         full      (assoc (rec/draft Strict) ::title "t")]
     (is (= [{::title false} true] (rec/check-all [empty-one full] ::title)))
@@ -131,11 +120,9 @@
     (doseq [k ["title" "body" "tags"]]
       (is (str/includes? s (str ":" k)) (str "the printed draft omits " k)))))
 
-;;; --------------------------------- the error itself is gone ---------------------------------
+;;; ---------------------------- no entry point reports a missing field ----------------------------
 
-(deftest nothing-reports-a-missing-field-any-more
-  ;; No entry point reports one: an incomplete draft is an ordinary draft holding nils, and
-  ;; what comes back is whatever the checks think of `nil`.
+(deftest no-entry-point-reports-a-missing-field
   (doseq [f [#(rec/seal (rec/draft Strict))
              #(map->Strict {})
              #(rec/check! (rec/draft Strict) ::title)

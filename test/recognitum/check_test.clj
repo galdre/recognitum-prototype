@@ -1,31 +1,14 @@
 (ns recognitum.check-test
   "Running one named check against a draft.
 
-  `check` answers the question and `check!` insists on the answer: both return `true` when
-  everything named passes, and neither returns a draft. There is nowhere for a verdict to go
-  in a return value, because the verdict goes in the draft's mask -- which is what frees the
-  return value to be the answer to the question that was asked. The answer is always keyed
-  by check name, so one check and a certificate of them answer in one shape.
-
-  What `check` means is *establish this*, not *run exactly this*. A check whose bit is
-  already set has been established against exactly this data, so there is nothing to do and
-  it is not run again; a write cleared the bit of everything naming the field written, so
-  after a write it runs. That is the whole value of the mask: the evidence behind a verdict
-  is not kept, but the verdict is.
-
-  A check that is not named after a field waits on the shape validations of the fields it
-  names, so `check` runs those too where they are not already passing -- which is the whole of
-  \"runs whatever it depends on\". Where one of them fails, the check asked about never ran
-  and has no verdict of its own, so it gets no entry and the blocking check's entry is what
-  appears.
-
-  A field the draft has never been written to reads as `nil`, as it would on a `defrecord`
-  whose field was never set, and a check naming one judges `nil`. There is no sentinel and
-  nothing to keep away from a check body.
-
-  Checking is not sealing. An undeclared key, a field some other check names, a check that
-  has not been run: none of them stop the check in hand. That is what running checks early
-  on an incomplete value means."
+  `check` returns `true` or a map of what each failing check returned, keyed by check name;
+  `check!` throws on failure. Neither returns a draft: each result is written into the
+  draft's record of which checks pass. A check already recorded as passing does not run
+  again, and a write clears the checks reading the field written. A check not named after
+  a field waits on the shape validations of the fields it names, and where one of those
+  fails the check asked about does not run and has no entry. A field never written reads as
+  `nil`. Checking is not sealing: an undeclared key, or an unwritten field elsewhere, does
+  not stop the check in hand."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]))
@@ -64,8 +47,7 @@
     ::boolean ([n] (pos? n))}
    :certificates {::most #{::data ::truthy ::nil}}})
 
-;; Counts its own runs, which is the only way to see that an established verdict is not
-;; re-established.
+;; Counts its own runs, so a check recorded as passing can be seen not to run again.
 (def ^:private runs (atom {}))
 
 (defn- tally! [k] (swap! runs update k (fnil inc 0)) nil)
@@ -91,7 +73,7 @@
 
 (defn- fresh
   "A draft of `Ledger` with every field written, so nothing is waiting on anything, and
-  nothing established."
+  nothing recorded as passing."
   []
   (-> (rec/draft Ledger) (assoc ::a 1) (assoc ::b "xxx") (assoc ::c :anything)))
 
@@ -109,13 +91,12 @@
         (is (true? (rec/check! d c)) (pr-str c))))))
 
 (deftest neither-form-returns-a-draft
-  ;; The verdict goes in the mask, so the return value is free to be the answer.
   (let [d (fresh)]
     (doseq [r [(rec/check d ::a) (rec/check! d ::b)]]
       (is (not (rec/draft? r)))
       (is (not (rec/sealed? r))))
     (is (= #{::a ::b} (rec/passed d))
-        "what was learned is on the draft that was asked, not in what came back")))
+        "the results are recorded on the draft, not returned")))
 
 (deftest check-answers-with-whatever-the-failing-check-returned-keyed-by-its-name
   (let [d (assoc (rec/draft Reporting) ::n -1)]
@@ -128,8 +109,6 @@
     (is (= #{} (rec/passed d)) "none of them passed, so none of them are recorded")))
 
 (deftest a-lone-check-is-a-certificate-containing-itself
-  ;; One verb, one shape. Whether the name is a check's or a certificate's, what comes back
-  ;; is `true` or a map keyed by check name.
   (let [d (assoc (rec/draft Reporting) ::n -1)]
     (is (= {::data {:too-small -1}} (rec/check d ::data)))
     (is (= {::data {:too-small -1} ::truthy :nope ::nil nil} (rec/check d ::most))
@@ -167,11 +146,11 @@
       (is (= {::a 99 ::b "xx"} (:values f)))
       (is (= false (:returned f))))))
 
-;;; ------------------------------ the verdict is recorded ------------------------------
+;;; ------------------------------ the result is recorded ------------------------------
 
-(deftest a-check-that-passes-sets-its-bit
+(deftest a-check-that-passes-is-recorded-as-passing
   (let [d (fresh)]
-    (is (= #{} (rec/passed d)) "built from the type, so nothing was established")
+    (is (= #{} (rec/passed d)) "built from the type, so nothing has run")
     (rec/check d ::a)
     (is (= #{::a} (rec/passed d)))
     (rec/check! d ::b)
@@ -180,7 +159,7 @@
     (rec/check d ::always)
     (is (= all-checks (rec/passed d)))))
 
-(deftest a-check-that-fails-leaves-its-bit-clear
+(deftest a-check-that-fails-is-not-recorded-as-passing
   (let [d (-> (rec/draft Ledger) (assoc ::a "not an int") (assoc ::b "xx"))]
     (is (= {::a false} (rec/check d ::a)))
     (is (= #{} (rec/passed d)))
@@ -190,27 +169,26 @@
       (is (= ::rec/check-failed (:error (err #(rec/check! d ::a-fits)))))
       (is (= #{::b} (rec/passed d))))))
 
-(deftest checking-establishes-what-it-waits-on-and-nothing-else
+(deftest checking-runs-what-it-waits-on-and-nothing-else
   (let [d (fresh)]
     (rec/check d ::a-fits)
     (is (= #{::a ::b ::a-fits} (rec/passed d))
-        "a check spanning two fields establishes their shape validations on the way")
+        "a check spanning two fields runs their shape validations on the way")
     (is (not (contains? (rec/passed d) ::always))
         "and nothing it does not wait on")))
 
-(deftest a-verdict-established-on-one-version-says-nothing-about-another
-  ;; The seed is a snapshot, so versions diverge rather than share.
+(deftest a-result-recorded-on-one-version-says-nothing-about-another
   (let [d  (fresh)
         d' (assoc d ::a 2)]
     (is (true? (rec/check d ::a)))
     (is (= #{::a} (rec/passed d)))
     (is (= #{} (rec/passed d')) "d' was seeded from d before the check ran")
-    (testing "and establishing it on d' leaves d where it was"
+    (testing "and running it on d' leaves d where it was"
       (is (true? (rec/check d' ::a)))
       (is (= #{::a} (rec/passed d)))
       (is (= #{::a} (rec/passed d'))))))
 
-;;; -------------------------- establish, rather than re-run --------------------------
+;;; ---------------------- a check already passing is not run again ----------------------
 
 (deftest a-check-already-passing-is-not-run-again
   (reset! runs {})
@@ -218,11 +196,11 @@
     (is (true? (rec/check d ::n)))
     (is (= 1 (ran ::n)))
     (is (true? (rec/check d ::n)))
-    (is (= 1 (ran ::n)) "the verdict stands, so there is nothing to establish")
+    (is (= 1 (ran ::n)) "it is recorded as passing, so there is nothing to run")
     (is (true? (rec/check! d ::n)))
-    (is (= 1 (ran ::n)) "and check! is no different -- it insists on the answer, not the work")))
+    (is (= 1 (ran ::n)) "and check! runs nothing either")))
 
-(deftest a-draft-of-a-sealed-value-has-nothing-left-to-establish
+(deftest a-draft-of-a-sealed-value-runs-nothing
   (let [c (->Counted 1 "x")]
     (reset! runs {})
     (let [d (rec/draft c)]
@@ -240,11 +218,9 @@
       (is (true? (rec/check d ::both)))
       (is (true? (rec/check d ::s)))
       (is (= {::n 1 ::both 1} @runs)
-          "::s does not name n, so its verdict stood and it was not run"))))
+          "::s does not name n, so it stayed recorded as passing and was not run"))))
 
 (deftest a-failed-check-is-run-again-next-time
-  ;; Failures are not retained: the call that finds one returns it, and a later call
-  ;; re-runs anything not passing and produces it again.
   (reset! runs {})
   (let [d (assoc (rec/draft Counted) ::n "not an int")]
     (is (= {::n false} (rec/check d ::n)))
@@ -253,14 +229,14 @@
     (is (= #{} (rec/passed d)))))
 
 (deftest a-pure-check-waits-on-the-shape-validations-of-the-fields-it-names
-  ;; Which is why it restates neither of them: `::both` is handed an n and an s that have
-  ;; already been established as an int and a string.
+  ;; `::both` is passed an n and an s that `::n` and `::s` have already passed, so it
+  ;; restates neither.
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
     (is (true? (rec/check d ::both)))
     (is (= {::n 1 ::s 1 ::both 1} @runs))
     (is (= #{::n ::s ::both} (rec/passed d))))
-  (testing "and a gate already passing is free, as any established verdict is"
+  (testing "and a shape validation already passing is not run again"
     (reset! runs {})
     (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
       (is (true? (rec/check d ::n)))
@@ -278,9 +254,7 @@
     (testing "and nothing is recorded, because nothing passed"
       (is (= #{} (rec/passed d))))))
 
-(deftest a-check-whose-gate-fails-answers-with-the-gate-and-no-entry-of-its-own
-  ;; The answer is keyed, so the blocking check's entry is the whole of it: `::a-fits` has
-  ;; no verdict, so it gets no key, and nothing has to be thrown to say so.
+(deftest a-check-whose-shape-validation-fails-answers-with-that-failure-and-no-entry-of-its-own
   (let [d (rec/draft Ledger)
         r (rec/check d ::a-fits)]
     (is (= [::a ::b] (vec (keys r))) "both shape validations it was waiting on")
@@ -314,7 +288,7 @@
 
 ;;; ------------------------------ checking is not sealing ------------------------------
 
-(deftest an-incomplete-draft-can-still-establish-what-it-has
+(deftest an-incomplete-draft-can-still-run-the-checks-it-has-fields-for
   (let [d (assoc (rec/draft Ledger) ::b "xxx")]
     (is (true? (rec/check d ::b)))
     (is (= #{::b} (rec/passed d)))
@@ -329,11 +303,9 @@
     (is (true? (rec/check d ::a)))
     (is (true? (rec/check! d ::a-fits)))
     (is (= ::rec/extraneous-keys (:error (err #(rec/seal d))))
-        "which sealing refuses, as it always did")))
+        "which sealing refuses")))
 
 (deftest a-check-that-throws-propagates-and-records-nothing
-  ;; A throw is a bug in the check rather than a verdict about the data, so there is
-  ;; nothing to write down and nothing to report as invalid.
   (let [d (assoc (rec/draft Fragile) ::n "not a number")]
     (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/check d ::boom)))
     (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/check! d ::boom)))
@@ -351,19 +323,17 @@
         (is (= ::nonesuch (:check e)) label)
         (is (= [::a ::b ::a-fits ::always] (:checks e)) label)
         (is (= [::shape ::rec/every-check] (:certificates e))
-            (str label ": one verb, so the refusal says what either kind could have been"))))
+            (str label ": the refusal names both the checks and the certificates it could have been"))))
     (testing "including a check declared on some other type"
       (is (= ::rec/unknown-check (:error (err #(rec/check d ::data))))))
     (testing "and the bare spelling of one this type does declare"
       (is (= ::rec/unknown-check (:error (err #(rec/check d :a))))))
     (testing "and a certificate declared on some other type"
       (is (= ::rec/unknown-check (:error (err #(rec/check d ::most))))))
-    (testing "and nothing is established by asking"
+    (testing "and nothing is recorded by asking"
       (is (= #{} (rec/passed d))))))
 
 (deftest a-sealed-value-answers-true-and-runs-nothing
-  ;; Everything a sealed value could be asked about is established, which is what being
-  ;; sealed means. So `check` establishes nothing and runs nothing.
   (let [c (->Counted 1 "x")]
     (reset! runs {})
     (is (true? (rec/check c ::n)))
@@ -371,12 +341,10 @@
     (is (true? (rec/check c rec/every-check)))
     (is (true? (rec/check! c rec/every-check)))
     (is (= {} @runs) "nothing ran"))
-  (testing "and an unknown name is refused there too -- it is a programmer error"
+  (testing "and an unknown name is refused there too"
     (is (= ::rec/unknown-check (:error (err #(rec/check led ::nonesuch)))))))
 
 (deftest checking-is-a-question-about-a-recognitum-value
-  ;; The `:not-a-draft` refusal is gone from the checking family. What is left is the
-  ;; refusal of something that is not one of this library's values at all.
   (doseq [x [Ledger {::a 1 ::b "xxx" ::c :x} nil 42]]
     (is (= ::rec/not-a-value (:error (err #(rec/check x ::a)))) (pr-str x))
     (is (= ::rec/not-a-value (:error (err #(rec/check! x ::a)))) (pr-str x))
@@ -385,14 +353,14 @@
 
 ;;; -------------------------------- and the guarantee --------------------------------
 
-(deftest establishing-every-check-by-hand-still-seals
+(deftest running-every-check-by-hand-still-seals
   (let [d (fresh)]
     (doseq [c [::a ::b ::a-fits ::always]] (is (true? (rec/check d c))))
     (let [s (rec/seal d)]
       (is (rec/sealed? s))
       (is (= 1 (::a s))))))
 
-(deftest a-verdict-established-before-a-write-does-not-cover-the-write
+(deftest a-pass-recorded-before-a-write-does-not-cover-the-write
   (let [d (fresh)]
     (doseq [c [::a ::b ::a-fits ::always]] (rec/check d c))
     (let [d' (assoc d ::a "not an int")]

@@ -1,16 +1,7 @@
 (ns recognitum.readme-test
-  "The README, held to the same standard as the code it describes.
-
-  Documentation drifts silently: nothing fails when a file says the library still takes
-  `^{:valid pred}` fields, and the only reader who finds out is the one who tried it. The
-  history here is exactly that -- the prose was left behind by four separate changes before
-  anyone counted the damage. So the claims the README makes that can be mechanically
-  checked are checked: that every type definition in it compiles, that the errors it names
-  by name are errors the library throws, that the commands it gives are commands this
-  project has, and that the facilities it omits mentioning are not the ones a reader would
-  most need told about.
-
-  It cannot check that the prose is any good. It can check that it is not false."
+  "The README, held to what a test can check: every type definition in it compiles, the
+  errors it names are ones the library throws, the commands it gives are aliases this
+  project has, and the facilities it has to cover are mentioned."
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
@@ -28,7 +19,7 @@
 
 (deftest the-readme-names-the-library-the-library-is-called
   (is (str/starts-with? @readme "# recognitum")
-      "the title still carried the name the project had before the migration"))
+      "the title is the library's name"))
 
 ;;; ------------------------------- every definition in it compiles -------------------------------
 
@@ -66,8 +57,6 @@
 (defn- first-line [s] (str/trim (first (remove str/blank? (str/split-lines s)))))
 
 (deftest every-type-definition-in-the-readme-compiles
-  ;; A README example is a promise that this is what you type. The cheapest way to keep
-  ;; that promise honest is to type it.
   (let [blocks (filter #(str/includes? % "defrecord") (code-blocks @readme))]
     (is (seq blocks) "the README has to show how a type is defined")
     (doseq [b blocks]
@@ -89,17 +78,13 @@
   (str (first (str/split (str (second (str/split @readme #"## Errors"))) #"\n## "))))
 
 (deftest the-errors-section-states-the-one-shape
-  ;; It used to carry a table of keywords, which is a second place for the set of errors to
-  ;; live and therefore a second place for it to be wrong. What each operation throws is in
-  ;; that operation's docstring now; what the README owes a reader is the shape they all
-  ;; share, and these are the parts of that shape a test can hold it to.
   (let [s (errors-section)]
-    (is (seq s) "the README still says what a refusal looks like")
+    (is (seq s) "the README says what a refusal looks like")
     (is (str/includes? s ":error") "the key a caller dispatches on")
     (is (str/includes? s ":record") "the key that says which type refused")
     (is (str/includes? s ":failures") "and where the failures themselves are")
     (is (re-find #"(?s)shape validations.*invariant validations.*external validations" s)
-        "failures come back in phase order, and the section has to say which order that is")
+        "and the order failures come back in: shape validations, then invariant validations, then external validations")
     (is (str/includes? s "`check`")
         "the same keys check answers with, so a reader learns one shape rather than two")
     (is (str/includes? s "docstring")
@@ -113,15 +98,13 @@
           (str "core.clj never throws ::" e)))))
 
 (deftest the-readme-says-the-error-keys-are-namespaced
-  ;; Worth saying outright, because the short spelling is the one a reader reaches for:
-  ;; `(= :check-failed (:error (ex-data e)))` is false for every value the library throws.
+  ;; `(= :check-failed (:error (ex-data e)))` is false for everything the library throws, so
+  ;; the README has to show the qualified spelling.
   (is (mentions? ":recognitum.core/check-failed")))
 
 ;;; ------------------------------- the facilities it has to cover -------------------------------
 
 (deftest the-readme-covers-the-draft-level-facility
-  ;; The half of the library the README has said least about: running checks before the
-  ;; value is finished is most of why drafts carry a verdict at all.
   (doseq [token ["check!" "recheck" "recheck!" "passed" "certificates"
                  "check-all" "check-all!" "recheck-all"]]
     (is (mentions? token) (str "README says nothing about " token))))
@@ -143,8 +126,7 @@
     (is (mentions? token) (str "README says nothing about " token))))
 
 (deftest the-check-contract-is-stated
-  ;; A check that returns a truthy non-true is read as a failure. Nothing warns you at run
-  ;; time, so the README is where a reader has to be told.
+  ;; A truthy return that is not `true` is a failure, and nothing says so at run time.
   (is (or (mentions? "exactly `true`") (mentions? "`true` — exactly"))
       "the README has to say that a check passes by returning true and nothing else"))
 
@@ -162,13 +144,11 @@
 ;;; ------------------------------------ the performance table ------------------------------------
 
 (deftest the-performance-table-says-when-it-was-measured
-  ;; It was measured against an implementation two phases ago. Keeping the numbers is
-  ;; defensible; keeping them undated is not.
   (let [perf (second (str/split @readme #"## What it costs"))]
-    (is (some? perf) "the README still reports what the library costs")
+    (is (some? perf) "the README reports what the library costs")
     (is (re-find #"\d{4}-\d{2}-\d{2}" (str perf)) "with the date it was taken")
     (is (str/includes? (str/lower-case (str perf)) "re-measure")
-        "and a standing warning not to trust it to three figures")))
+        "and how to re-measure it")))
 
 (defn- perf-section []
   (second (str/split @readme #"## What it costs")))
@@ -187,11 +167,8 @@
        (remove #(every? str/blank? %))))
 
 (deftest the-performance-table-reports-every-shape-the-benchmark-measures
-  ;; `recognitum.bench` prints three sections -- the single operations, a batch of renames,
-  ;; and a batch of add-members -- and the table used to carry one row out of the last two.
-  ;; The rows a table leaves out are the ones a reader cannot check, and the batched shapes
-  ;; are where the library is doing something a hand-rolled version has to be written to
-  ;; match.
+  ;; `recognitum.bench` prints the single operations, a batch of renames, and a batch of
+  ;; add-members.
   (let [perf (str/lower-case (str (perf-section)))]
     (doseq [shape ["read" "merge" "construct" "rename" "add-member" "drafting"]]
       (is (str/includes? perf shape)

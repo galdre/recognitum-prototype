@@ -1,25 +1,12 @@
 (ns recognitum.verdict-test
-  "The verdict mask: which of a draft's checks currently pass.
-
-  A draft is unvalidated working state, but it is not therefore ignorant: it records which
-  of its type's checks currently pass. That record is a mutable field, because the draft's
-  *data* is immutable while which checks have been run against that data is not part of the
-  data at all -- running a check adds knowledge without producing a new value.
-
-  Three rules make the record sound:
-
-  - a draft opened from a sealed value starts with every check passing, because that is
-    exactly what being sealed means; a draft opened from the type itself starts with none;
-  - a verdict is set when a check passes and *cleared* when it fails, so a check that
-    passed earlier and fails now stops counting as passed;
-  - a write seeds the new draft's mask from the old one with exactly the checks naming the
-    written field cleared, and the seed is a snapshot -- the parent keeps its own verdicts,
-    so two versions of a draft say nothing about each other.
-
-  Nothing here decides which checks `seal` runs -- `recognitum.seal-test` is where that
-  selection is pinned. What is pinned here is that the record exists, that it is seeded and
-  invalidated correctly, and that anything which runs a check against a draft writes down
-  what it found."
+  "The record a draft keeps of which of its checks currently pass, reached here through
+  `verdict-mask` and `record-verdict!`. It is a mutable field: the draft's data is
+  immutable, and which checks have been run against that data is not part of the data. A
+  draft opened from a sealed value starts with every check passing and one opened from the
+  type with none; a check is recorded as passing when it passes and cleared when it fails;
+  a write copies the record with exactly the checks reading the written field cleared, and
+  the version written from keeps its own. Which checks `seal` runs is pinned in
+  `recognitum.seal-test`."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -75,7 +62,7 @@
   (let [d (rec/draft Ledger)]
     (is (rec/draft? d))
     (is (= #{} (rec/passed d)))
-    (is (= 0 (internal/verdict-mask d)) "nothing has been established about a value with no fields"))
+    (is (= 0 (internal/verdict-mask d)) "nothing has run against a draft with no field written"))
   (testing "however it was opened"
     (is (= #{} (rec/passed ((:draft-empty (internal/model-of Ledger)) nil))))
     (is (= #{} (seen Ledger rec/passed)))
@@ -111,8 +98,7 @@
       (is (= #{::b ::always} (rec/passed d))))))
 
 (deftest a-verdict-is-cleared-when-a-check-fails
-  ;; Clearing is what makes re-running a check meaningful: a check that passed earlier and
-  ;; fails now must stop counting as passed, and without a clear there is no way to un-pass.
+  ;; Without a clear, a check that passed earlier and fails now would still count as passed.
   (let [d (rec/draft led)]
     (is (= all-checks (rec/passed d)))
     (internal/record-verdict! d (idx Ledger ::a-fits) false)
@@ -156,8 +142,7 @@
           (str "no write can invalidate a check that reads nothing -- " k)))))
 
 (deftest writing-the-same-value-back-still-invalidates
-  ;; The mask is computed from the arglists, not from the values: the macro knows which
-  ;; checks name the field, and nothing compares what was there before.
+  ;; What a write clears is computed from the arglists; nothing compares values.
   (is (= #{::b ::always} (rec/passed (assoc (rec/draft led) ::a (::a led))))))
 
 (deftest merging-invalidates-every-field-it-writes
@@ -186,16 +171,16 @@
     (is (= #{::b ::always} (rec/passed (assoc d ::c :x))) "c names neither")
     (is (= #{::always} (rec/passed (assoc d ::b "z"))) "b names ::b")))
 
-;;; ------------------------- the mask travels with the draft -------------------------
+;;; ------------------------- the record travels with the draft -------------------------
 
-(deftest the-mask-survives-everything-that-is-not-a-write
+(deftest the-record-survives-everything-that-is-not-a-write
   (let [d (rec/draft led)]
     (testing "with-meta"
       (let [m (with-meta d {:user-key 1})]
         (is (= all-checks (rec/passed m)))
         (is (= 1 (:user-key (meta m))))
         (is (= all-checks (:recognitum.core/passed (meta m)))
-            "and `meta` reports the same mask the caller's own keys travelled with")))
+            "and `meta` reports the same record alongside the caller's keys")))
     (testing "adoption, by hand and by a drafting form"
       (is (= all-checks (rec/passed (internal/adopt d (Object.)))))
       (is (= all-checks (seen d rec/passed))))))
@@ -210,9 +195,9 @@
     (is (= #{::b ::always} @a)
         "the inner form passed the draft through, write and verdicts intact")))
 
-;;; ------------------------- the mask is not part of the value -------------------------
+;;; ------------------------- the record is not part of the value -------------------------
 
-(deftest two-drafts-holding-the-same-data-are-equal-whatever-they-have-established
+(deftest two-drafts-holding-the-same-data-are-equal-whatever-they-record
   (let [fresh (rec/draft led)
         used  (assoc (rec/draft led) ::a (::a led))]
     (is (not= (rec/passed fresh) (rec/passed used)))
@@ -224,7 +209,7 @@
 
 (deftest sealing-records-every-verdict-it-reached
   (let [d (-> (rec/draft Ledger) (assoc ::a 1) (assoc ::b "xxx") (assoc ::c :x))]
-    (is (= #{} (rec/passed d)) "built from the type, so nothing was established")
+    (is (= #{} (rec/passed d)) "built from the type, so nothing has run")
     (is (rec/sealed? (rec/seal d)))
     (is (= all-checks (rec/passed d)) "and the seal wrote down what it found")))
 
@@ -235,13 +220,11 @@
       (is (= ::rec/check-failed (:error e)))
       (is (= [::a-fits] (keys (:failures e)))))
     (is (= #{::a ::b ::always} (rec/passed d))
-        "::b was re-established, ::a-fits stays cleared, ::a was never touched")))
+        "::b ran and passed, ::a-fits stays cleared, ::a was never touched")))
 
 (deftest a-check-that-throws-leaves-its-verdict-alone
-  ;; A throw is a bug in the check rather than a verdict about the data, so there is
-  ;; nothing to record: the bit says what it said before the check was reached. Nor is a
-  ;; throw retroactive about anything else -- the verdicts reached before it stand, which
-  ;; is the same rule that keeps the passes of a failed seal.
+  ;; A throw records nothing, so the bit says what it said before; the results reached
+  ;; before it stand.
   (let [d (-> (rec/draft (->Fragile 1 2)) (assoc ::n 3) (assoc ::m "not a number"))]
     (is (= #{} (rec/passed d)) "each write cleared the check naming the field it wrote")
     (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/seal d)))
@@ -251,8 +234,6 @@
 ;;; -------------------------------- what passed answers --------------------------------
 
 (deftest passed-answers-for-a-sealed-value-too
-  ;; A sealed value has no mask, and does not need one: every check on the type passed, and
-  ;; so every certificate is held. The two names answer for both forms of a value.
   (is (= all-checks (rec/passed led)))
   (is (= #{::rec/every-check} (rec/certificates led)))
   (is (= #{} (rec/passed (->Nothing 1))) "a type with no checks has none passing")
@@ -290,9 +271,8 @@
         (range n)))
 
 (deftest a-type-wider-than-the-mask-does-not-compile
-  ;; The mask is one long, so a 65th check would alias the first: a passing check 0 would
-  ;; make check 64 count as passed, and a value could seal without it ever running. That is
-  ;; the exact failure this library exists to prevent, so it is a compile error instead.
+  ;; The record is one long, so a 65th check would alias the first and a value could seal
+  ;; on a check that never ran.
   (let [e (compile-data (list 'recognitum.core/defrecord 'TooManyChecks
                               (n-fields 1) {:checks (n-checks 65)}))]
     (is (= ::rec/too-many-checks (:error e)))
@@ -302,8 +282,8 @@
   (testing "the full width itself is fine"
     (is (nil? (compiles (list 'recognitum.core/defrecord 'WideChecks
                               (n-fields 1) {:checks (n-checks 64)})))))
-  (testing "the written-field mask has the same width and nothing can reach it: a type of
-            21 fields has a positional constructor of 21 parameters, and Clojure allows 20"
+  (testing "a type of 21 fields does not compile either: its positional constructor would
+            take 21 parameters, and Clojure allows 20"
     (is (some? (compiles (list 'recognitum.core/defrecord 'WideFields (n-fields 21) {}))))))
 
 (deftest the-highest-bit-still-answers

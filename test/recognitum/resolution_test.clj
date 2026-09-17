@@ -1,14 +1,7 @@
 (ns recognitum.resolution-test
-  "Compile-time resolution of what an arglist names.
-
-  An arglist holds two kinds of entry: a symbol naming a field of this type, or a keyword
-  naming an io-dep of this type. Every one of them is resolved while the macro runs, so a
-  dependency that names nothing is a compile error naming the offender rather than an index
-  entry under a key no write can ever produce.
-
-  The point is that there is nowhere left for a dependency to be wrong. B1 made the arglist
-  the only place a dependency is declared; B2 makes every entry in it resolve or refuse to
-  compile."
+  "Compile-time resolution of what an arglist names: a symbol naming a field of this type,
+  or a keyword naming an io-dep of this type. Every entry is resolved while the macro runs,
+  so an entry that names nothing is a compile error naming the offender."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -100,10 +93,9 @@
 ;;; ------------------------- a keyword names an io-dep, or nothing -------------------------
 
 (deftest a-keyword-in-an-arglist-must-name-a-declared-io-dep
-  ;; A keyword in an arglist always means an io-dep, and this type declares none, so every
-  ;; keyword in it is unresolvable -- but it is rejected as an unknown io-dep, not as a
-  ;; stray symbol, because which kind of thing it is is visible where it is written. One
-  ;; that does resolve, against a declared `:io-deps`, is `recognitum.io-deps-test`.
+  ;; A keyword in an arglist means an io-dep, and this type declares none, so it is refused
+  ;; as an unknown io-dep rather than as a stray symbol. One that resolves is
+  ;; `recognitum.io-deps-test`.
   (let [e (compile-data '(recognitum.core/defrecord Fetching
                            [a]
                            {:checks {:scratch/c ([a :scratch/roster] (= a roster))}}))]

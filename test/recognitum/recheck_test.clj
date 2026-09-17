@@ -1,21 +1,12 @@
 (ns recognitum.recheck-test
-  "`recheck`, and why one verb was not enough.
+  "`recheck`: `check` with every check named run whether or not it is recorded as passing.
 
-  `check` *establishes*: it skips whatever the verdict mask already says passes, which is
-  what makes a second call free and a seal after a bulk check perform no IO. That is the
-  right default and the wrong answer to one question -- \"is this still true of the world?\"
-  A check over a fetch is a verdict at a point in time, and the mask cannot tell a verdict
-  that still holds from one that has quietly stopped holding.
-
-  So `recheck` runs what it names whether or not its bit is set. On a draft the result is
-  written back into the mask, which means a check that passed an hour ago and fails against
-  today's database is *un-passed* -- the draft stops claiming it, and a later `seal` runs it
-  again. On a sealed value there is no mask to write, and the value cannot change: `recheck`
-  runs and answers, and the answer is a report about the world rather than a verdict about
-  the value.
-
-  Everything else is `check`. Same four names, same arguments, same keyed answer, the same
-  one fetch per call shared across everything that names it."
+  An external validation is true as of when it ran, and the record cannot tell a result
+  that still holds from one that has stopped holding. On a draft `recheck` writes each
+  result back, so a check that passed before and fails now is no longer recorded as
+  passing and the next `seal` runs it again. On a sealed value there is no record to write
+  and the value cannot change, so `recheck` reports the current result. Everything else is
+  `check`: the same names, arguments, keyed answer, and one fetch per call."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]))
@@ -24,11 +15,11 @@
   [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-;;; ------------------------------------- the world -------------------------------------
+;;; ------------------------------------ the database ------------------------------------
 
 (def ^:private vetted
-  "Who the house has vouched for, as of right now. Mutable, because that is the whole
-  point: a verdict about it can stop being true without anything about the value moving."
+  "Who the house has vouched for. Mutable, so a check over it can stop passing without the
+  value changing."
   (atom #{:charlie :lyle}))
 
 (def ^:private log (atom []))
@@ -80,12 +71,12 @@
 
 ;;; --------------------------- it runs what check would skip ---------------------------
 
-(deftest recheck-runs-a-check-whose-bit-is-already-set
+(deftest recheck-runs-a-check-already-recorded-as-passing
   (let [d (crew "one" #{:charlie})]
     (is (true? (rec/check d ::name)))
     (is (= 1 (ran ::name)))
     (is (true? (rec/check d ::name)))
-    (is (= 1 (ran ::name)) "check establishes, so the second call is free")
+    (is (= 1 (ran ::name)) "check skips a check recorded as passing")
     (is (true? (rec/recheck d ::name)))
     (is (= 2 (ran ::name)) "recheck runs it regardless")
     (is (true? (rec/recheck! d ::name)))
@@ -112,37 +103,37 @@
       (is (= ::rec/check-failed (:error e)))
       (is (= [::name] (vec (keys (:failures e))))))))
 
-;;; ------------------------- a verdict the world took back -------------------------
+;;; ------------------------- a check that stopped passing -------------------------
 
-(deftest a-check-that-passed-and-now-fails-is-un-passed
-  ;; The case the verb exists for. Nothing about the draft moved; the database did.
+(deftest a-check-that-passed-and-now-fails-is-no-longer-recorded-as-passing
+  ;; Nothing about the draft changed; the database did.
   (let [d (crew "one" #{:charlie :lyle})]
     (is (true? (rec/check d ::all-vetted)))
     (is (contains? (rec/passed d) ::all-vetted))
     (swap! vetted disj :lyle)
-    (testing "check believes the mask, so it says nothing has changed"
+    (testing "check answers from the record, so it says nothing has changed"
       (is (true? (rec/check d ::all-vetted)))
-      (is (= 1 (ran ::roster)) "and fetches nothing, which is what the mask buys"))
-    (testing "recheck asks the world"
+      (is (= 1 (ran ::roster)) "and fetches nothing"))
+    (testing "recheck fetches again"
       (is (= {::all-vetted false} (rec/recheck d ::all-vetted)))
       (is (= 2 (ran ::roster)))
       (is (not (contains? (rec/passed d) ::all-vetted))
-          "the bit is cleared: the draft stops claiming what is no longer true")
+          "no longer recorded as passing")
       (is (not (contains? (rec/certificates d) ::vouched))))
-    (testing "so the seal it would have sailed through now refuses"
+    (testing "so the seal runs it again and refuses"
       (let [e (err #(rec/seal d))]
         (is (= ::rec/check-failed (:error e)))
         (is (= [::all-vetted] (vec (keys (:failures e)))))))))
 
-(deftest a-check-that-passes-again-keeps-its-bit
+(deftest a-check-that-passes-again-stays-recorded-as-passing
   (let [d (crew "one" #{:charlie})]
     (is (true? (rec/check d ::all-vetted)))
     (is (true? (rec/recheck d ::all-vetted)))
     (is (contains? (rec/passed d) ::all-vetted))
     (is (= #{::crew ::all-vetted} (rec/passed d))
-        "::crew is the gate it waited on; ::name gates nothing and was never asked for")))
+        "::crew is the shape validation it waited on; nothing waits on ::name and it was not asked for")))
 
-(deftest a-check-that-was-failing-and-now-passes-is-set-by-recheck
+(deftest a-check-that-was-failing-and-now-passes-is-recorded-by-recheck
   (let [d (crew "one" #{:charlie :mole})]
     (is (= {::all-vetted false} (rec/check d ::all-vetted)))
     (is (not (contains? (rec/passed d) ::all-vetted)))
@@ -157,11 +148,11 @@
     (is (true? (rec/recheck d rec/every-check)))
     (is (= 2 (ran ::roster)) "and no longer than the call")))
 
-(deftest a-gate-that-fails-stops-a-recheck-as-it-stops-a-check
+(deftest a-failing-shape-validation-stops-a-recheck-as-it-stops-a-check
   (let [d (crew "one" "not a crew")]
     (is (= {::crew false} (rec/recheck d ::all-vetted))
-        "the blocking check's entry, and no entry for the one that never ran")
-    (is (= 0 (ran ::roster)) "and nothing reached the outside")))
+        "the failing check's entry, and no entry for the one that never ran")
+    (is (= 0 (ran ::roster)) "and nothing was fetched")))
 
 ;;; -------------------------------- a sealed value --------------------------------
 
@@ -169,11 +160,11 @@
   (let [c (->Crew "one" #{:charlie :lyle})]
     (reset! log [])
     (is (true? (rec/check c rec/every-check)))
-    (is (= [] @log) "check has nothing to establish on a sealed value")
+    (is (= [] @log) "check runs nothing on a sealed value")
     (is (true? (rec/recheck c rec/every-check)))
     (is (= 1 (ran ::all-vetted)) "recheck runs it")
     (is (= 1 (ran ::roster)))
-    (testing "and answers about the world rather than about the value"
+    (testing "and answers with the current result rather than about the value"
       (swap! vetted disj :lyle)
       (is (= {::all-vetted false} (rec/recheck c ::all-vetted)))
       (is (= ::rec/check-failed (:error (err #(rec/recheck! c ::all-vetted)))))
@@ -189,7 +180,7 @@
 
 ;;; ------------------------------------ groups ------------------------------------
 
-(deftest recheck-all-runs-every-value-regardless-of-its-mask
+(deftest recheck-all-runs-every-value-whatever-it-records
   (let [ds [(crew "one" #{:charlie}) (crew "two" #{:lyle})]]
     (is (= [true true] (rec/check-all ds ::all-vetted)))
     (is (= 1 (ran ::roster)))
@@ -199,7 +190,7 @@
     (is (= 2 (ran ::roster)) "one more fetch, for the whole group")
     (is (= 4 (ran ::all-vetted)))))
 
-(deftest recheck-all-un-passes-per-value
+(deftest recheck-all-writes-each-value-its-own-result
   (let [ds [(crew "one" #{:charlie}) (crew "two" #{:lyle})]]
     (is (= [true true] (rec/check-all ds ::all-vetted)))
     (swap! vetted disj :lyle)
@@ -207,7 +198,7 @@
     (is (contains? (rec/passed (first ds)) ::all-vetted))
     (is (not (contains? (rec/passed (second ds)) ::all-vetted)))))
 
-(deftest recheck-all-bang-insists-on-the-answer
+(deftest recheck-all-bang-throws-on-failure
   (let [ds [(crew "one" #{:charlie}) (crew "two" #{:lyle})]]
     (is (true? (rec/recheck-all! ds ::all-vetted)))
     (swap! vetted disj :lyle)

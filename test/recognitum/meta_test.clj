@@ -1,21 +1,10 @@
 (ns recognitum.meta-test
-  "Uniform `meta`: the library's own keys merged over the user's, from both forms of a value.
-
-  `meta` answers the same shape whether it is handed a draft or a sealed value, so nothing
-  has to establish which it is holding before asking. Two keys are always present:
-
-      :recognitum.core/passed       the checks currently passing
-      :recognitum.core/certificates the certificates currently held
-
-  On a draft both are read off the verdict mask, so they say what has actually been
-  established about that draft as it stands. On a sealed value every check passed and every
-  certificate is therefore held, so both are constants of the type -- they carry no
-  information there, but a common interface is worth more than the absence of a constant.
-
-  The library's keys are merged *over* the user's, not under. `with-meta` is public, so
-  anything a caller could set a caller could forge; keys written last cannot be overridden
-  by anything handed in. Nothing here is part of the value: the keys are metadata, take no
-  part in `=` or `hash`, and do not survive printing."
+  "`meta`: the library's own keys merged over the caller's, from both forms of a value.
+  `:recognitum.core/passed` is the checks currently passing and
+  `:recognitum.core/certificates` the certificates currently held; on a draft both are read
+  off its record, and on a sealed value both are constants of the type. The library's keys
+  are merged over the caller's, so `with-meta` cannot override them. The keys take no part
+  in `=` or `hash`, and do not survive printing."
   (:require
    [clojure.edn :as edn]
    [clojure.test :refer [deftest is testing]]
@@ -51,7 +40,7 @@
 (def ^:private note (->Note "hi" "a longer body" :memo))
 
 (defn- whole
-  "A draft of `Note` with every field written and nothing established."
+  "A draft of `Note` with every field written and nothing recorded as passing."
   ([] (whole "hi" "a longer body" :memo))
   ([title body tag]
    (-> (rec/draft Note)
@@ -96,7 +85,7 @@
 
 ;;; ---------------------------------- a draft answers ----------------------------------
 
-(deftest a-draft-from-the-type-has-established-nothing
+(deftest a-draft-from-the-type-reports-nothing-passing
   (let [d (rec/draft Note)]
     (is (= {::rec/passed #{} ::rec/certificates #{}} (meta d)))))
 
@@ -107,11 +96,11 @@
 (deftest a-draft-of-a-type-with-no-checks-holds-the-built-in-vacuously
   (is (= {::rec/passed #{} ::rec/certificates #{::rec/every-check}} (meta (rec/draft Bare)))))
 
-(deftest a-draft-reports-what-has-been-established-on-it
+(deftest a-draft-reports-what-has-passed-on-it
   (let [d (whole)]
     (is (= #{} (passed d)))
     (is (true? (rec/check d ::title)))
-    (is (= #{::title} (passed d)) "one check establishes one verdict")
+    (is (= #{::title} (passed d)) "one check, one entry")
     (is (= #{} (certs d)) "and no certificate, since ::shape wants three")
     (is (true? (rec/check d ::body)))
     (is (true? (rec/check d ::tag)))
@@ -126,7 +115,7 @@
     (is (true? (rec/check d ::title)))
     (is (= {::long false} (rec/check d ::long)) "the body says less than the title")
     (is (= #{::title ::body} (passed d))
-        "::long waits on both shape validations, so establishing it established them")
+        "::long waits on both shape validations, so running it ran them")
     (is (= #{} (certs d)))))
 
 (deftest certifying-shows-up-as-the-certificate-being-held
@@ -190,13 +179,13 @@
   (let [d (with-meta (rec/draft Note) {::rec/passed all-checks
                                        ::rec/certificates all-certs
                                        :src :test})]
-    (is (= #{} (passed d)) "nothing has been established, whatever the caller wrote")
+    (is (= #{} (passed d)) "nothing has run, whatever the caller wrote")
     (is (= #{} (certs d)))
     (is (= :test (:src (meta d))) "and the caller's own keys are untouched")))
 
 (deftest handing-a-value-its-own-metadata-back-changes-nothing
-  ;; The round trip a caller makes without thinking: read the metadata, add a key, write it
-  ;; back. The library's keys go in as data and come back out as the answer.
+  ;; Read the metadata, add a key, write it back: the library's keys go in as data and come
+  ;; back as the answer.
   (let [d  (whole)
         _  (rec/check d ::title)
         d' (with-meta d (assoc (meta d) :src :test))]
@@ -213,8 +202,6 @@
 ;;; --------------------------- the same question of either form ---------------------------
 
 (deftest a-draft-and-a-sealed-value-answer-the-same-way
-  ;; The point of the uniformity: a caller reads the key without first asking which form it
-  ;; is holding.
   (let [xs [note (rec/draft note) (whole) (rec/draft Note)]]
     (doseq [x xs]
       (is (set? (passed x)))
@@ -222,7 +209,7 @@
       (is (every? all-checks (passed x)))
       (is (every? all-certs (certs x)))))
   (is (= (meta note) (meta (rec/draft note)))
-      "a draft of a sealed value has established exactly what the sealed value guarantees"))
+      "a draft of a sealed value records every check passing, as the sealed value does"))
 
 (deftest sealing-a-draft-produces-the-sealed-constant
   (let [d (with-meta (whole) {:src :test})
@@ -236,9 +223,7 @@
     (is (= {:src :test ::rec/passed all-checks ::rec/certificates all-certs} (meta s)))))
 
 (deftest passed-and-certificates-answer-for-both-forms-and-agree-with-meta
-  ;; They carry the same names as the keys and must carry the same values. A draft reads
-  ;; its mask; a sealed value reads the type's constant, since being sealed is exactly
-  ;; every check having passed.
+  ;; They carry the same names as the keys and must carry the same values.
   (doseq [x [note (rec/draft note) (whole) (rec/draft Note) (->Bare :x) (rec/draft Bare)]]
     (is (= (::rec/passed (meta x)) (rec/passed x)) (pr-str x))
     (is (= (::rec/certificates (meta x)) (rec/certificates x)) (pr-str x)))

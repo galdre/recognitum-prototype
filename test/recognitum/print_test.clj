@@ -49,9 +49,8 @@
     (is (thrown? RuntimeException (read-string s)))))
 
 (deftest the-library-does-not-register-for-you
-  ;; recognitum.core never touches *data-readers*. This project's dev/data_readers.clj does,
-  ;; which is the consumer half of the story and the only mechanism that actually works --
-  ;; alter-var-root at load time would be masked by clojure.main's thread binding.
+  ;; `recognitum.core` never touches `*data-readers*`; `dev/data_readers.clj` does. An
+  ;; `alter-var-root` at load time would be masked by clojure.main's thread binding.
   (testing "dev/data_readers.clj puts the tag in *data-readers* at startup"
     (is (contains? *data-readers* 'recognitum.heist/Heist))
     (is (= job (read-string (pr-str job))))

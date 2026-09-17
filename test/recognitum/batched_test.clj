@@ -1,25 +1,10 @@
 (ns recognitum.batched-test
   "Batched fetches: `[[crew] :as rows]`.
 
-  An io-dep may be written either way, and the two are told apart by the reader rather than
-  by convention -- `[[crew] :as rows]` is not a legal function arglist, so the macro knows at
-  expansion time which form it has. (`[[crew]]` alone *is* legal, which is why the `:as` is
-  required.)
-
-  What the inner vector holds is the dependency declaration, exactly as a singular arglist
-  is: a symbol names a field, a keyword names another io-dep, and everything downstream --
-  the gate, the fetch order, the field -> checks index -- is derived from it without knowing
-  which form was written. What the `:as` binds is the collection of argument tuples, and it
-  is the only thing the body sees: there are many tuples, so there is nothing for the inner
-  names to be bound to.
-
-  The return shapes differ accordingly. A singular fetch returns the value; a batched fetch
-  returns a map keyed by the argument tuple, `{[crew] result}`. Keying by the tuple rather
-  than aligning positionally is what lets the library deduplicate rather than the author,
-  and it is what makes a tuple the batch did not answer distinguishable from one it answered
-  with `nil`.
-
-  Checks are never batched. A check judges one value."
+  The inner vector is the dependency declaration, as a singular arglist is, and what `:as`
+  binds is the collection of argument tuples, which is all the body sees. A batched fetch
+  returns a map keyed by argument tuple, `{[crew] result}`, so a tuple the batch did not
+  answer is told from one it answered with `nil`. Checks are never batched."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
@@ -61,8 +46,7 @@
 (defn- ran [k] (count (filter #(= k %) @log)))
 (defn- order [& ks] (into [] (filter (set ks)) @log))
 
-;; What a batched fetch was handed, verbatim, call by call. The shape of that argument is
-;; the whole of the batched contract on the way in.
+;; What a batched fetch was handed, call by call.
 (def ^:private handed (atom []))
 (defn- saw! [rows] (swap! handed conj rows) rows)
 
@@ -72,9 +56,8 @@
 
 ;;; ------------------------------------- the types -------------------------------------
 
-;; The shape `recognitum.io-deps-test` uses, with the fetch batched. `::roster` names
-;; `crew` and nothing else, so the gate in front of it is the checks over `crew` alone, and
-;; two checks name it, so one call is what naming them is for.
+;; `recognitum.io-deps-test`'s type, with the fetch batched. `::roster` names `crew` and
+;; nothing else, so it waits on the checks over `crew` alone; two checks name it.
 (rec/defrecord Job
   [name crew cuts]
   {:checks
@@ -97,7 +80,7 @@
 (def ^:private job (->Job "The Italian Job" #{:charlie :lyle} {:charlie 1 :lyle 1}))
 
 (defn- whole
-  "A draft of the type with every field written and nothing established about it."
+  "A draft of the type with every field written and nothing recorded as passing."
   []
   (-> (rec/draft Job)
       (assoc ::name "The Italian Job")
@@ -194,7 +177,7 @@
     (is (= [::crew] (:deps d))
         "the inner vector is the dependency declaration, resolved to field keys")
     (is (= [::crew] (:fields d))
-        "and those fields are what gates the fetch")
+        "and the fetch waits on the pure checks over those fields")
     (is (= #{::roster} (:io-names (internal/model-of Job))))))
 
 (deftest the-two-forms-are-told-apart-by-the-reader
@@ -266,11 +249,11 @@
         (is (true? (rec/check d' ::only-roster-gets-a-cut)))
         (is (= 1 (ran ::roster)))))))
 
-;;; ------------------------------------ the gate ------------------------------------
+;;; ------------------------------ what the fetch waits on ------------------------------
 
 (deftest a-batched-fetch-waits-on-the-checks-over-the-fields-it-names
   ;; `roster/fetch-rosters` throws on anything that is not a crew, so a fetch that ran here
-  ;; would be an exception rather than a report. The gate is what makes it a report.
+  ;; would be an exception rather than a report.
   (let [d (-> (whole) (assoc ::crew "not a crew"))
         e (err #(rec/seal d))]
     (is (= ::rec/check-failed (:error e)))
@@ -279,18 +262,18 @@
     (is (= 0 (roster/call-count)))
     (is (= 0 (ran ::only-roster-gets-a-cut)))))
 
-(deftest the-gate-in-front-of-a-batch-is-narrow
+(deftest a-batched-fetch-does-not-wait-on-checks-over-fields-it-does-not-name
   (let [d (-> (whole) (assoc ::name 42))]
     (is (true? (rec/check d ::only-roster-gets-a-cut)))
     (is (= 1 (ran ::roster)))
-    (is (= 1 (ran ::crew)) "the gate ran")
+    (is (= 1 (ran ::crew)) "the check over the field the fetch names ran")
     (is (= 0 (ran ::name)) "and nothing else did")))
 
-(deftest a-field-a-batched-io-dep-names-is-gated-as-nil-like-any-other
+(deftest an-unwritten-field-a-batched-io-dep-names-is-judged-as-nil-before-the-fetch
   (let [d (assoc (rec/draft Job) ::cuts {:charlie 1})
         r (rec/check d ::only-roster-gets-a-cut)]
     (is (= [::crew] (vec (keys r)))
-        "the gate over the field the batch names, judging the nil nobody wrote")
+        "the shape validation of the field the batch names, judging the nil nobody wrote")
     (is (not (contains? r ::only-roster-gets-a-cut)) "which never ran, so has no entry")
     (is (= 0 (ran ::roster)) "so no tuple was built and nothing was handed anywhere")))
 
@@ -347,7 +330,7 @@
       "declared two-then-one, fetched one-then-two: the order is the graph's")
   (is (= [[[3]]] @handed) "and the tuple holds what the io-dep it named returned"))
 
-;;; ------------------------------ the mask and what it saves ------------------------------
+;;; ---------------------------------- what a write clears ----------------------------------
 
 (deftest a-write-to-a-field-a-batched-fetch-names-clears-the-checks-behind-it
   (let [d (rec/draft job)]
@@ -357,7 +340,7 @@
       (is (= #{::name ::cuts} (rec/passed d'))
           "the checks behind the batch go stale with the field the batch names"))))
 
-(deftest a-verdict-already-established-costs-no-batched-fetch-at-the-seal
+(deftest a-check-already-passing-costs-no-batched-fetch-at-the-seal
   (let [d (whole)]
     (is (true? (rec/check d rec/every-check)))
     (is (= 1 (ran ::roster)))
@@ -469,9 +452,7 @@
                                '(recognitum.core/defrecord BatchedCheck2
                                   [a]
                                   {:checks {:scratch/c ([[a] :as rows] (every? int? rows))}})))))
-  (testing "while a check arglist that merely destructures is refused as it always was"
-    ;; `[[a]]` is a legal arglist and there is no batched form for a check to have been
-    ;; reaching for, so it stays what it was: an entry naming nothing.
+  (testing "while a check arglist that merely destructures is refused as an entry naming nothing"
     (let [e (compile-data '(recognitum.core/defrecord Destructuring
                              [a]
                              {:checks {:scratch/c ([[a]] true)}}))]

@@ -1,24 +1,13 @@
 (ns recognitum.cost-test
-  "What the library costs, and what it must not start costing again.
+  "What the library costs, as a multiple of the hand-rolled `defrecord` in
+  `recognitum.bench`, the one the README's table was measured against.
 
-  The library's cost is published as a table of it against the same validation written by
-  hand, and a published number rots the way published prose does: nothing fails when a
-  change makes a row three times what it says. This suite is the part of that table a test
-  can hold -- not the figures, which belong to the machine they were taken on, but the
-  multiple of the hand-rolled twin each shape stays within. The twin is the one
-  `recognitum.bench` uses, which is the one the table was measured against, so a row here
-  and a row there are the same comparison.
+  The bounds are several times the measured ratio: a bound tight enough to catch a 20%
+  regression fails on a busy machine. What they catch is a fixed cost paid per validation
+  call, large enough to swamp the checks it runs.
 
-  The bounds are deliberately loose -- several times the measured ratio -- because a bound
-  tight enough to catch a 20% regression is tight enough to fail on a busy machine, and a
-  test that fails for a reason nobody can act on gets deleted. What they catch is the class
-  of regression this step exists to undo: a fixed cost paid per validation call, whatever
-  the call was asked to do, large enough to swamp the work. That is what an eleven-fold
-  drafting row was.
-
-  The second half is about what the cheap path must keep doing. A call with nothing pending
-  now answers before it enters a phase, so what a seal owes that is not a check -- refusing
-  an undeclared key -- has to survive being reached by a route that runs nothing at all."
+  The second half pins what a call with nothing to run still does: refuse an undeclared
+  key, fetch nothing, and answer from the record of which checks pass."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.bench :as b]
@@ -60,7 +49,7 @@
 (defn- within?
   [label bound [r m l]]
   (is (<= r bound)
-      (format "%s: %.0f ns hand-rolled, %.0f ns library -- %.1fx, and the published figure for this row claims it stays under %.1fx"
+      (format "%s: %.0f ns hand-rolled, %.0f ns library -- %.1fx, and the bound is %.1fx"
               label m l r bound)))
 
 ;;; ----------------------------- the multiples the table publishes -----------------------------
@@ -69,18 +58,11 @@
 ;; library's value over the same fields, and both sides run the same six checks.
 
 (deftest a-single-write-inside-a-drafting-stays-within-its-multiple
-  ;; The row that went wrong, and the most diagnostic of the three: one write invalidates
-  ;; one check, so there is a single check's worth of work here and everything else is the
-  ;; library's own overhead. It read sixteen times the hand-rolled twin inside this suite,
-  ;; because every validation call paid for a group pass whether or not it had anything to
-  ;; run.
-  ;;
-  ;; The bound is high because this suite is a bad place to measure the library and a fine
-  ;; place to measure a catastrophe. Every call site into `recognitum.core` is megamorphic
-  ;; by the time forty-odd types have been defined across the other files, which costs the
-  ;; library side roughly twice what the benchmark's own JVM reads for the same shape and
-  ;; costs the hand-rolled side nothing. Here that is seven or eight; alone it is three and
-  ;; a half.
+  ;; One write invalidates one check, so nearly everything measured here is the library's
+  ;; own overhead. The bound is high because every call site into `recognitum.core` is
+  ;; megamorphic by the time the suite has defined forty-odd types, which costs the library
+  ;; side roughly twice what the benchmark reads for the same shape and costs the
+  ;; hand-rolled side nothing.
   (within? "one rename in a drafting" 12.0
            (ratio #(b/m-validate! (assoc b/r :name "n0") [:name])
                   #(drafting [x b/h] (assoc x ::b/name "n0")))))
@@ -93,9 +75,8 @@
                   #(drafting [x BenchHeist] (into x b/qbase)))))
 
 (deftest a-three-field-update-inside-a-drafting-stays-within-its-multiple
-  ;; The benchmark's add-member shape, written out here rather than reached through its
-  ;; private helpers: three writes in one `drafting`, which is one round of checks at the
-  ;; seal against the hand-rolled side's one round at the end.
+  ;; The benchmark's add-member shape: three writes in one `drafting`, one round of checks
+  ;; at the seal against the hand-rolled side's one round at the end.
   (within? "one add-member in a drafting" 2.0
            (ratio #(b/m-validate! (-> b/r
                                       (assoc :crew (conj (:crew b/r) :m0))
@@ -109,25 +90,16 @@
                          (assoc ::b/take (+ (::b/take x) 10)))))))
 
 (deftest a-merge-onto-a-sealed-value-stays-within-its-multiple
-  ;; The row the published table has the library losing, and the one where the comparison is
-  ;; closest to being about bookkeeping rather than work: both sides run each applicable
-  ;; check once at the end, over the same values, so whatever separates them is what the
-  ;; library does around the checks. What it was doing was building a sorted set per write
-  ;; out of the field -> checks index, and an intermediate map of the entries to construct
-  ;; the new value through -- neither of them a question the type had not already answered
-  ;; when it compiled.
-  ;;
-  ;; The bound is tighter than the rows above because nothing here is amortized over a
-  ;; batch: what the library pays beyond the checks it pays once per merge and shows up
-  ;; whole, and it is not a shape megamorphic call sites cost much -- this row reads about
-  ;; a tenth higher in the suite than in the benchmark where the drafting rows read double.
-  ;; So a quarter above parity is room for a busy machine; half again is a data structure
-  ;; per write, back again.
+  ;; Both sides run each applicable check once at the end, over the same values, so
+  ;; whatever separates them is what the library does around the checks. Nothing here is
+  ;; amortized over a batch, and megamorphic call sites cost this shape little, so the bound
+  ;; is tighter: a quarter above parity is room for a busy machine, and half again is a data
+  ;; structure per write.
   (within? "merge two fields onto a sealed value" 1.4
            (ratio #(b/m-merge b/r {:take 3000 :cuts b/valid-cuts})
                   #(merge b/h {::b/take 3000 ::b/cuts b/valid-cuts}))))
 
-;;; ------------------------- what a call with nothing pending still owes -------------------------
+;;; ------------------------- what a call with nothing to run still does -------------------------
 
 (def ^:private runs (atom []))
 (defn- ran! [k] (swap! runs conj k) true)
@@ -173,14 +145,14 @@
     (is (= t (drafting [x t] x)) "the same value, reached by running nothing")
     (is (zero? (count @runs)))))
 
-(deftest a-check-already-established-answers-true-without-being-run-again
+(deftest a-check-already-passing-answers-true-without-being-run-again
   (let [d (tally)]
     (is (true? (rec/check d ::a)))
     (is (= 1 (ran ::a)))
-    (is (true? (rec/check d ::a)) "the mask answers, and answers `true` rather than a verdict-shaped thing")
+    (is (true? (rec/check d ::a)) "answered from the record, and as `true` rather than as a map")
     (is (= 1 (ran ::a)) "still once")))
 
-;;; ------------------------- alignment, where some values owe nothing -------------------------
+;;; ------------------------- alignment, where some values have nothing to run -------------------------
 
 (rec/defrecord Party
   [crew]
@@ -196,13 +168,13 @@
 (deftest a-group-answers-in-order-with-a-hole-where-a-value-owed-nothing
   (let [ds [(party #{:charlie}) (party #{:stranger}) (party #{:lyle})]]
     (is (= [true] (rec/check-all [(first ds)] ::known))
-        "the first value is established on its own, so the group call finds it done")
+        "the first value passes on its own, so the group call has nothing to run for it")
     (roster/reset-calls!)
     (let [rs (rec/check-all ds ::known)]
       (is (= [true {::known false} true] rs)
-          "index-aligned, with the established value's answer read off its mask")
+          "index-aligned, with the first value's answer read off its record")
       (is (= 1 (roster/call-count :fetch-rosters))
-          "one batched call for the whole group, whatever the established value did")
+          "one batched call for the whole group")
       (is (= [[#{:stranger}] [#{:lyle}]]
              (second (first (filter (fn [[f]] (= :fetch-rosters f)) @roster/calls))))
           "and it was handed the tuples of the two values that still owed a fetch, in order"))))
@@ -212,5 +184,5 @@
     (is (= [true true] (rec/check-all ds ::known)))
     (roster/reset-calls!)
     (is (= [true true] (rec/check-all ds ::known))
-        "asked again, and every answer is already in a mask")
+        "asked again, and every answer is already recorded")
     (is (zero? (roster/call-count)) "so nothing was fetched a second time")))

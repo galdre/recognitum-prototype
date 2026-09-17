@@ -1,22 +1,11 @@
 (ns recognitum.protocol-test
-  "Protocol implementations: one body, installed on both generated types.
-
-  `defrecord` generates two types, so a protocol written once has to serve both. On the
-  draft type the body runs exactly as written. On the sealed type it is wrapped: the method
-  opens a draft of the receiver, runs the body against that, and seals what comes back --
-  so a method called on a sealed value cannot produce an invalid one whatever it does
-  inside, and the same body serves the impl layer unchanged.
-
-  Only a draft of *this* type is sealed on the way out. Most protocol methods return
-  something else entirely -- a number, a string, a map -- and those pass through untouched,
-  as does a value that is already sealed.
-
-  `unsealed` opts a return out of the seal, as `reduced` opts out of a reduction. Both
-  implementations unwrap it, so the body means the same thing wherever it runs; on the draft
-  type it is simply a no-op. `(unsealed x)` where `x` is not a draft of this type throws --
-  the marker asserts what is being returned, and a wrong assertion should say so. `drafting`
-  does not honour it: the wrapper is implicit, so opting out of it is fair, but a `drafting`
-  form is the author asking to seal."
+  "Protocol implementations: one body, installed on both generated types. On the draft type
+  the body runs as written. On the sealed type the method opens a draft of the receiver,
+  runs the body against that, and seals a draft of this type that it returns; anything
+  else passes through untouched. `unsealed` marks a draft a method returns as one not to
+  seal, and both implementations unwrap it. `(unsealed x)` throws where `x` is not a draft,
+  and the method throws where it is a draft of another type. `drafting` and `seal` unwrap
+  the marker and seal the draft inside it."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -48,13 +37,13 @@
 (defprotocol Ledgerish
   (balance        [l]          "a number, which is not a draft of anything")
   (spend          [l amount]   "raises debits before credits: the state in between is invalid")
-  (spend-twice    [l a b]      "calls the method again, so the impl layer is exercised")
+  (spend-twice    [l a b]      "calls the method again")
   (receiver-report [l]         "what the receiver looks like from inside the body")
-  (me             [l]          "the receiver itself, handed back unsealed")
+  (me             [l]          "the receiver itself, returned unsealed")
   (revise         [l who]      "a write, opted out of the seal")
   (hand-back      [l other]    "whatever it was handed")
   (smuggle        [l other]    "a draft of something else, marked unsealed")
-  (nested         [l amount]   "uses `drafting` internally, as an impl fn would")
+  (nested         [l amount]   "uses `drafting` internally")
   (boom           [l]          "throws"))
 
 (defprotocol Described
@@ -179,11 +168,9 @@
 ;;; --------------------------- a primitive-hinted parameter ---------------------------
 
 (deftest a-primitive-hinted-parameter-is-refused-by-clojure-and-not-by-this-library
-  ;; Deferred from the protocol work: can a method body take `^long n`, as a `defrecord`
-  ;; method body appears to be able to? It cannot, and the refusal is Clojure's rather than
-  ;; anything the wrapper does -- which is what these two assertions are for. Each form is
-  ;; written twice, once against `clojure.core/defrecord` and once against this library's,
-  ;; and the two fail the same way at the same point.
+  ;; A method body cannot take `^long n`, and the refusal is Clojure's rather than the
+  ;; wrapper's: each form is written against `clojure.core/defrecord` and against this
+  ;; library's, and the two fail the same way at the same point.
   (testing "hinted where the protocol is declared, the form compiles and the call site does not"
     ;; `defprotocol` generates a dispatch fn that implements IFn and nothing narrower, so a
     ;; call the compiler emits as a primitive invocation has nothing to invoke.
@@ -278,13 +265,12 @@
     (is (rec/draft? (spend-twice (rec/draft led) 20 5)))))
 
 (deftest drafting-inside-a-wrapped-body-passes-the-draft-through-unsealed
-  ;; The wrapper owns the draft, so the inner `drafting` recognises it and does not seal --
-  ;; the re-entrancy `drafting` already provides, applied without anyone asking for it.
+  ;; The wrapper owns the draft, so the inner `drafting` passes it through and does not seal.
   (let [l (nested led 20)]
     (is (rec/sealed? l))
     (is (= 20 (::debits l)))
     (is (= 30 (::credits l))))
-  (testing "called on a free draft the inner `drafting` owns it and does seal"
+  (testing "called on a draft owned by no form, the inner `drafting` adopts it and seals"
     (is (rec/sealed? (nested (rec/draft led) 20)))))
 
 (deftest a-body-that-produces-an-invalid-value-throws-at-the-wrapper
@@ -327,7 +313,7 @@
     (is (rec/draft? d))
     (is (not (rec/sealed? d)))
     (is (= "ivy" (::owner d)))
-    (testing "what the caller receives is a free draft, owned by nothing"
+    (testing "what the caller receives is a draft owned by no drafting"
       (is (nil? (internal/owner-of d))))
     (testing "adoptable by a later drafting"
       (let [l (rec/drafting [x d] (assoc x ::credits 20))]
@@ -338,7 +324,6 @@
       (is (rec/sealed? (rec/seal d))))))
 
 (deftest the-opt-out-does-not-let-an-invalid-value-become-a-sealed-one
-  ;; The draft comes back unvalidated -- that is the point -- but sealing it still refuses.
   (let [d (revise led :not-a-string)]
     (is (rec/draft? d))
     (is (= :not-a-string (::owner d)))
@@ -379,8 +364,8 @@
     (is (rec/of-type? Ledger (smuggle led led)))))
 
 (deftest drafting-does-not-honour-unsealed
-  ;; The wrapper is implicit, so opting out of it is fair; a `drafting` form is the author
-  ;; asking to seal, and a marker that quietly defeated that would be a hole.
+  ;; A `drafting` form is the author asking to seal, and a marker that defeated that would
+  ;; be a way past the checks.
   (let [l (rec/drafting [x led] (rec/unsealed (assoc x ::credits 50)))]
     (is (rec/sealed? l))
     (is (= 50 (::credits l))))

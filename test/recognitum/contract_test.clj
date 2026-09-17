@@ -1,5 +1,5 @@
 (ns recognitum.contract-test
-  "The check contract, and what every entry point owes when a check says no.
+  "The check contract, and what every entry point reports when a check fails.
 
   A check returns `true` -- exactly `true` -- to pass. Anything else is a failure, and what
   it returned is the failure data. An exception is neither: a throw is a bug in the check
@@ -15,7 +15,7 @@
    [recognitum.internal :as internal]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
-  is not an ExceptionInfo propagates, which is the point in half this namespace."
+  is not an ExceptionInfo propagates, which half this namespace relies on."
   [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
@@ -58,8 +58,7 @@
 
 (rec/defrecord Counted
   [n]
-  ;; A predicate that forgot to return a boolean. It is truthy for every input it will ever
-  ;; see, and it passes nothing -- which is the failure mode this rule exists to make loud.
+  ;; Truthy for every input and never `true`, so it passes nothing.
   {:checks {::counted ([n] (count (str n)))}})
 
 (deftest a-check-that-never-returns-true-never-passes
@@ -95,8 +94,6 @@
                      (throw (ex-info "from inside the check" {:error ::mine}))))}})
 
 (deftest an-ex-info-thrown-by-a-check-is-not-mistaken-for-a-check-failure
-  ;; A check is free to throw an ExceptionInfo of its own, and it must come out the way it
-  ;; went in -- not rewritten into the library's own :check-failed.
   (let [e (err #(->Thrower :no))]
     (is (= ::mine (:error e)))
     (is (nil? (:failures e))))
@@ -109,9 +106,8 @@
     ::b-boom ([b] (if (= b :boom) (throw (IllegalStateException. "still a bug")) true))}})
 
 (deftest a-throw-is-not-softened-by-a-failure-beside-it
-  ;; "We could not determine whether this is valid" is a different claim from "this is
-  ;; invalid", and the first one must not be dressed up as the second because some other
-  ;; check happened to fail first.
+  ;; An exception is not a claim about the data, and a failure beside it does not make it
+  ;; one.
   (is (thrown-with-msg? IllegalStateException #"still a bug" (->Mixed "not an int" :boom))))
 
 ;;; ======================= every failure, not the first one =======================
@@ -153,7 +149,7 @@
   (is (= multi-order
          (vec (keys (:failures (err #(rec/drafting [x pair]
                                        (-> x (assoc ::a "x") (assoc ::b "y")))))))))
-  (testing "and so does sealing a free draft by hand"
+  (testing "and so does sealing a draft by hand"
     (is (= multi-order
            (vec (keys (:failures (err #(rec/seal (-> (rec/draft pair)
                                                      (assoc ::a "x")

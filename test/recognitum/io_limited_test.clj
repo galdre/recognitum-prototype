@@ -1,25 +1,12 @@
 (ns recognitum.io-limited-test
   "`:options {:io-limited true}`: draft-only writes.
 
-  A check that queries a database, run on every bare `assoc`, means business logic makes a
-  query per write. The option says so where the type is written: direct `assoc` and `merge`
-  on a *sealed* value are refused for any field an external validation reads, and those writes
-  go through `drafting` instead, where N writes cost one round of checks at the seal rather
-  than N rounds on the way there.
-
-  It is a refusal, not a deferral. The write does not happen, nothing is fetched, and no
-  check runs -- there is nothing to defer to, because the caller asked for a sealed value
-  and a sealed value is what it would have had to produce.
-
-  Which fields it reaches is computed, not declared. A field an external validation reads --
-  its own fields, and the fields of every fetch it names -- is draft-only; a field only
-  pure checks read, or that no check reads at all, is written exactly as before. Declaring
-  io-deps is what makes that distinction computable, so the option narrows itself and the
-  author never restates it.
-
-  Nothing else is affected: drafts take any write, both constructors still validate and
-  still fetch, a protocol method on a sealed value writes freely because its receiver is a
-  draft, and `seal` does the work the writes deferred."
+  Direct `assoc` and `merge` on a sealed value are refused for any field an external
+  validation reads -- its own fields and those of every fetch it names -- so those writes
+  go through `drafting`, where N writes cost one round of checks at the seal. The write
+  does not happen, nothing is fetched, and no check runs. Which fields are limited is
+  computed from the arglists. Drafts take any write, both constructors validate and fetch,
+  and a protocol method on a sealed value writes freely because its receiver is a draft."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
@@ -53,8 +40,8 @@
 
 ;;; ------------------------------------- the log -------------------------------------
 
-;; Every check and every fetch says so. A refused write is supposed to run nothing at all,
-;; and counting is the only way to tell that from "it ran and then threw".
+;; Every check and every fetch logs itself: a refused write runs nothing at all, and
+;; counting is the only way to tell that from "it ran and then threw".
 (def ^:private log (atom []))
 
 (defn- note! [k] (swap! log conj k) nil)
@@ -311,7 +298,7 @@
 (deftest seal-of-a-draft-holding-a-refused-write-still-validates-it
   (let [d (-> (rec/draft job) (assoc ::crew "not a crew"))]
     (is (= ::rec/check-failed (:error (err #(rec/seal d)))))
-    (is (= 0 (roster/call-count)) "the gate still keeps a malformed crew away from the fetch"))
+    (is (= 0 (roster/call-count)) "a malformed crew still does not reach the fetch"))
   (testing "and a good one seals"
     (is (rec/sealed? (rec/seal (-> (rec/draft job) (assoc ::crew #{:charlie :lyle})))))))
 
@@ -396,7 +383,7 @@
 ;; The option is read where the form is written, and it takes a literal `true` or `false`
 ;; or a symbol naming a var holding one. These are the vars the types and the refused forms
 ;; below are written against. They are public because a form compiled in another namespace
-;; names them qualified, which is the whole point of the qualified case.
+;; names them qualified.
 
 (def limit-io
   "A var holding the option's value, read when the types below are compiled."

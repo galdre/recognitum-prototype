@@ -1,18 +1,7 @@
 (ns recognitum.internal
-  "The library's internals, for the suite that tests them.
-
-  `recognitum.core`'s public surface is the vocabulary a caller writes, and nothing else:
-  the model map, the verdict mask and the macro's own parsing are private, because a public
-  name that hands out any of them is a way past the checks -- the model carries an
-  unvalidated draft -> sealed constructor, and writing the mask makes `seal` believe a check
-  that never ran.
-
-  Privacy in Clojure is advisory, and a var is reachable through itself whatever its
-  metadata says. That is the whole of this namespace: one `#'` per internal the suite
-  exercises, gathered here rather than spelled out at fifty call sites, so that what the
-  tests reach around is visible in one place and adding to it is a deliberate act.
-
-  It lives under `test/`, so nothing a consumer has on its classpath can require it."
+  "The private vars of `recognitum.core` the suite reaches through `#'`, one `def` each, so
+  what the tests reach around is visible in one place. It lives under `test/`, so no
+  consumer can require it."
   (:require
    [recognitum.core]))
 
@@ -26,20 +15,20 @@
   "The model for a draft, or nil."
   @#'recognitum.core/draft-model)
 
-;;; ------------------------------------ the verdict mask ------------------------------------
+;;; ------------------------------ which checks a draft passes ------------------------------
 
 (def verdict-mask
-  "The mask of checks currently passing on a draft."
+  "The record of which checks pass on a draft, as a bitmask."
   @#'recognitum.core/verdict-mask)
 
 (def record-verdict!
-  "Write a verdict into a draft's mask."
+  "Record the check at an index as passing or not on a draft."
   @#'recognitum.core/record-verdict!)
 
 ;;; --------------------------------------- ownership ---------------------------------------
 
 (def adopt
-  "Stamp a draft as owned by a token."
+  "A copy of a draft owned by a token."
   @#'recognitum.core/adopt)
 
 (def owner-of

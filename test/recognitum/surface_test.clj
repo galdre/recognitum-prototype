@@ -1,22 +1,12 @@
 (ns recognitum.surface-test
-  "The public surface of `recognitum.core`, and what being off it is worth.
-
-  The whole of what this library claims is one sentence: a value cannot exist unless its
-  checks passed, and there is no constructor that skips them. A public name that hands out
-  the model map is such a constructor -- `:draft-seal` turns a draft into a sealed value and
-  runs nothing -- and a public name that writes the verdict mask is another, because `seal`
-  believes the mask and runs only what the mask does not already call passed.
-
-  Clojure's privacy is advisory: `#'` reaches anything, and this suite uses it. What
-  privacy buys is not a wall but the absence of a door -- a qualified symbol naming a
-  private var does not compile outside the namespace that owns it, so nothing reaches the
-  mask by accident, by autocomplete, or by reading the namespace's public names and
-  believing they are the API. That is the same standard `clojure.core/defrecord` holds its
-  own internals to, and it is what this file pins.
-
-  The first test is the one that matters longest: the set of public vars, written out. A
-  name added to `recognitum.core` without being added here fails the suite, so the surface
-  cannot drift the way it drifted into seventy-three names to begin with."
+  "The public surface of `recognitum.core`. A public name that hands out the model map is a
+  constructor that skips the checks -- `:draft-seal` turns a draft into a sealed value and
+  runs nothing -- and one that writes the record of which checks pass is another, since
+  `seal` runs only what that record does not already say is passing. Privacy is advisory
+  and `#'` reaches anything; what it buys is that a qualified symbol naming a private var
+  does not compile outside the namespace, so nothing reaches either by accident. The first
+  test is the set of public vars, written out, so a name added to `recognitum.core` without
+  being added here fails the suite."
   (:require
    [clojure.set :as set]
    [clojure.test :refer [deftest is testing]]
@@ -33,9 +23,9 @@
   apart: `draft?`, `sealed?`, `of-type?`. Checking, one verb over a check name or a
   certificate name, one value or a group: `check`, `check!`, `check-all`, `check-all!`, and
   the built-in certificate `every-check`, which is a var and not a keyword. Running what
-  the mask would have skipped: `recheck`, `recheck!`, `recheck-all`, `recheck-all!`. What a
-  value has established: `passed`, `certificates`. Opting a protocol method's return out of
-  the implicit seal: `unsealed`. Reading printed values back: `data-readers`."
+  `check` would skip: `recheck`, `recheck!`, `recheck-all`, `recheck-all!`. Which checks a
+  value passes: `passed`, `certificates`. Opting a protocol method's return out of the
+  implicit seal: `unsealed`. Reading printed values back: `data-readers`."
   '#{defrecord drafting draft seal clean
      draft? sealed? of-type?
      check check! check-all check-all!
@@ -57,7 +47,7 @@
       (is (empty? (set/difference vocabulary ps))))))
 
 (deftest the-internals-still-exist-under-their-own-names
-  (testing "narrowing the surface moved nothing and renamed nothing"
+  (testing "each is a var of recognitum.core"
     (doseq [nm '[model-of draft-model verdict-mask record-verdict! adopt owner-of
                  owned-here? definition-sections known-options parse-definition
                  resolve-deps reject-duplicate-names! register! register-draft!
@@ -80,10 +70,8 @@
 (defn- compiles-elsewhere?
   "Does `form` compile in a namespace that is not `recognitum.core`?
 
-  This is the question privacy actually answers. A qualified symbol naming a private var is
-  refused by the compiler with `is not public`, which is what makes `defn-` a narrowing of
-  the surface rather than a note in a docstring. Anything else the compiler objects to is
-  rethrown -- a test that read every failure as proof would pass on a typo."
+  A qualified symbol naming a private var is refused by the compiler with `is not public`.
+  Anything else the compiler objects to is rethrown, so a typo is not read as proof."
   [form]
   (binding [*ns* (create-ns 'recognitum.surface-test.elsewhere)]
     (refer-clojure)
@@ -101,7 +89,7 @@
 
 (deftest nothing-public-writes-the-verdict-mask
   (is (false? (compiles-elsewhere? '(fn [d i p] (recognitum.core/record-verdict! d i p))))
-      "seal believes the mask, so a public writer of it is a way past every check")
+      "seal runs only what the record does not say is passing, so a public writer of it is a way past every check")
   (is (false? (compiles-elsewhere? '(fn [d] (recognitum.core/verdict-mask d)))))
   (is (false? (compiles-elsewhere? '(fn [d] (satisfies? recognitum.core/Verdicts d))))))
 
@@ -132,8 +120,8 @@
                 (catch clojure.lang.ExceptionInfo e (:error (ex-data e)))))
         "so anything that seals it is skipping a check, not passing one")))
 
-(deftest the-forging-path-is-no-longer-spellable-in-public-names
-  (testing "the exploit as it was written"
+(deftest the-forging-path-is-not-spellable-in-public-names
+  (testing "sealing after marking every check passing"
     (is (false? (compiles-elsewhere?
                  '(fn [d] (doseq [i (range 64)]
                             (try (recognitum.core/record-verdict! d i true)
@@ -142,13 +130,11 @@
     (is (false? (compiles-elsewhere?
                  '(fn [x d] ((:draft-seal (recognitum.core/model-of x)) d)))))))
 
-(deftest the-mask-is-still-reachable-through-the-var-because-privacy-is-advisory
-  ;; What privacy is worth is exactly this: the hole is still there for anyone who writes
-  ;; `#'`, and there is no way to write it that does not say so. The suite reaches its own
-  ;; internals the same way, through `recognitum.internal`.
+(deftest the-record-is-reachable-through-the-var-because-privacy-is-advisory
+  ;; The suite reaches the same internals through `recognitum.internal`.
   (let [d (assoc (rec/draft h/italian-job) ::h/take "garbage")]
     (dotimes [i 64] (internal/record-verdict! d i true))
     (let [forged (rec/seal d)]
       (is (instance? Heist forged))
       (is (= "garbage" (::h/take forged))
-          "so the guarantee rests on the surface, which is why the surface is pinned above"))))
+          "so the guarantee rests on the surface"))))

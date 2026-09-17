@@ -1,17 +1,10 @@
 (ns recognitum.record-test
   "The generated types against `clojure.core/defrecord`, operation by operation.
 
-  The first question about any behaviour here is what `defrecord` does for the same
-  operation, and an unrecorded difference is a defect. So this file holds a twin: a real
-  `defrecord` over the same two fields, and every map-surface operation asked of both.
-  Where the answers agree the assertion is written once against both; where this library
-  departs on purpose the test says so in its name and pins each side separately.
-
-  The six rows of the defects table live here -- `=` against a plain map and against an
-  unrelated type, `hash`, `record?`, `empty`, `Serializable` -- and so does the consequence
-  that made them worth fixing: `clojure.walk/postwalk` reaches for `empty` when it does not
-  find `IRecord`, so before this the most ordinary tool in the standard library turned a
-  validated value into a `PersistentArrayMap` without a word."
+  A `defrecord` over the same two fields is asked every map-surface operation alongside the
+  generated type. Where the answers agree the assertion is written once against both; where
+  this library departs on purpose the test says so in its name and pins each side
+  separately."
   (:require
    [clojure.test :refer [deftest is testing]]
    [clojure.walk :as walk]
@@ -24,13 +17,12 @@
 
 ;;; ----------------------------------- the two types -----------------------------------
 
-;; No checks at all, so nothing about the map surface is constrained by validation and
-;; every difference from the twin below is a difference of the template rather than of the
-;; library's business.
+;; No checks, so every difference from the `defrecord` below is a difference of the map
+;; surface rather than of validation.
 (rec/defrecord Twin [alpha beta] {})
 
-;; The same two fields again, under another name. `defrecord` holds that these are not
-;; equal and that their hashes differ; `potemkin/def-map-type` held the opposite.
+;; The same two fields under another name: `defrecord` holds that the two are not equal and
+;; hash differently.
 (rec/defrecord Doppel [alpha beta] {})
 
 ;; A type with checks, for the paths where a rebuild has to survive them.
@@ -46,11 +38,8 @@
 (def ^:private theirs (->PlainTwin 1 2))
 
 (defn- bare
-  "`m` with the defining namespace dropped from its keys -- the twin's spelling of ours.
-
-  Namespace-qualified field keys are a recorded deviation of their own, pinned in
-  `recognitum.qualified-keys-test`. Here it is noise, so it is divided out rather than
-  re-asserted at every line."
+  "`m` with the defining namespace dropped from its keys, which is how the `defrecord`
+  spells them. Qualified keys are pinned in `recognitum.qualified-keys-test`."
   [m]
   (into {} (map (fn [[k v]] [(keyword (name k)) v])) m))
 
@@ -140,9 +129,7 @@
 (deftest equals-and-hashcode-match-a-defrecords-map-contract
   ;; `emit-defrecord` leaves `Object.equals` and `Object.hashCode` to
   ;; `APersistentMap/mapEquals` and `APersistentMap/mapHash`, both class-blind: at the Java
-  ;; level a record *is* a bare map with the same entries, symmetrically, and hashes as
-  ;; one. The baseline rule decides it -- ours answers the same, so the two sit in one
-  ;; bucket and agree when asked.
+  ;; level a record is a bare map with the same entries, and hashes as one.
   (doseq [[what x m] [["defrecord" theirs {:alpha 1 :beta 2}]
                       ["ours"      ours   {::alpha 1 ::beta 2}]]]
     (testing what
@@ -170,13 +157,12 @@
       (is (false? (.equiv theirs (->PlainDoppel 1 2))))
       (is (true? (.equiv theirs (->PlainTwin 1 2)))))))
 
-;;; ============================== the six defect rows ==============================
+;;; ======================= equality, hash, record?, empty, Serializable =======================
 
 (deftest a-bare-map-with-the-right-keys-is-not-a-value-of-the-type
-  ;; Row one, and the first thing this library claims. Both directions, because the answer
-  ;; from the map's side is the map's to give: `APersistentMap.equiv` refuses any
-  ;; `IPersistentMap` that does not carry `clojure.lang.MapEquivalence`, so the fix is the
-  ;; absence of that marker rather than anything our own `equiv` could say.
+  ;; Both directions: `APersistentMap.equiv` refuses any `IPersistentMap` that does not
+  ;; carry `clojure.lang.MapEquivalence`, so the answer from the map's side rests on the
+  ;; absence of that marker.
   (let [m {::alpha 1 ::beta 2}]
     (is (= m (into {} ours)) "the same entries, exactly")
     (is (false? (= ours m)))
@@ -189,9 +175,9 @@
     (is (false? (= {::alpha 1 ::beta 2} (rec/draft ours))))))
 
 (deftest two-unrelated-types-with-the-same-fields-are-not-equal
-  ;; Row two. Twin and Doppel are declared in one namespace, so their field keys are the
-  ;; same keywords and their entries are indistinguishable; the class is the whole of the
-  ;; difference, which is exactly the case `defrecord` decides on the class.
+  ;; Twin and Doppel are declared in one namespace, so their field keys are the same
+  ;; keywords and their entries are indistinguishable; the class is the whole of the
+  ;; difference.
   (let [d (->Doppel 1 2)]
     (is (= (into {} ours) (into {} d)) "the same entries, exactly")
     (is (false? (= ours d)))
@@ -209,8 +195,7 @@
     (is (= theirs (->PlainTwin 1 2)))))
 
 (deftest hash-is-type-aware
-  ;; Row three, which follows from the two above: `=` and `hash` have to agree or the
-  ;; value is broken as a key.
+  ;; `=` and `hash` have to agree, or the value is broken as a key.
   (is (= (hash ours) (hash (->Twin 1 2))))
   (is (not= (hash ours) (hash (into {} ours))))
   (is (not= (hash ours) (hash (->Doppel 1 2))))
@@ -231,7 +216,7 @@
         "mixed in by class name rather than by Class identity")))
 
 (deftest a-value-is-a-record
-  ;; Row four. The marker is what `clojure.walk` asks for, and what the row below is about.
+  ;; `IRecord` is what `clojure.walk` asks for.
   (is (true? (record? ours)))
   (is (true? (record? (rec/draft ours))))
   (is (true? (record? theirs)))
@@ -242,14 +227,12 @@
     (is (false? (instance? clojure.lang.MapEquivalence theirs)))))
 
 (deftest there-is-no-empty-value-of-the-type
-  ;; Row five. The fields are the type, so a value without them is not one -- and a caller
-  ;; asking for an empty one has to be told rather than handed a plain map.
+  ;; The fields are the type, so a value without them is not one.
   (is (= UnsupportedOperationException (threw #(empty ours))))
   (is (= UnsupportedOperationException (threw #(empty (rec/draft ours)))))
   (is (= UnsupportedOperationException (threw #(empty theirs)))))
 
 (deftest a-value-serializes
-  ;; Row six.
   (is (instance? java.io.Serializable ours))
   (is (instance? java.io.Serializable (rec/draft ours)))
   (is (instance? java.io.Serializable theirs))
@@ -269,14 +252,13 @@
       (is (rec/of-type? Ledger back))
       (is (= d back))
       (is (= (rec/passed d) (rec/passed back))
-          "and the mask is a field like any other, so the verdicts come back with it"))))
+          "the record of which checks pass is a field, so it comes back too"))))
 
-;;; ============================== what the rows were for ==============================
+;;; ==================================== clojure.walk ====================================
 
 (deftest postwalk-hands-back-the-value-rather-than-a-plain-map
-  ;; The sharpest consequence of the rows above: without `IRecord`, `clojure.walk/walk`
-  ;; falls through to `(into (empty form) ...)` and the empty of a map type is a map. It
-  ;; never asks for `empty` now, which is why the refusal above costs nothing here.
+  ;; Without `IRecord`, `clojure.walk/walk` falls through to `(into (empty form) ...)`, and
+  ;; `empty` refuses; with it, `walk` never asks for `empty`.
   (doseq [[what x] [["a sealed value" ours]
                     ["a draft"        (rec/draft ours)]
                     ["a checked type" (->Ledger "zoe" 10)]]]
@@ -300,11 +282,9 @@
            (:error (err #(walk/postwalk (fn [x] (if (= x 10) :free x)) (->Ledger "zoe" 10))))))))
 
 (deftest postwalk-on-an-io-limited-value-refuses-rather-than-degrades
-  ;; The worked example of the walk defect is the Heist, which is `:io-limited`, and
-  ;; `clojure.walk` rebuilds a record by `conj`-ing its entries back one at a time -- so
-  ;; every io-limited field is written directly on a sealed value, which is the one thing
-  ;; the option exists to refuse. It refuses, loudly and by name, which is a different
-  ;; thing from the silent degradation the marker was added to stop.
+  ;; `clojure.walk` rebuilds a record by `conj`-ing its entries back one at a time, so on
+  ;; an `:io-limited` type every field an external validation reads is written directly on
+  ;; a sealed value, and the option refuses that.
   (is (= ::rec/io-limited (:error (err #(walk/postwalk identity heist/italian-job)))))
   (testing "and the draft, which the option says nothing about, walks"
     (let [d (rec/draft heist/italian-job)]
@@ -348,9 +328,8 @@
       (is (= (hash ours) (hash (with-meta ours {:src :test})))))))
 
 (deftest ours-departs-a-value-is-callable-where-a-defrecord-is-not
-  ;; potemkin's `AbstractMap` makes the type an `IFn` over its keys and `AbstractRecord`
-  ;; keeps it. `defrecord` does not, so this is the one place the twin throws and we
-  ;; answer.
+  ;; `recognitum.collections/AbstractRecord` makes the type an `IFn` over its keys, as
+  ;; potemkin's `AbstractMap` does; `defrecord` does not.
   (is (= 1 (ours ::alpha)))
   (is (= :d (ours ::nope :d)))
   (is (= ClassCastException (threw #(theirs :alpha)))))
@@ -358,15 +337,14 @@
 ;;; ======================= the same treatment for both types =======================
 
 (deftest str-is-the-identity-string-as-a-defrecords-is
-  ;; A record overrides no `toString`, so `str` of one is `Object`'s -- class name, `@`, hex
-  ;; identity hash -- and both of ours answer in the same shape. `str` is what string
-  ;; concatenation and logging call implicitly, so the entries form would dump a whole
-  ;; collection field into every line that so much as mentions a value; the identity string
-  ;; is bounded, and the readable form is one `pr-str` away.
+  ;; A record overrides no `toString`, so `str` of one is `Object`'s: class name, `@`, hex
+  ;; identity hash. `str` is what concatenation and logging call, so the entries form would
+  ;; dump a whole collection field into every log line; the identity string is bounded, and
+  ;; the readable form is `pr-str`.
   (let [marker "tostring-marker"
         mine   (->Twin marker 2)
         twin   (->PlainTwin marker 2)]
-    (doseq [[what x] [["the defrecord twin" twin] ["sealed" mine] ["draft" (rec/draft mine)]]]
+    (doseq [[what x] [["the defrecord" twin] ["sealed" mine] ["draft" (rec/draft mine)]]]
       (testing what
         (let [s (str x)]
           (is (re-matches (re-pattern (str "\\Q" (.getName (class x)) "\\E@[0-9a-f]+")) s))

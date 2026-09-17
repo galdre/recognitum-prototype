@@ -1,18 +1,11 @@
 (ns recognitum.shape-test
-  "Shape validations: the check named after a field, and what it gates.
+  "Shape validations: the check named after a field, and what waits on it.
 
-  A check whose name is a field's key is that field's shape validation -- the check that says
-  what a well-formed value of that field is. The naming convention is the whole of the
-  declaration; nothing else marks it, and nothing else has to.
-
-  Two things follow, and both are here. A shape validation names exactly its own field, or the
-  form does not compile: that is what keeps the dependency structure two levels deep -- shape
-  validations depend on nothing, every other check depends only on shape validations, and no
-  ordering among checks ever has to be computed. And every other check waits on the shape
-  validations of the fields it names, so it receives well-formed input by construction and
-  restates nothing. A check whose gate has not passed does not run, is not reported, and
-  records no verdict: \"cuts is not a map\" is the actionable failure, and \"did not run
-  because cuts is not a map\" adds nothing to it."
+  A shape validation names exactly its own field, or the form does not compile, which keeps
+  the dependency structure two levels deep. Every other check waits on the shape
+  validations of the fields it names, so it receives well-formed input and restates
+  nothing; while one of those is failing it does not run, is not reported, and records
+  nothing."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -20,8 +13,8 @@
 
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
-  is not an ExceptionInfo propagates -- which is where an ungated check body throws on a
-  shape the gate was supposed to have stopped."
+  is not an ExceptionInfo propagates -- which is where a check body throws on a value its
+  shape validation should have stopped."
   [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
@@ -31,8 +24,8 @@
 
 ;; `item`, `price` and `cuts` each have a shape validation -- a check named after the field.
 ;; `tags` has none, so it has no declared shape and `::tagged` has to be total over anything.
-;; `::cheap` and `::split` are the ones the gate is for: both would throw outright on a
-;; price or a cuts map their shape validations reject.
+;; `::cheap` and `::split` would each throw on a price or a cuts map their shape
+;; validations reject.
 (rec/defrecord Sale
   [item price cuts tags]
   {:checks
@@ -74,7 +67,7 @@
     (is (= ::item (:shape (by ::item))) "written as a bare fn")
     (is (= ::price (:shape (by ::price))) "written with an arglist")))
 
-(deftest a-checks-gate-is-the-shape-validations-of-the-fields-it-names
+(deftest what-a-check-waits-on-is-the-shape-validations-of-the-fields-it-names
   (let [by (by-name (sale))]
     (testing "a shape validation waits on nothing -- that is what makes the graph two levels"
       (is (= [] (gate-names (sale) ::item)))
@@ -83,9 +76,9 @@
     (testing "every other check waits on the shape validations of the fields it names"
       (is (= [::price] (gate-names (sale) ::cheap)))
       (is (= [::price ::cuts] (gate-names (sale) ::split))))
-    (testing "a field with no shape validation gates nothing"
+    (testing "a check over a field with no shape validation waits on nothing"
       (is (= [] (gate-names (sale) ::tagged))))
-    (testing "and the mask is the same fact, for a draft to test in one and"
+    (testing "and `:shape-mask` is the same fact as bits"
       (is (zero? (:shape-mask (by ::item))))
       (is (pos? (:shape-mask (by ::split)))))))
 
@@ -158,21 +151,21 @@
     (is (nil? (compiles (defform 'ShapeFree '[a b]
                           {:checks {:scratch/both '([a b] (= a b))}}))))))
 
-;;; --------------------------------- the gate at construction ---------------------------------
+;;; ---------------------------------------- at construction ----------------------------------------
 
-(deftest a-gated-check-does-not-run-when-its-shape-validation-fails
+(deftest a-check-does-not-run-while-a-shape-validation-it-waits-on-fails
   (let [e (err #(->Sale "hat" "free" {:a 1} [:x]))]
     (is (= ::rec/check-failed (:error e))
         "and not a ClassCastException out of (< \"free\" 100)")
     (is (= [::price] (keys (:failures e)))
-        "the shape failure is the actionable one; the two checks it gates are not reported")))
+        "the shape failure is the actionable one; the two checks waiting on it are not reported")))
 
-(deftest one-shape-failure-does-not-silence-the-checks-it-does-not-gate
+(deftest one-shape-failure-does-not-silence-the-checks-that-do-not-wait-on-it
   (let [e (err #(->Sale "hat" "free" {:a 1} ["x"]))]
     (is (= [::price ::tagged] (keys (:failures e)))
-        "::tagged names a field with no shape validation, so nothing gates it")))
+        "::tagged names a field with no shape validation, so it waits on nothing")))
 
-(deftest a-failing-check-that-is-not-a-shape-validation-gates-nothing
+(deftest a-failing-check-that-is-not-a-shape-validation-stops-nothing
   (let [e (err #(->Sale "hat" 500 {:a 1} [:x]))]
     (is (= [::cheap ::split] (keys (:failures e)))
         "::cheap failing does not stop ::split, which names the same field")))
@@ -185,19 +178,19 @@
     ::n-small  ("n is under ten" [n] (< n 10))
     ::tag      keyword?}})
 
-(deftest failures-come-back-in-phase-order-then-declaration-order
-  ;; Shape first is the order you fix them in anyway, and it is not the order they are
-  ;; written in: `::extra-ok` is declared before either shape validation here.
+(deftest failures-come-back-shape-validations-first-then-in-declaration-order
+  ;; Not the order they are written in: `::extra-ok` is declared before either shape
+  ;; validation.
   (let [e (err #(->Phased "not a keyword" 5 "not a vector"))]
     (is (= [::tag ::extra-ok] (keys (:failures e)))
         "the shape failure leads, though ::extra-ok is declared first"))
   (let [e (err #(->Phased "not a keyword" "not an int" "not a vector"))]
     (is (= [::n ::tag ::extra-ok] (keys (:failures e)))
-        "both shape failures in declaration order, then the pure one; ::n-small is gated")))
+        "both shape failures in declaration order, then the pure one; ::n-small waits on ::n")))
 
-;;; ------------------------------ the gate at every other write ------------------------------
+;;; ------------------------------------ at every other write ------------------------------------
 
-(deftest the-gate-holds-on-a-write-to-a-sealed-value
+(deftest a-write-to-a-sealed-value-reports-the-shape-failure-alone
   (let [s (sale)]
     (testing "assoc"
       (let [e (err #(assoc s ::price "free"))]
@@ -208,33 +201,32 @@
         (is (= ::rec/check-failed (:error e)))
         (is (= [::price ::cuts] (keys (:failures e))))))))
 
-(deftest the-gate-holds-at-the-map-constructor
+(deftest the-map-constructor-reports-the-shape-failure-alone
   (let [e (err #(map->Sale {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]}))]
     (is (= [::price] (keys (:failures e))))))
 
-(deftest the-gate-holds-at-the-seal
+(deftest the-seal-reports-the-shape-failure-alone
   (let [e (err #(rec/drafting [x (sale)] (assoc x ::cuts "not a map")))]
     (is (= ::rec/check-failed (:error e)))
     (is (= [::cuts] (keys (:failures e)))
         "::split names cuts, so the seal does not put it in front of a string")))
 
-;;; ----------------------------- the gate when a check is asked for -----------------------------
+;;; -------------------------------- when a check is asked for --------------------------------
 
 (defn- fresh
   "A draft of the type with every field written to `vs`."
   [vs]
   (reduce-kv assoc (rec/draft Sale) vs))
 
-(deftest a-check-whose-gate-passes-answers-for-itself
+(deftest a-check-whose-shape-validations-pass-answers-for-itself
   (let [d (fresh {::item "hat" ::price 500 ::cuts {:a 1} ::tags [:x]})]
     (is (= {::cheap false} (rec/check d ::cheap))
         "run, and its own return value is the answer, under its own name")
-    (is (true? (rec/check d ::price)) "which is what the gate established on the way")))
+    (is (true? (rec/check d ::price)) "which ran and passed on the way")))
 
-(deftest a-check-whose-gate-fails-has-no-verdict-to-answer-with
-  ;; The question was whether this check passes. "The data never got far enough to ask" is
-  ;; not `false`, and the keyed answer says so without inventing one: the blocking check
-  ;; gets the entry and the check asked about gets none -- the same ruling the IO gate makes.
+(deftest a-check-whose-shape-validation-fails-has-no-result-to-answer-with
+  ;; "The data never got far enough to ask" is not `false`: the failing shape validation
+  ;; gets the entry and the check asked about gets none.
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})
         r (rec/check d ::cheap)]
     (is (= [::price] (vec (keys r))))
@@ -242,26 +234,24 @@
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::cheap)))))))
 
-(deftest a-certificate-reports-the-gate-that-stopped-it
+(deftest a-certificate-reports-the-shape-validation-that-stopped-it
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
     (is (= {::price false} (rec/check d ::pricing))
-        "a check the certificate does not name, because it is the only honest thing to say")
-    (is (= #{} (rec/certificates d)) "nothing in ::pricing was established"))
+        "a check the certificate does not name, and the reason nothing in it ran")
+    (is (= #{} (rec/certificates d)) "nothing in ::pricing passed"))
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::pricing)))))))
 
-(deftest a-group-reports-the-gate-per-value
+(deftest a-group-reports-the-shape-failure-per-value
   (let [bad  (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})
         good (fresh {::item "hat" ::price 50 ::cuts {:a 50} ::tags [:x]})]
     (is (= [{::price false} true] (rec/check-all [bad good] ::cheap))
-        "one value's gate failing discards nothing about the other")
+        "one value's shape failure discards nothing about the other")
     (is (= [{::price false} true] (rec/check-all [bad good] ::pricing)))))
 
 ;;; ------------------------- a skipped check records no verdict -------------------------
 
 (deftest a-check-that-did-not-run-is-not-recorded-as-passing
-  ;; The sharp end of the whole arrangement: a skipped check must not leave a bit behind
-  ;; that `seal` would later believe.
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
     (is (= {::price false} (rec/check d rec/every-check)))
     (is (= #{::item ::cuts ::tagged} (rec/passed d))
@@ -278,12 +268,12 @@
   {:checks {::positive ("n is positive" [n] (pos? n))}})
 
 (deftest a-check-over-a-shapeless-field-runs-against-whatever-it-holds
-  ;; The author's choice, made loudly: no shape validation means no gate, so the check has to
-  ;; be total over anything -- and a throw out of it stays a bug in the check.
+  ;; No shape validation, so nothing runs first and the check has to be total over
+  ;; anything; a throw out of it is a bug in the check.
   (is (rec/sealed? (->Loose 1)))
   (is (thrown? ClassCastException (->Loose "x"))))
 
-;;; --------------------------------- shape gates IO, still ---------------------------------
+;;; ------------------------- a fetch waits on the shape validations too -------------------------
 
 (def ^:private fetched (atom []))
 
@@ -303,9 +293,9 @@
   (reset! fetched [])
   (let [e (err #(->Account "not an int" "n"))]
     (is (= [::id] (keys (:failures e)))))
-  (is (= [] @fetched) "nothing reached the outside"))
+  (is (= [] @fetched) "nothing was fetched"))
 
-(deftest an-external-validation-still-runs-once-its-gate-passes
+(deftest an-external-validation-runs-once-the-shape-validation-passes
   (reset! fetched [])
   (let [e (err #(->Account 2 "n"))]
     (is (= [::vouched] (keys (:failures e)))))

@@ -1,32 +1,13 @@
 (ns recognitum.io-deps-test
   "`:io-deps`: the singular form.
 
-  An io-dep names something that comes from outside the value -- a database row, an
-  upstream response. It is written exactly as a check is, arglist and all, and follows the
-  same arglist rule: a symbol names a field, a keyword names another io-dep, and the body
-  receives exactly those, positionally. So anything is IO-bound exactly when its arglist
-  holds a keyword, which is visible where it is written.
-
-  Three things are being pinned here, and they are not the same thing.
-
-  *What a fetch is.* It produces a value; it does not decide validity. `nil` is neither a
-  failure nor a success -- it is whatever the checks naming it say it is. An exception
-  propagates, because \"we could not determine whether this is valid\" is a different claim
-  from \"this is invalid\", and folding one into the other would have the type assert
-  something it does not know.
-
-  *When a fetch happens.* Shape gates IO: pure checks run first and ungated, an io-dep fetches
-  once every pure check over the fields it names has passed and every io-dep it names has
-  fetched, and an external validation runs once its io-deps have fetched. The gate is narrow
-  -- a fetch over `crew` waits on the checks covering `crew`, not on the whole type -- because
-  an io-dep declares its own fields. The payload that triggers the query is the one least
-  worth trusting.
-
-  *How often.* Within one validation call an io-dep fetches at most once however many checks
-  name it, and when the call returns the fetched value is gone. A draft therefore carries no
-  IO state: what it carries is which checks passed, which is a fact about the checking rather
-  than about the world. A verdict about an external validation is point-in-time, and the mask
-  says nothing about what was consulted to reach it."
+  An io-dep is written as a check is, arglist and all: a symbol names a field, a keyword
+  names another io-dep, and the body receives exactly those. A fetch produces a value and
+  does not decide validity: `nil` is whatever the checks naming it say it is, and an
+  exception propagates. An io-dep is fetched once every pure check over the fields it names
+  has passed and every io-dep it names has been fetched, and an external validation runs
+  once its io-deps have been fetched. Within one validation call an io-dep is fetched at
+  most once, and what it returned is not kept after the call returns."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
@@ -58,8 +39,8 @@
 
 ;;; ------------------------------------- the log -------------------------------------
 
-;; Every check and every fetch says so. Counting is the only way to tell "this ran" from
-;; "the mask took its word for it", and the only way to see a fetch that did not happen.
+;; Every check and every fetch logs itself, so a check recorded as passing can be told
+;; from one that ran, and a fetch that did not happen can be seen.
 (def ^:private log (atom []))
 
 (defn- note! [k] (swap! log conj k) nil)
@@ -75,8 +56,8 @@
 ;;; ------------------------------------- the types -------------------------------------
 
 ;; A crew, cuts, and a roster fetched from outside. `::roster` names `crew` and nothing
-;; else, so the gate in front of it is the checks over `crew` alone -- a malformed `name`,
-;; which no fetch touches, holds up nothing.
+;; else, so it waits on the checks over `crew` alone; a malformed `name`, which no fetch
+;; reads, holds up nothing.
 (rec/defrecord Job
   [name crew cuts]
   {:checks
@@ -100,7 +81,7 @@
 (def ^:private job (->Job "The Italian Job" #{:charlie :lyle} {:charlie 1 :lyle 1}))
 
 (defn- whole
-  "A draft of the type with every field written and nothing established about it."
+  "A draft of the type with every field written and nothing recorded as passing."
   []
   (-> (rec/draft Job)
       (assoc ::name "The Italian Job")
@@ -245,7 +226,7 @@
   (let [d (whole)]
     (is (true? (rec/check d ::only-roster-gets-a-cut)))
     (is (= 1 (ran ::roster)))
-    (testing "what is kept is the verdict, not the evidence"
+    (testing "what is kept is which checks passed, not what was fetched"
       (is (contains? (rec/passed d) ::only-roster-gets-a-cut))
       (is (nil? (get d ::roster)) "the fetched value is not a key of the draft")
       (is (nil? (::roster d)))
@@ -271,11 +252,11 @@
     (is (= 1 (ran ::one)))
     (is (= 1 (ran ::two)))))
 
-;;; ------------------------------------ the gate ------------------------------------
+;;; ------------------------------ what a fetch waits on ------------------------------
 
 (deftest a-fetch-waits-on-the-checks-over-the-fields-it-names
   ;; `roster/fetch-roster` throws on anything that is not a crew, so a fetch that ran here
-  ;; would be an exception rather than a report. The gate is what makes it a report.
+  ;; would be an exception rather than a report.
   (let [d (-> (whole) (assoc ::crew "not a crew"))
         e (err #(rec/seal d))]
     (is (= ::rec/check-failed (:error e)))
@@ -284,30 +265,29 @@
     (is (= 0 (roster/call-count)))
     (is (= 0 (ran ::only-roster-gets-a-cut)) "and the check behind it did not run either")))
 
-(deftest the-gate-is-narrow
-  ;; `::roster` names `crew`, so the checks over `crew` gate it -- and nothing else does.
-  ;; A malformed `name` is no business of a fetch that does not touch `name`.
+(deftest a-fetch-does-not-wait-on-checks-over-fields-it-does-not-name
+  ;; `::roster` names `crew`, so a malformed `name` is no business of it.
   (let [d (-> (whole) (assoc ::name 42))]
     (is (true? (rec/check d ::only-roster-gets-a-cut)))
     (is (= 1 (ran ::roster)))
-    (is (= 1 (ran ::crew)) "the gate ran")
+    (is (= 1 (ran ::crew)) "the check over crew ran")
     (is (= 0 (ran ::name)) "and nothing else did")))
 
-(deftest a-failing-gate-is-reported-rather-than-fetched-past
+(deftest a-failing-shape-validation-is-reported-and-the-fetch-does-not-happen
   (let [d (-> (whole) (assoc ::crew "not a crew"))
         r (rec/check d ::only-roster-gets-a-cut)]
     (is (= [::crew] (vec (keys r)))
-        "the check could not be established, and the reason is the data")
+        "the check could not run, and the failing shape validation is why")
     (is (not (contains? r ::only-roster-gets-a-cut)) "it never ran, so it has no entry")
     (is (= 0 (ran ::roster)))
     (is (= 0 (ran ::only-roster-gets-a-cut)))
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::only-roster-gets-a-cut))))
-        "and the insisting form throws the gate's failures")
-    (testing "and the verdicts of whatever did run are recorded"
+        "and check! throws the same failures")
+    (testing "and whatever did run and pass is recorded"
       (is (= #{::cuts} (rec/passed d))
           "::cuts is the shape validation ::only-roster-gets-a-cut waits on; it passed"))))
 
-(deftest a-certificate-reports-a-failing-gate-among-its-failures
+(deftest a-certificate-reports-a-failing-shape-validation-it-does-not-name
   (let [d (-> (whole) (assoc ::crew "not a crew"))]
     (is (= [::crew] (vec (keys (rec/check d ::payout))))
         "::payout does not name ::crew, but ::crew is why nothing in it could be run")
@@ -315,9 +295,8 @@
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::payout)))))))
 
 (deftest seal-collects-every-pure-failure-before-it-fetches-anything
-  ;; The two-phase seal: collect all pure failures and throw if there are any, otherwise
-  ;; fetch and collect the IO ones. A pure failure nothing IO names still stops the fetch,
-  ;; because the throw comes first.
+  ;; Every pure failure is collected and thrown before anything is fetched, so a pure
+  ;; failure no fetch depends on still stops the fetch.
   (let [d (-> (whole) (assoc ::name 42) (assoc ::cuts "not a map"))
         e (err #(rec/seal d))]
     (is (= ::rec/check-failed (:error e)))
@@ -330,24 +309,21 @@
     (is (rec/sealed? (rec/seal d)))
     (is (= [::roster ::only-roster-gets-a-cut] (order ::roster ::only-roster-gets-a-cut)))))
 
-(deftest a-field-an-io-dep-names-is-gated-as-nil-like-any-other
-  ;; A field nobody wrote holds nil, and the gate over it is what keeps that nil away from
-  ;; the outside: the shape validation says no, so the fetch never happens.
+(deftest an-unwritten-field-an-io-dep-names-is-judged-as-nil-before-the-fetch
   (let [d (assoc (rec/draft Job) ::cuts {:charlie 1})
         r (rec/check d ::only-roster-gets-a-cut)
         e (err #(rec/check! d ::only-roster-gets-a-cut))]
-    (is (= [::crew] (vec (keys r))) "the gate over the field the fetch names")
+    (is (= [::crew] (vec (keys r))) "the shape validation of the field the fetch names")
     (is (= [::crew] (vec (keys (:failures e)))))
     (is (= {::crew nil} (:values (get (:failures e) ::crew))))
     (is (= 0 (ran ::roster)))
     (is (= 0 (roster/call-count)))))
 
-;;; ------------------------------ the mask and what it saves ------------------------------
+;;; ---------------------------------- what a write clears ----------------------------------
 
 (deftest a-write-to-a-field-an-io-dep-names-clears-the-checks-behind-it
-  ;; `::only-roster-gets-a-cut` does not name `crew`. It names `::roster`, which names
-  ;; `crew` -- so a write to `crew` makes its verdict stale, and a verdict that is stale is
-  ;; no verdict at all.
+  ;; `::only-roster-gets-a-cut` does not name `crew`; it names `::roster`, which names
+  ;; `crew`, so a write to `crew` clears it.
   (let [d (rec/draft job)]
     (is (= #{::name ::crew ::cuts ::only-roster-gets-a-cut} (rec/passed d)))
     (let [d' (assoc d ::crew #{:charlie :lyle :mole})]
@@ -358,7 +334,7 @@
                (mapv (comp :name (:checks (internal/model-of Job)))
                      (get (:index (internal/model-of Job)) ::crew))))))))
 
-(deftest a-verdict-already-established-costs-no-fetch-at-the-seal
+(deftest a-check-already-passing-costs-no-fetch-at-the-seal
   (let [d (whole)]
     (is (true? (rec/check d rec/every-check)))
     (is (= 1 (ran ::roster)))
@@ -379,7 +355,7 @@
     (is (= 1 (ran ::name)))
     (is (= 0 (ran ::roster)) "::roster names crew, and crew did not move")))
 
-(deftest a-check-the-mask-already-says-passes-fetches-nothing
+(deftest a-check-already-recorded-as-passing-fetches-nothing
   (let [d (rec/draft job)]
     (is (true? (rec/check d ::only-roster-gets-a-cut)))
     (is (= 0 (ran ::roster)))
@@ -390,7 +366,7 @@
     (is (= {::only-roster-gets-a-cut false} (rec/check d ::only-roster-gets-a-cut)))
     (is (= 1 (ran ::roster)))
     (is (= {::only-roster-gets-a-cut false} (rec/check d ::only-roster-gets-a-cut)))
-    (is (= 2 (ran ::roster)) "nothing about a cleared bit distinguishes failed from unrun")))
+    (is (= 2 (ran ::roster)) "a failure is not recorded, so it runs again")))
 
 ;;; ------------------------- writes to a sealed value reach IO too -------------------------
 
@@ -417,7 +393,7 @@
     (is (= 1 (ran ::only-roster-gets-a-cut)))))
 
 (deftest a-constructor-fetches-after-the-pure-checks-have-passed
-  (testing "map->Type goes through the same gate"
+  (testing "map->Type waits the same way"
     (let [e (err #(map->Job {::name "Job" ::crew "not a crew" ::cuts {:charlie 1}}))]
       (is (= ::rec/check-failed (:error e)))
       (is (= [::crew] (vec (keys (:failures e)))))
@@ -446,12 +422,12 @@
       (is (= :scratch/nonesuch (:dependency e)))
       (is (= #{:scratch/roster} (:io-deps e)) "and what it could have named"))))
 
-(deftest a-check-may-now-name-an-io-dep-that-exists-and-only-one-that-does
+(deftest a-check-may-name-an-io-dep-that-exists-and-only-one-that-does
   (is (nil? (compiles '(recognitum.core/defrecord Fetching
                          [a]
                          {:checks  {:scratch/c ([:scratch/roster] (some? roster))}
                           :io-deps {:scratch/roster ([a] a)}}))))
-  (testing "while one that does not is still the offender named"
+  (testing "while one that does not is the offender named"
     (let [e (compile-data '(recognitum.core/defrecord Fetching2
                              [a]
                              {:checks  {:scratch/c ([:scratch/vetted] (some? vetted))}

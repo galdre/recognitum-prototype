@@ -1,17 +1,9 @@
 (ns recognitum.example-test
-  "The example model, the demo and the bench: the three files a reader meets before the
-  docstrings, and the three the library has been quietly outgrowing.
-
-  Everything the library can do is covered somewhere under `test/`; what is covered here is
-  that the worked example *shows* it. `recognitum.heist` is the type a reader is shown
-  first and the demo drives, so an io-dep that appears in no example is a facility a reader
-  has no path to. These tests pin the example model's own behaviour -- the fetch, the gate
-  that stands in front of it, the deduplication, the check judging what came back, the
-  certificates, the draft-only writes and the protocol implementations -- rather than
-  re-deriving the library's rules, which the other suites do against types of their own.
-
-  The bench half asserts the one thing that makes the comparison mean anything: both sides
-  are running the same checks, with the same verdicts, on the same values."
+  "The example model, the demo and the bench. `recognitum.heist` is the type a reader is
+  shown first and the demo drives, so these pin that every facility appears there: the
+  fetch, what it waits on, the deduplication, the check judging what came back, the
+  certificates, the draft-only writes and the protocol implementations. The bench half
+  asserts that both sides run the same checks with the same results on the same values."
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing use-fixtures]]
@@ -40,8 +32,6 @@
 ;;; ------------------------------ the model declares its IO ------------------------------
 
 (deftest the-example-model-has-io-deps-in-it
-  ;; The whole IO half of the library was invisible from the example: a reader looking for
-  ;; what a fetch costs, or when it happens, had only the docstrings to go on.
   (let [m (model)]
     (is (seq (:io-deps m)) "the example model declares at least one io-dep")
     (is (= [::heist/roster ::heist/vetted] (mapv :name (:io-deps m)))
@@ -53,29 +43,29 @@
     (testing "and a check is bound to them"
       (is (contains? (set (check-names)) ::heist/crew-is-vouched-for)))))
 
-(deftest the-model-still-declares-the-pure-checks-it-always-had
+(deftest the-model-declares-the-pure-checks-and-the-external-validation
   (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts
           ::heist/cuts-sum-to-take ::heist/only-crew-get-cuts ::heist/crew-is-vouched-for]
          (check-names))
-      "the external validation is added to the pure ones, not in place of them"))
+      "four shape validations, two invariant validations, one external validation, in declaration order"))
 
 ;;; ----------------------------------- a fetch resolving -----------------------------------
 
 (deftest sealing-a-write-the-fetch-covers-reaches-the-source
   (let [h (rec/drafting [x job] (heist/add-member x :handsome-rob 500))]
     (is (instance? Heist h))
-    (is (pos? (roster/call-count)) "the fake source was actually reached")))
+    (is (pos? (roster/call-count)) "the fetch was made")))
 
 (deftest a-fetch-is-made-once-per-validation-call-however-many-things-name-it
-  ;; ::vetted names ::roster, so a naive implementation fetches the roster twice: once for
-  ;; the check and once to fetch what the check's other dependency is derived from.
+  ;; ::vetted names ::roster, so the roster could be fetched twice: once for the check and
+  ;; once for ::vetted.
   (rec/drafting [x job] (heist/add-member x :handsome-rob 500))
   (is (= 1 (roster/call-count :fetch-rosters)))
   (is (= 1 (roster/call-count :fetch-vetted)))
   (testing "and the next call fetches again, because nothing is cached across calls"
     (rec/drafting [x job] (heist/add-member x :handsome-rob 500))
     (is (= 2 (roster/call-count :fetch-rosters))))
-  (testing "while a write nothing IO reads pays for none of it"
+  (testing "while a write no external validation reads fetches nothing"
     (roster/reset-calls!)
     (is (instance? Heist (rec/drafting [x job] (heist/rename x "The Sequel"))))
     (is (= 0 (roster/call-count))
@@ -91,11 +81,11 @@
   (testing "someone the house has never heard of is not unvetted, merely unknown"
     (is (instance? Heist (rec/drafting [x job] (heist/add-member x :nobody-in-particular 500))))))
 
-;;; ------------------------------------- the gate -------------------------------------
+;;; ------------------------------ what the fetch waits on ------------------------------
 
 (deftest a-malformed-crew-never-reaches-the-fetch
-  ;; `roster/fetch-rosters` throws on anything that is not a crew, so a gate that leaked
-  ;; would show up here as that throw rather than as a verdict.
+  ;; `roster/fetch-rosters` throws on anything that is not a crew, so a malformed crew
+  ;; reaching it would show up here as that throw rather than as a failure.
   (let [e (err #(rec/drafting [x job] (assoc x ::heist/crew "not a crew")))]
     (is (= ::rec/check-failed (:error e)))
     (is (contains? (:failures e) ::heist/crew))
@@ -104,10 +94,9 @@
   (is (= 0 (roster/call-count)) "and nothing was queried"))
 
 (deftest a-check-runs-early-and-waits-only-on-what-its-fetch-names
-  ;; The gate is narrow: ::roster names `crew`, so the fetch waits on the checks covering
-  ;; `crew` -- both of them, ::only-crew-get-cuts included, which is why `cuts` is written
-  ;; here too -- and on nothing else. `name` and `take` have never been written at all,
-  ;; and nothing waits for them.
+  ;; ::roster names `crew`, so the fetch waits on the pure checks over `crew` -- both of
+  ;; them, ::only-crew-get-cuts included, which is why `cuts` is written here too -- and on
+  ;; nothing else.
   (let [d (-> (rec/draft Heist)
               (assoc ::heist/crew #{:charlie :lyle})
               (assoc ::heist/cuts {:charlie 1}))]
@@ -115,7 +104,7 @@
     (is (= 1 (roster/call-count :fetch-rosters)))
     (is (contains? (rec/passed d) ::heist/crew-is-vouched-for))
     (is (contains? (rec/passed d) ::heist/only-crew-get-cuts)
-        "and what gated it is established too, since it was actually run"))
+        "and the check the fetch waited on is recorded as passing too, since it ran"))
   (testing "and a crew the checks over it reject never reaches the fetch"
     (roster/reset-calls!)
     (let [d (-> (rec/draft Heist)
@@ -123,8 +112,8 @@
                 (assoc ::heist/cuts {:charlie 1}))
           r (rec/check d ::heist/crew-is-vouched-for)]
       (is (= [::heist/crew] (vec (keys r)))
-          "the check asked about never ran, so the gate's failure is the answer --
-           and ::only-crew-get-cuts, which is the rest of that gate, waits on ::crew too")
+          "the check asked about never ran, so the shape validation's failure is the answer;
+           ::only-crew-get-cuts, which the fetch also waits on, waits on ::crew itself")
       (is (not (contains? r ::heist/crew-is-vouched-for)))
       (is (= 0 (roster/call-count))))))
 
@@ -147,7 +136,7 @@
         "the batched form sees the whole group in one call")
     (let [[[_ rows]] (filter (fn [[f]] (= :fetch-rosters f)) @roster/calls)]
       (is (= 2 (count rows)) "and two distinct crews are two tuples, not three")))
-  (testing "and each draft keeps its own verdict, so sealing afterwards is free"
+  (testing "and each draft records what passed, so sealing afterwards fetches nothing"
     (roster/reset-calls!)
     (let [ds [(crew-draft "one" #{:charlie :lyle} {:charlie 1 :lyle 1})]]
       (rec/check-all ds rec/every-check)
@@ -194,9 +183,9 @@
               (assoc ::heist/cuts {:charlie 1 :lyle 1}))]
     (is (true? (rec/check d ::heist/shape)))
     (is (contains? (rec/certificates d) ::heist/shape))
-    (is (= 0 (roster/call-count)) "a purely pure certificate fetches nothing")
+    (is (= 0 (roster/call-count)) "a certificate of pure checks fetches nothing")
     (is (true? (rec/check d ::heist/payout)))
-    (testing "the external validation is still owed, so the type's certificate is not held"
+    (testing "the external validation has not run, so the built-in certificate is not held"
       (is (not (contains? (rec/certificates d) ::rec/every-check)))
       (is (instance? Heist (rec/seal d)))
       (is (= 1 (roster/call-count :fetch-rosters))
@@ -210,7 +199,7 @@
 (deftest metadata-answers-the-same-way-from-both-forms
   (is (= (set (check-names)) (::rec/passed (meta job))))
   (is (= #{::heist/shape ::heist/payout ::rec/every-check} (::rec/certificates (meta job))))
-  (testing "and a draft of it answers from its own mask"
+  (testing "and a draft of it answers from its own record"
     (let [d (assoc (rec/draft job) ::heist/take 4000)]
       (is (not (contains? (::rec/passed (meta d)) ::heist/cuts-sum-to-take)))
       (is (contains? (::rec/passed (meta d)) ::heist/name)))))
@@ -224,7 +213,7 @@
       (is (instance? Heist h))
       (is (= 3250 (::heist/take h)))
       (is (= 1250 (get (::heist/cuts h) :lyle)))))
-  (testing "called on a draft, the body runs as written and hands a draft back"
+  (testing "called on a draft, the body runs as written and returns a draft"
     (rec/drafting [x job]
       (let [inner (heist/promote x :lyle 250)]
         (is (rec/draft? inner))
@@ -233,8 +222,8 @@
     (is (= 3000 (heist/total-payout job)))))
 
 (deftest a-method-passes-through-states-no-sealed-write-could
-  ;; This is what the wrapper buys: the body writes three fields one at a time, and every
-  ;; intermediate value breaks a check, but the draft absorbs them.
+  ;; The body writes three fields one at a time, and every intermediate value breaks a
+  ;; check.
   (let [h (heist/add-member job :handsome-rob 500)]
     (is (instance? Heist h))
     (is (= 3500 (::heist/take h))))
@@ -243,8 +232,8 @@
                                                  (conj (::heist/crew job) :handsome-rob))))))))
 
 (deftest the-inner-stage-opts-its-return-out-of-the-seal
-  ;; `begin-revision` returns `(unsealed h')` on purpose: the caller asked to start a
-  ;; revision, not to finish one, so what comes back is a free draft to keep working on.
+  ;; `begin-revision` returns `(unsealed h')`: what comes back is a draft owned by no
+  ;; `drafting`.
   (let [d (heist/begin-revision job "The Turin Job")]
     (is (rec/draft? d))
     (is (not (rec/sealed? d)))
@@ -259,7 +248,7 @@
 (deftest the-outer-stage-calls-the-inner-one-and-seals-what-it-finished
   ;; Inside a method body the receiver is a draft, so `begin-revision` hits the draft-side
   ;; implementation, whose wrapper unwraps the marker to a draft the body keeps working on.
-  ;; `revise` hands that draft back bare, so the outer wrapper seals it.
+  ;; `revise` returns that draft bare, so the outer wrapper seals it.
   (let [h (heist/revise job "The Turin Job" :lyle 250)]
     (is (instance? Heist h))
     (is (rec/sealed? h))
@@ -290,11 +279,11 @@
 (deftest the-demo-illustrates-the-io-half
   (let [out @demo-output]
     (doseq [[what token] [["a fetch resolving"        "fetch"]
-                          ["the gate"                 "gate"]
+                          ["what a fetch waits on"    "gate"]
                           ["deduplication"            "deduplicat"]
                           ["draft-only writes"        "io-limited"]
                           ["certificates"             "certificate"]
-                          ["what a draft has established" "passed"]]]
+                          ["which checks a draft passes" "passed"]]]
       (is (str/includes? (str/lower-case out) token)
           (str "the demo says nothing about " what)))))
 
@@ -305,7 +294,7 @@
   (roster/reset-calls!)
   (with-out-str (demo/run))
   (is (pos? (roster/call-count :fetch-rosters))
-      "an io-dep the demo only talks about is not an illustration"))
+      "the demo has to make the fetch, not only describe it"))
 
 ;;; ------------------------------------------ the bench ------------------------------------------
 
@@ -313,11 +302,10 @@
   "What the bench's hand-rolled side says about `m`, a bare-keyed map: `:ok`, `:rejected`,
   or `:threw`.
 
-  In the library's own two phases: each field predicate is that field's shape validation, and
-  an invariant predicate runs only where the shape predicates over the fields it reads came
-  back true. Every predicate that runs does run, so a throw in one is not hidden by an
-  earlier one having already said no -- which is what makes this an oracle for gating
-  rather than a restatement of it."
+  As the library runs them: each field predicate is that field's shape validation, and an
+  invariant predicate runs only where the shape predicates over the fields it reads
+  returned true. Every predicate that can run does, so a throw is not hidden by an earlier
+  failure."
   [m]
   (let [shape (into {}
                     (map (fn [[k p]]

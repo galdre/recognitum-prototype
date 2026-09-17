@@ -32,9 +32,7 @@
          (into {} job))))
 
 (deftest carries-meta
-  ;; `meta` answers with the library's own keys merged over whatever the caller set, so
-  ;; what comes back is the caller's metadata plus what the value can show for itself --
-  ;; on a sealed value, that every check passed. See `recognitum.meta-test`.
+  ;; `meta` merges the library's keys over the caller's; `recognitum.meta-test` pins it.
   (let [m (with-meta job {:src :test})]
     (is (= :test (:src (meta m))))
     (is (instance? Heist m))
@@ -104,10 +102,9 @@
          (:error (err #(heist/map->Heist {::heist/name "" ::heist/crew #{:a} ::heist/take 10 ::heist/cuts {:a 10}}))))))
 
 (deftest there-is-no-unvalidated-back-door
-  ;; deftype interns a positional factory that checks nothing. If it survives, every guarantee
-  ;; in this library is one function call away from being bypassed.
+  ;; `deftype` interns a positional factory that checks nothing; the macro replaces it.
   (is (= ::rec/check-failed (:error (err #(heist/->Heist "" :not-a-set -999 "garbage"))))
-      "the forging attempt that used to succeed")
+      "no field passes, and construction refuses")
   (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts]
          (vec (keys (:failures (err #(heist/->Heist "" :not-a-set -999 "garbage"))))))
       "and it is told every shape that is wrong, not the first -- the two invariant

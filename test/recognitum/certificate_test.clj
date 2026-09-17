@@ -1,28 +1,10 @@
 (ns recognitum.certificate-test
-  "Certificates: a named subset of a type's checks, run early against a draft.
-
-  A certificate is a draft-level facility. It names checks you can establish before the
-  value is complete, and it changes nothing about what a sealed value guarantees -- `seal`
-  runs every check on the type whether or not any certificate mentions it.
-
-  Holding is *derived*, never asserted. A draft holds a certificate exactly when every
-  check in it currently passes, which is a question about the verdict mask and nothing
-  else. So overlapping certificates need no coordination, running individual checks can
-  complete a certificate incidentally, and there is no way to mark a draft as holding one
-  without the checks having actually passed.
-
-`check` takes a certificate name exactly as it takes a check name: a lone check is a
-  certificate containing itself, so there is one verb and one answer shape. `true` when
-  every check named passes, and otherwise the checks' own return values -- the failure
-  data, as the contract defines it -- keyed by check name in declaration order. Neither
-  form returns a draft. The richer report, with the docstring and the fields the check
-  declared, is what `check!` throws.
-
-  A certificate is a declaration, so it is resolved while the macro runs. A name it gives
-  that is not a check of this type, a certificate naming nothing at all, or one spelled the
-  same as a check or as the built-in -- each is a compile error naming the offender, for the
-  same reason a mistyped section is: a declaration that means nothing must not quietly
-  become a value asserting a validation that never ran."
+  "Certificates: a named subset of a type's checks, run against a draft before it is
+  complete. A draft holds a certificate exactly when every check in it is currently
+  passing, and `seal` runs every check on the type whether or not a certificate names it.
+  `check` takes a certificate name as it takes a check name. A certificate naming a check
+  the type does not declare, one covering nothing, or one spelled like a check or like the
+  built-in is a compile error naming the offender."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -71,7 +53,7 @@
 (def ^:private job (->Job "heist" #{:a :b} 10 nil))
 
 (defn- whole
-  "A draft of `Job` with every field written and nothing established."
+  "A draft of `Job` with every field written and nothing recorded as passing."
   ([] (whole "heist" #{:a :b} 10 nil))
   ([title crew pay notes]
    (-> (rec/draft Job)
@@ -89,8 +71,7 @@
    :certificates
    {::most #{::data ::truthy ::nil}}})
 
-;; Counts its own runs, which is the only way to see that an established verdict is not
-;; re-established.
+;; Counts its own runs, so a check recorded as passing can be seen not to run again.
 (def ^:private runs (atom {}))
 
 (defn- tally! [k] (swap! runs update k (fnil inc 0)) nil)
@@ -147,8 +128,6 @@
 ;;; ------------------------------ the section is declared ------------------------------
 
 (deftest a-populated-certificates-section-compiles
-  ;; C1 accepted the section only empty, because accepting a declaration nothing reads is
-  ;; the silent mis-declaration this design exists to prevent. It now means something.
   (is (rec/sealed? job))
   (is (nil? (compiles '(recognitum.core/defrecord Fine
                          [a]
@@ -174,7 +153,7 @@
 
 (deftest a-repeated-check-name-is-deduplicated-while-the-macro-runs
   ;; A certificate names a set of checks whatever collection it was written as, so writing
-  ;; one twice cannot make it count twice: the mask has one bit per check, and the checks a
+  ;; one twice cannot make it count twice: its mask has one bit per check, and the checks a
   ;; certificate covers are read back in the type's own order with no repeats.
   (let [certs (:certificates (internal/model-of Twice))
         as-set (get certs ::as-set)
@@ -278,9 +257,9 @@
 
 ;;; ------------------------------------- holding -------------------------------------
 
-(deftest certificates-are-derived-from-the-mask
+(deftest certificates-are-derived-from-which-checks-pass
   (let [d (whole)]
-    (is (= #{} (rec/certificates d)) "built from the type, so nothing has been established"))
+    (is (= #{} (rec/certificates d)) "built from the type, so nothing has run"))
   (testing "a draft of a sealed value holds everything, since every check passed on it"
     (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates (rec/draft job))))))
 
@@ -328,8 +307,8 @@
     (let [d' (assoc d ::pay 99)]
       (is (= #{} (rec/certificates d')) "::pay and ::paid-enough were cleared, so both go")
       (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates d))
-          "the seed is a snapshot, so the version it came from keeps its own")
-      (testing "and re-establishing them gives it back"
+          "the version it came from keeps its own record")
+      (testing "and running them again gives it back"
         (is (true? (rec/check d' ::shape)))
         (is (= #{::shape} (rec/certificates d')))))))
 
@@ -432,7 +411,7 @@
     (is (instance? clojure.lang.PersistentArrayMap fs))
     (is (= (filterv (complement #{::c0}) ten-order) (vec (keys fs))))))
 
-;;; ------------------------- establish, rather than re-run -------------------------
+;;; ------------------------- a check already passing is not run again -------------------------
 
 (deftest a-certificate-already-held-runs-nothing
   (reset! runs {})
@@ -440,11 +419,11 @@
     (is (true? (rec/check d ::ns)))
     (is (= {::n 1 ::s 1} @runs))
     (is (true? (rec/check d ::ns)))
-    (is (= {::n 1 ::s 1} @runs) "the verdicts stand, so there is nothing to establish")
+    (is (= {::n 1 ::s 1} @runs) "every check in it is recorded as passing, so nothing runs")
     (is (true? (rec/check! d ::ns)))
-    (is (= {::n 1 ::s 1} @runs) "and check! insists on the answer, not on the work")))
+    (is (= {::n 1 ::s 1} @runs) "and check! runs nothing either")))
 
-(deftest a-draft-of-a-sealed-value-has-nothing-left-to-establish
+(deftest a-draft-of-a-sealed-value-runs-nothing
   (let [c (->Counted 1 "x")]
     (reset! runs {})
     (let [d (rec/draft c)]
@@ -457,7 +436,7 @@
     (is (true? (rec/check d ::n)))
     (is (= {::n 1} @runs))
     (is (true? (rec/check d ::ns)))
-    (is (= {::n 1 ::s 1} @runs) "::n was already established")))
+    (is (= {::n 1 ::s 1} @runs) "::n was already passing")))
 
 (deftest a-failed-check-in-a-certificate-is-run-again-next-time
   (reset! runs {})
@@ -470,8 +449,6 @@
 ;;; -------------------------- a check needs something to read --------------------------
 
 (deftest a-certificate-over-fields-nobody-wrote-judges-nil
-  ;; There is nothing to refuse here: a field nobody wrote holds nil, and what each shape
-  ;; validation thinks of nil is a better answer than the library reporting on its own state.
   (let [d (rec/draft Job)]
     (is (= {::title false ::crew false ::pay false} (rec/check d ::shape))
         "every check in it ran, and every one of them is reported")
@@ -489,12 +466,12 @@
     (is (not (contains? (rec/passed d) ::paid-enough))
         "and it is not recorded as passing either")))
 
-(deftest a-certificate-already-established-answers-without-running-anything
+(deftest a-draft-of-a-sealed-value-holds-its-certificates-without-running-anything
   (let [d  (rec/draft job)
         d' (assoc (rec/draft Job) ::title "heist")]
     (is (true? (rec/check d ::shape)))
     (is (= {::crew false ::pay false} (rec/check d' ::shape))
-        "and one that is not established runs what it has to")))
+        "and a draft from the type runs what is not passing")))
 
 (deftest a-certificate-does-not-demand-the-fields-of-checks-it-does-not-name
   (let [d (-> (rec/draft Job) (assoc ::pay 10) (assoc ::crew #{:a :b}))]
@@ -516,9 +493,9 @@
         (is (= [::title ::crew ::pay ::paid-enough ::notes] (:checks e)) label)))
     (testing "and a certificate declared on some other type is still refused"
       (is (= ::rec/unknown-check (:error (err #(rec/check d ::ns))))))
-    (testing "and nothing is established by asking"
+    (testing "and nothing is recorded by asking"
       (is (= #{} (rec/passed d)))))
-  (testing "the name of a check is not refused any more -- it is the other half of the verb"
+  (testing "a check's name is taken as a certificate containing itself"
     (is (true? (rec/check (whole) ::title)))))
 
 (deftest checking-a-certificate-on-a-sealed-value-answers-true-and-runs-nothing
@@ -527,15 +504,13 @@
     (is (true? (rec/check c ::ns)))
     (is (true? (rec/check c ::joint)))
     (is (true? (rec/check! c rec/every-check)))
-    (is (= {} @runs) "everything is established on a sealed value, so nothing runs"))
+    (is (= {} @runs) "every check passes on a sealed value, so nothing runs"))
   (testing "and anything that is not a value of this library is refused"
     (doseq [x [Job {::title "x"} nil 42]]
       (is (= ::rec/not-a-value (:error (err #(rec/check x ::shape)))) (pr-str x))
       (is (= ::rec/not-a-value (:error (err #(rec/check! x ::shape)))) (pr-str x)))))
 
 (deftest a-check-that-throws-inside-a-certificate-propagates
-  ;; A throw is a bug in the check rather than a verdict about the data, so there is
-  ;; nothing to write down and nothing to report as invalid.
   (reset! runs {})
   (let [d (assoc (rec/draft Fragile) ::n "not a number")]
     (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/check d ::pair)))
@@ -573,8 +548,6 @@
       (is (= "heist" (::title s))))))
 
 (deftest a-sealed-value-holds-every-certificate-and-carries-none-as-data
-  ;; A sealed value passed every check, which is strictly more than any certificate claims,
-  ;; so it holds all of them -- and none of that is part of the value.
   (is (= #{::shape ::payroll ::rec/every-check} (rec/certificates job)))
   (is (not (contains? (into {} job) ::shape)))
   (is (not (re-find #"shape" (pr-str job)))))
@@ -592,8 +565,6 @@
 ;;; --------------------- certificates are no part of the value itself ---------------------
 
 (deftest certificates-take-no-part-in-equality-or-hashing
-  ;; Two drafts holding identical data are the same value however much has been
-  ;; established about each.
   (let [a (whole)
         b (whole)]
     (rec/check a rec/every-check)

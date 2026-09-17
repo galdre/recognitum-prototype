@@ -1,25 +1,10 @@
 (ns recognitum.seal-test
-  "What `seal` runs, and why it is allowed to run less than everything.
-
-  `seal` returns a value validated exactly as if every check had been rerun. That is the
-  guarantee, and it is extensional: which checks were actually called is an implementation
-  strategy underneath it. The strategy is the draft's verdict mask -- `seal` runs exactly
-  the checks whose bit is not set, because a set bit says that check passed against exactly
-  this data.
-
-  Three things make that sound, and all three are the mask's own rules rather than
-  anything `seal` arranges: a draft of a sealed value starts with every bit set, because
-  that is what being sealed means; a draft of the type starts with none; and a write clears
-  exactly the checks naming the field written. So the only way a bit is set is that some
-  check ran and passed against data that has not moved since.
-
-  The consequence worth having is that work done on a draft is not repeated. A check
-  established with `check`, or a certificate established with `certify`, costs nothing at
-  the seal -- which is what makes incremental checking worth doing at all, and what will
-  let bulk checking populate masks and then seal each value without touching IO.
-
-  A failure is not work saved. Nothing about a cleared bit distinguishes \"failed\" from
-  \"never run\", so a check that failed runs again at the next seal and fails again."
+  "What `seal` runs. `seal` returns a value validated as if every check had run; which
+  checks are called is the implementation underneath that. It runs exactly the checks the
+  draft does not record as passing, which is sound because a draft of a sealed value starts
+  with every check passing, a draft of the type starts with none, and a write clears
+  exactly the checks reading the field written. So work done on a draft with `check` is not
+  repeated at the seal, and a failure, which is not recorded, runs again."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
@@ -32,9 +17,8 @@
 
 ;;; ---------------------------------------- types ----------------------------------------
 
-;; Every check counts its own calls. Counting is the only way to see the difference between
-;; "seal ran this" and "seal took the mask's word for it", since both produce the same
-;; value -- which is the point: the guarantee is extensional and the saving is not.
+;; Every check counts its own calls, since a check seal ran and one it took as passing
+;; produce the same value.
 (def ^:private runs (atom {}))
 
 (defn- tally! [k] (swap! runs update k (fnil inc 0)))
@@ -66,7 +50,7 @@
 
 (defn- fresh
   "A draft built from the type with every field written: complete, and with nothing
-  established about it."
+  recorded as passing."
   []
   (-> (rec/draft Ledger) (assoc ::a 1) (assoc ::b "xxx") (assoc ::c :anything)))
 
@@ -83,10 +67,10 @@
 (deftest sealing-a-draft-of-the-type-runs-every-check
   (reset-runs!)
   (let [d (fresh)]
-    (is (= #{} (rec/passed d)) "nothing established: the mask is empty")
+    (is (= #{} (rec/passed d)) "nothing recorded as passing")
     (is (rec/sealed? (rec/seal d)))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))
-        "every bit was clear, so every check ran -- once each")))
+        "nothing was recorded as passing, so every check ran -- once each")))
 
 (deftest the-constructors-run-every-check
   (reset-runs!)
@@ -97,8 +81,6 @@
 ;;; ---------------------------- a draft of a sealed value ----------------------------
 
 (deftest sealing-an-untouched-draft-of-a-sealed-value-runs-nothing
-  ;; A sealed value is one every check passed on, and the draft inherits exactly that
-  ;; claim. Nothing has moved, so there is nothing to establish.
   (reset-runs!)
   (let [d (rec/draft led)
         s (rec/seal d)]
@@ -107,12 +89,11 @@
     (is (= {::a 0 ::b 0 ::a-fits 0 ::always 0} (counts)))))
 
 (deftest the-check-naming-no-field-is-not-re-run-either
-  ;; A check with an empty arglist reads nothing, so no write can invalidate it and a draft
-  ;; of a sealed value has it passing. Selecting by the mask is what makes that count: the
-  ;; dirty-key rule it replaces had no key to select such a check by and ran it every time.
+  ;; A check with an empty arglist reads nothing, so no write clears it and a draft of a
+  ;; sealed value has it passing.
   (reset-runs!)
   (rec/seal (assoc (rec/draft led) ::a 2))
-  (is (= 0 (ran ::always)) "its verdict was inherited and nothing cleared it"))
+  (is (= 0 (ran ::always)) "recorded as passing from the sealed value, and nothing cleared it"))
 
 (deftest a-drafting-form-over-a-sealed-value-that-writes-nothing-runs-nothing
   (reset-runs!)
@@ -143,8 +124,7 @@
         "c is declared and no check reads it -- no verdict can have moved")))
 
 (deftest writing-the-same-value-back-still-costs-the-checks-naming-it
-  ;; The mask is computed from the arglists, not by comparing values: the write cleared the
-  ;; bits, so the checks run. A cheaper sound strategy is permitted, not required.
+  ;; What a write clears is computed from the arglists, not by comparing values.
   (reset-runs!)
   (rec/seal (assoc (rec/draft led) ::a (::a led)))
   (is (= {::a 1 ::b 0 ::a-fits 1 ::always 0} (counts))))
@@ -157,7 +137,7 @@
 
 ;;; ---------------------------- work done on the draft is kept ----------------------------
 
-(deftest a-check-established-by-hand-is-not-re-run-at-the-seal
+(deftest a-check-run-by-hand-is-not-run-again-at-the-seal
   (reset-runs!)
   (let [d (fresh)]
     (is (true? (rec/check d ::a)))
@@ -166,14 +146,14 @@
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))
         "::a was already passing; the other three were not")))
 
-(deftest establishing-everything-by-hand-leaves-the-seal-no-work
+(deftest running-everything-by-hand-leaves-the-seal-no-work
   (reset-runs!)
   (let [d (fresh)]
     (doseq [c all-checks] (is (true? (rec/check d c))))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts)))
     (is (rec/sealed? (rec/seal d)))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))
-        "the seal ran nothing: every bit was already set")))
+        "the seal ran nothing: every check was already recorded as passing")))
 
 (deftest check-bang-saves-the-same-work
   (reset-runs!)
@@ -182,9 +162,7 @@
     (rec/seal d)
     (is (= 1 (ran ::a-fits)))))
 
-(deftest a-certified-certificate-is-not-re-run-at-the-seal
-  ;; The half of `certify` that D3 could not deliver: certifying left the mask populated,
-  ;; but the seal selected by the dirty-key set and ran everything again.
+(deftest a-certificate-run-by-hand-is-not-run-again-at-the-seal
   (reset-runs!)
   (let [d (fresh)]
     (is (true? (rec/check d ::shape)))
@@ -193,7 +171,7 @@
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts))
         "only what ::shape does not cover was left for the seal")))
 
-(deftest a-fully-certified-draft-seals-without-running-anything
+(deftest a-draft-with-every-check-passing-seals-without-running-anything
   (reset-runs!)
   (let [d (fresh)]
     (is (true? (rec/check d rec/every-check)))
@@ -201,7 +179,7 @@
     (is (rec/sealed? (rec/seal d)))
     (is (= {::a 1 ::b 1 ::a-fits 1 ::always 1} (counts)))))
 
-(deftest a-verdict-established-before-a-write-does-not-cover-the-write
+(deftest a-pass-recorded-before-a-write-does-not-cover-the-write
   (reset-runs!)
   (let [d (fresh)]
     (rec/check d rec/every-check)
@@ -210,7 +188,7 @@
     (is (= {::a 0 ::b 1 ::a-fits 1 ::always 0} (counts))
         "the write cleared exactly ::b and ::a-fits, and those are what ran")))
 
-;;; -------------------------- the mask travels with the draft --------------------------
+;;; ------------------------- the record travels with the draft -------------------------
 
 (deftest operations-that-are-not-writes-do-not-cost-the-seal-anything
   (testing "with-meta"
@@ -230,7 +208,7 @@
     (is (rec/sealed? (rec/drafting [x (rec/draft led)] x)))
     (is (= {::a 0 ::b 0 ::a-fits 0 ::always 0} (counts)))))
 
-(deftest a-draft-passed-through-a-nested-drafting-keeps-what-it-established
+(deftest a-draft-passed-through-a-nested-drafting-keeps-what-it-recorded
   (reset-runs!)
   (let [inner (fn [x] (rec/drafting [y x] (assoc y ::a 2)))]
     (is (rec/sealed? (rec/drafting [x led] (inner x))))
@@ -240,8 +218,6 @@
 ;;; -------------------------------- failures are not saved --------------------------------
 
 (deftest a-failed-check-runs-again-at-the-seal
-  ;; Nothing about a cleared bit distinguishes "failed" from "never run", which is why a
-  ;; failure is produced again rather than remembered.
   (reset-runs!)
   (let [d (-> (rec/draft Ledger) (assoc ::a "not an int") (assoc ::b "xxx") (assoc ::c :x))]
     (is (= {::a false} (rec/check d ::a)))
@@ -262,7 +238,7 @@
     (is (= {::a 1 ::b 1 ::a-fits 2 ::always 1} (counts))
         "only the check that failed was run again")))
 
-(deftest seal-still-reports-every-failure-in-phase-order
+(deftest seal-reports-every-failure-shape-validations-first
   (reset-runs!)
   (let [e (err #(rec/seal (-> (rec/draft Ledger)
                               (assoc ::a "not an int") (assoc ::b :not-a-string)
@@ -307,9 +283,8 @@
 ;;; --------------------- what seal refuses, it refuses before running ---------------------
 
 (deftest a-field-never-written-is-judged-as-nil
-  ;; There is nothing to refuse: the field holds nil, as it would on a `defrecord` whose
-  ;; field was never set, and its shape validation is what says whether that will do. `c` is
-  ;; named by no check, so nothing has anything to say about it and it seals holding nil.
+  ;; The field holds nil, and its shape validation is what says whether that will do; `c`
+  ;; is named by no check, so it seals holding nil.
   (reset-runs!)
   (let [e (err #(rec/seal (assoc (rec/draft Ledger) ::a 1)))]
     (is (= ::rec/check-failed (:error e)))
@@ -347,10 +322,9 @@
 ;;; ------------------------------------ the guarantee ------------------------------------
 
 (defn- run-every-check
-  "Every check of `x`'s type, called the way it declared it wanted to be -- its arglist,
-  read off the model, is the whole of what it depends on. The oracle for what `seal`
-  selected: the claim is not that seal ran a particular set, but that the result is valid
-  as if all of them had."
+  "Every check of `x`'s type, called with what its arglist names read off `x`: the oracle
+  for what `seal` selected, since the claim is that the result is valid as if all of them
+  had run."
   [x]
   (let [model (or (internal/model-of x) (internal/draft-model x))]
     (into {} (map (fn [{:keys [name deps pred]}]
@@ -358,8 +332,8 @@
           (:checks model))))
 
 (deftest whatever-seal-returns-passes-every-check-however-little-it-ran
-  ;; Every path into a seal that the mask can shorten: untouched, written, partially
-  ;; checked, fully certified, checked and then written over.
+  ;; Every path into a seal that can run less than everything: untouched, written,
+  ;; partially checked, fully checked, checked and then written over.
   (let [ds [(rec/draft led)
             (assoc (rec/draft led) ::a 2)
             (assoc (rec/draft led) ::c :other)
@@ -376,10 +350,9 @@
         (doseq [[cname ret] (run-every-check s)]
           (is (true? ret) (str "draft " i ", check " cname)))))))
 
-(deftest a-mask-full-of-lies-is-not-reachable-through-any-write
-  ;; The mask is only ever set by a check that passed, and only ever inherited by a draft
-  ;; whose data is the data that check saw. Nothing a caller can do to a draft sets a bit
-  ;; for a check that did not pass against exactly what is in hand.
+(deftest a-check-that-did-not-pass-is-never-recorded-as-passing-by-a-write
+  ;; A check is recorded as passing only by passing against exactly the data in hand, and a
+  ;; draft inherits the record only from a sealed value whose data it holds.
   (let [bad (fn [d] (some false? (vals (run-every-check d))))]
     (doseq [d [(assoc (rec/draft led) ::a "not an int")
                (assoc (rec/draft led) ::b :not-a-string)
@@ -387,4 +360,4 @@
                (-> (rec/draft led) (assoc ::a 99))]]
       (is (bad d) "the draft really is invalid")
       (is (= ::rec/check-failed (:error (err #(rec/seal d))))
-          "and the mask did not let it through"))))
+          "and the seal did not let it through"))))
