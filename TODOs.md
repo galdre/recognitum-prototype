@@ -9,6 +9,21 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
+- [ ] **I9b. Reserve by name and arity, as `defrecord` does.** Ruled: potemkin's merge keys
+      a method by name plus its parameters' tags, so a same-name, different-arity method is
+      added beside the template's, as on a `defrecord`; the by-name refusal landed in 12ba5d4
+      protects nothing there and costs `(count [this unit])`, `(remove [this who reason])`,
+      `(values [this as-of])`. Narrow: a method is refused when its name and parameter count
+      match a reserved method's, tags ignored, except the seven names in the rename map
+      (`get`, `assoc`, `dissoc`, `keys`, `empty`, `with-meta`, `meta`) and their `*`
+      spellings, which stay reserved by name because `def-record-type` renames a user's
+      method into the template's slot whatever its arity. `toString` stays open. Add to the
+      README's list of deliberate changes that the type implements `IFn` as a map does, so a
+      definition cannot implement it otherwise. Tests first: arity-2 `count`, `seq`,
+      `values`, `remove` at arity 3 install and run on both types; arity-1 `seq` and `count`
+      are still refused; `keys` and `dissoc` at any arity are refused; `invoke` at arity 2
+      and 3 is refused.
+
 - [ ] **I8. A primitive-hinted `definterface` method breaks the `loop` emission.** With
       `(definterface ITally (tally [^long n]))`, `deftype` compiles it and `rec/defrecord` does
       not: `recurrable-body` interleaves `(rest args)` verbatim, so the `^long` rides into the
@@ -76,21 +91,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       and nothing else. Nothing needs it yet.
 
 ## Needs a ruling
-
-- [ ] **Method-name reservation is wider than `defrecord`'s.** A protocol method is now
-      refused when its name matches any of the 42 names the generated types carry, at any
-      arity (12ba5d4). Plain `defrecord` refuses only an exact interface signature, so a
-      same-name, different-arity method is legal there and not here. `values`, `remove`,
-      `size`, `count`, `invoke`, and `seq` are the plausible domain names lost. Rule: keep
-      by-name (simple, and named in the `defrecord` docstring), or narrow to name and arity
-      to match the baseline. If by-name stays, the README's list of deliberate changes
-      gains a line.
-
-- [ ] **README facts that restate a docstring.** After the passes, the README's three io-dep
-      fetch rules, its `unsealed` paragraph, and its constructor paragraph restate the
-      `defrecord`, `unsealed`, and generated `map->` docstrings nearly word for word. The
-      standard says each fact has one home. Rule whether the README keeps its own statement
-      (it is the document a reader starts from) or defers to the docstring with a pointer.
 
 - [ ] **I11 marker spelling.** Metadata on the method name, `(^:drafting add-member [h who cut] ...)`,
       is the recommendation: it names what the wrapper does (opens a draft) rather than what
