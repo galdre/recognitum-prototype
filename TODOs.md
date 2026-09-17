@@ -9,6 +9,28 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
+- [ ] **I14. The group runner runs at the sum of its checks.** Ruled. Measured 2026-09-17 on
+      the bench type: sealing an untouched draft 230 ns, of which the group runner with
+      nothing pending is 118 and the mask filter 43; a seal with one pending check about
+      550 ns against 9 ns for the same check on the inline write path. Three parts, one
+      step: (1) the macro precomputes every mask the runner derives at run time: per type
+      the shape, pure, and io checks as longs; per check the transitive closure of what it
+      waits on, replacing `wants`' fixed point; per certificate and per check name the
+      closure of what running it requires, so `ids-for` answers a mask and a plan is one
+      `bit-and-not`; `phases` becomes three `bit-and`s. (2) A single-value runner over
+      masks: pending is one bit operation, zero returns the shared answer; shape bits then
+      pure bits iterated with `numberOfTrailingZeros`, prerequisites read off the live mask,
+      failures allocated on the first failure only; the fetch path entered only when nothing
+      failed and the io mask is non-zero. (3) The group runner rebuilt on the same
+      primitives, the batched fetch across values kept, result shape unchanged. Targets: a
+      seal with one pending check under 60 ns; a `drafting` with one write about 150 ns.
+      Tests first: existing suite unchanged; cost-test bounds for a seal with one pending
+      check against the inline write and for a group check over a hundred drafts against a
+      hundred single checks; a closure test on a type whose io-dep names another io-dep.
+      Then a re-measure of the affected README rows. Follow-ons, each tiny: the untouched
+      seal short-circuit on the all-pass constant, and the duplicated lookups between
+      `seal`'s two arities.
+
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
       - Tighten the two method-row bounds in `cost_test`: the write bound is 110x, set to
         pass the pre-change wrapper, and now guards nothing at a measured 0.8x; the read
