@@ -5,34 +5,9 @@ The open queue. Closed items are gone; the rulings behind them are in the commit
 ## Implementation sequence
 
 Each step leaves the suite green and is scoped to be done on its own, tests first. Order is
-the order listed.
+the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
-
-- [ ] **P1. Prose pass under PROSE.md.** `PROSE.md` is the standard for every
-      human-readable string in the repository, from this step on and for every later step's
-      new prose. The pass applies it to what exists. Present offenders, for calibration:
-      `value-model!`'s docstring cites a work item ("the mistake I1 corrects"); `checks-for`'s
-      docstring describes a previous implementation ("built a sorted-set per write before");
-      the `::unknown-section` message tells the user what a position "used to take"; the
-      README cost section compares against "the table this replaces". Measured: about 1,080
-      of `core.clj`'s 2,830 lines are docstring and 281 are comment. Parts, each its own
-      commit, each leaving the suite green: (a) `core.clj` and `collections.clj`, the
-      namespace docstring reduced to purpose and public surface, landed as bf56501 and, after a
-      tightening pass on Fable, 2163166; (b) README, the cost section
-      as one table plus how to re-run it, landed as 311329e; (c) `dev/`, `bench/`, and test-namespace prose,
-      landed as eb30b99 and c5c3c41 with 67 test names renamed off the removed coinages; (d) thrown messages, which are operator-facing under the standard and are pinned by
-      tests, so each message edit lands with its test. Renames of code names are not part of
-      this pass; galdre rules on them after reading the code, which the pass is meant to make
-      possible. Ruled balance: lean toward
-      fewer comments. Implementation context relocated out of a docstring survives as a body
-      comment only where it explains something not evident from the code; the rest is
-      deleted. Agent constraints: the standard says to check with the user before writing a
-      multi-paragraph docstring, and an agent cannot, so an agent writes none and reports
-      each place it believes one is warranted;
-      parked or dead code is reported, never deleted; small style fixes the standard permits
-      go in a separate commit from the prose. `throws-test` holds docstrings to naming what
-      they throw and stays green under the standard.
 
 - [ ] **I9. Reserved method names are derived, not listed.** `reserved-methods` is a
       hand-written set of ten names; the template defines about thirty. A protocol method
