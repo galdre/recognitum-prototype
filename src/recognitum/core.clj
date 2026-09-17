@@ -1046,9 +1046,9 @@
                       {:error ::cannot-draft :value x})))))
 
 (defn- extraneous
-  "The keys `d` holds that its type does not declare."
-  [d]
-  (seq (keys ((:draft-ext (draft-model d)) d))))
+  "The keys `d` holds that its type does not declare; `model` is `d`'s."
+  [model d]
+  (seq (keys ((:draft-ext model) d))))
 
 (defn clean
   "`d` without the keys its type does not declare, which [[seal]] would otherwise refuse.
@@ -1056,10 +1056,10 @@
 
   Throws `:not-a-draft` when `d` is not a draft, carrying `:value`."
   [d]
-  (when-not (draft? d)
+  (if-let [model (draft-model d)]
+    (if (extraneous model d) ((:draft-clean model) d) d)
     (throw (ex-info (format "clean expects a draft, and %s is not one" (pr-str d))
-                    {:error ::not-a-draft :value d})))
-  (if (extraneous d) ((:draft-clean (draft-model d)) d) d))
+                    {:error ::not-a-draft :value d}))))
 
 ;;; ------------------------------ Opting out of the seal ------------------------------
 
@@ -1101,15 +1101,17 @@
   ;; the bits of every check reading the field it wrote.
   ;;
   ;; An undeclared key is refused before any check runs, so a draft that will be refused
-  ;; anyway fetches nothing.
-  (when-let [extra (extraneous d)]
-    (throw (ex-info (format "%s does not declare %s -- clean removes undeclared keys from a draft"
-                            (:name model) (pr-str (vec extra)))
-                    {:error ::extraneous-keys :record (:name model) :keys (vec extra)})))
-  ;; Every check on the type that the draft's record does not already say is passing. What
-  ;; those wait on is among them already, so no closure is read.
-  (run-draft-checks! model d (bit-and-not (long (:all-pass model)) (long (verdict-mask d))))
-  ((:draft-seal model) d))
+  ;; anyway fetches nothing, and a draft with nothing left to run is refused too.
+  (let [;; Every check on the type that the draft's record does not already say is passing.
+        ;; What those wait on is among them already, so no closure is read.
+        pending (bit-and-not (long (:all-pass model)) (long (verdict-mask d)))]
+    (when-let [extra (extraneous model d)]
+      (throw (ex-info (format "%s does not declare %s -- clean removes undeclared keys from a draft"
+                              (:name model) (pr-str (vec extra)))
+                      {:error ::extraneous-keys :record (:name model) :keys (vec extra)})))
+    (when-not (zero? pending)
+      (run-draft-checks! model d pending))
+    ((:draft-seal model) d)))
 
 (defn seal
   "Validate `d` and return the sealed value, which satisfies every check its type declares.
@@ -1133,20 +1135,21 @@
   carrying `:record`, `:io-dep` and what the fetch returned."
   ([d]
    (let [d (unmark d)]
-     (cond
-       (draft? d)  (seal (draft-model d) d)
-       (sealed? d) d
-       :else (throw (ex-info "seal expects a draft or an already-sealed value"
-                             {:error ::cannot-seal :value d})))))
+     (if-let [model (draft-model d)]
+       (seal-draft model d)
+       (if (sealed? d)
+         d
+         (throw (ex-info "seal expects a draft or an already-sealed value"
+                         {:error ::cannot-seal :value d}))))))
   ([model d]
    (let [d (unmark d)]
-     (if-not (identical? model (draft-model d))
+     (if (identical? model (draft-model d))
+       (seal-draft model d)
        (if (identical? model (model-of d))
          d
          (throw (ex-info (format "seal expects a draft or an already-sealed %s, and was given a %s"
                                  (:name model) (pr-str (class d)))
-                         {:error ::cannot-seal :record (:name model) :value d})))
-       (seal-draft model d)))))
+                         {:error ::cannot-seal :record (:name model) :value d})))))))
 
 (defn- not-of-this-type!
   [model d]
