@@ -26,6 +26,8 @@ The deliberate changes:
 - The print tag is namespace-qualified.
 - The library's keys are merged over `meta`.
 - A value is callable as a function of its keys, as a map is.
+- A protocol method marked `^:drafting` is handed a draft of the receiver on the sealed
+  type, and what it returns is sealed.
 - A definition may not implement `clojure.lang.IFn` at one or two arguments; those calls
   are the map's.
 
@@ -95,6 +97,7 @@ referring it:
     ::payout #{::cuts-sum-to-take ::only-crew-get-cuts}}}
 
   Job
+  ^:drafting
   (rename       [h nm] (assoc h ::name nm))
   (total-payout [h]    (reduce + 0 (vals (::cuts h)))))
 ```
@@ -238,21 +241,38 @@ nested.
 ## Protocol implementations
 
 Trailing forms in the definition are protocol implementations, written once and installed on
-both generated types. On the draft type the body runs as written. On the sealed type it is
-wrapped: the method opens a draft of the receiver, runs the body against that, and seals the
-result, so a method called on a sealed value cannot produce an invalid one:
+both generated types. On the draft type the body runs as written.
+
+On the sealed type it depends on what the method returns. A method that returns a modified
+receiver is a **drafting method**, and says so with `:drafting` metadata, written either on
+the method form or on the method name:
+
+```clojure
+^:drafting (rename [h nm] (assoc h ::name nm))
+(^:drafting rename [h nm] (assoc h ::name nm))
+```
+
+A drafting method is wrapped: it opens a draft of the receiver, runs the body against that,
+and seals the result, so it cannot produce an invalid value whatever it does in between.
+
+An unmarked method receives the sealed value and its body runs as written. A write it makes
+is an ordinary write to a sealed value, so it runs the checks reading the field written and
+throws `:check-failed` where one of them does not pass, and throws `:io-limited` where the
+field is one the option covers. What the mark buys is what `drafting` buys: many writes under
+one round of checks, and a state in between that no single write could reach.
 
 ```clojure
 (h/rename heist "The Sequel")                       ;=> a sealed Heist
 (drafting [x heist] (h/rename x "The Sequel"))      ;   the body ran on the draft, unsealed
-(h/total-payout heist)                              ;=> 3000 — not a Heist, so passed through
+(h/total-payout heist)                              ;=> 3000 — unmarked, and not a Heist anyway
 ```
 
 Only a draft of this type is sealed on the way out. A number, a string, a boolean, an
 already-sealed value, a draft of another type, all pass through untouched.
 
-Inside the body the receiver is a draft in both cases, so `(instance? Heist h)` is false there
-and `(rec/of-type? Heist h)` is the question that was meant.
+In a drafting method the receiver is a draft; otherwise it is whichever form the method was
+called on. So `(instance? Heist h)` inside a body answers about the form it was handed, and
+`(rec/of-type? Heist h)` is the question that was meant.
 
 `recur` works in a method body exactly as it does on a `defrecord`: it targets the body itself,
 with the receiver excluded, so `(tally [h n] (if (pos? n) (recur (dec n)) h))` means here what
@@ -262,14 +282,17 @@ it would mean there.
 marks a value that ends a reduction:
 
 ```clojure
+^:drafting
 (begin-revision [h] (rec/unsealed (assoc h ::name "draft title")))
 ```
 
-A method on the sealed type returning `(unsealed d)` returns `d` itself, owned by no `drafting`,
-so a later one adopts it. On the draft type the marker is unwrapped and nothing else changes, so
-a body means the same thing on either type. `(unsealed x)` throws where `x` is not a draft, and
-the method throws where it is a draft of another type. `drafting` and `seal` unwrap the marker
-and seal the draft inside it.
+A drafting method returning `(unsealed d)` returns `d` itself, owned by no `drafting`, so a
+later one adopts it. On the draft type the marker is unwrapped and nothing else changes, so a
+body means the same thing on either type. `(unsealed x)` throws where `x` is not a draft, and
+the method throws where it is a draft of another type. In an unmarked method on the sealed
+type the write above produces a sealed value, so `unsealed` of it throws `:not-a-draft`; a
+method that uses it is a drafting method and carries the mark. `drafting` and `seal` unwrap
+the marker and seal the draft inside it.
 
 ## Telling values apart
 

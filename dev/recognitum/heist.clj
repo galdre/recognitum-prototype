@@ -22,12 +22,12 @@
 
 (defprotocol Job
   "Written once and installed on both generated types. On a draft each body runs as written
-  and returns a draft; on a sealed `Heist` the same body runs against a draft the wrapper
-  opened, and the result is sealed on the way out. So `add-member`, which passes through
-  states no single write to a sealed value could produce, needs no `drafting` of its own,
-  and `total-payout`, which returns a number, passes through untouched. `begin-revision`
-  marks its return `unsealed`, so the wrapper unwraps the marker instead of sealing;
-  `revise` calls it on its own draft receiver and returns the finished draft bare."
+  and returns a draft. On a sealed `Heist` a body marked `^:drafting` runs against a draft
+  the wrapper opened and its result is sealed on the way out, so `add-member`, which passes
+  through states no single write to a sealed value could produce, needs no `drafting` of its
+  own. `total-payout` is unmarked, so it reads the sealed value and answers with a number.
+  `begin-revision` marks its return `unsealed`, so the wrapper unwraps the marker instead of
+  sealing; `revise` calls it on its own draft receiver and returns the finished draft bare."
   (rename       [h nm]        "Retitle the job.")
   (add-member   [h who cut]   "Put `who` on the crew with `cut`, and raise the take to fund it.")
   (promote      [h who bonus] "Raise `who`'s cut by `bonus`, and the take with it.")
@@ -91,14 +91,17 @@
     ::payout #{::cuts-sum-to-take ::only-crew-get-cuts}}}
 
   Job
+  ^:drafting
   (rename [h nm] (assoc h ::name nm))
 
+  ^:drafting
   (add-member [h who cut]
     (-> h
         (assoc ::crew (conj (::crew h) who))
         (assoc ::cuts (assoc (::cuts h) who cut))
         (assoc ::take (+ (::take h) cut))))
 
+  ^:drafting
   (promote [h who bonus]
     (-> h
         (assoc ::cuts (update (::cuts h) who + bonus))
@@ -106,8 +109,10 @@
 
   (total-payout [h] (reduce + 0 (vals (::cuts h))))
 
+  ^:drafting
   (begin-revision [h title] (rec/unsealed (assoc h ::name title)))
 
+  ^:drafting
   (revise [h title who bonus] (-> (begin-revision h title) (promote who bonus))))
 
 (def italian-job

@@ -23,6 +23,8 @@
   - To **seal** a draft is to validate it and return the sealed value. [[drafting]] opens a
     draft, runs a body against it, and seals the result. [[unsealed]] marks a value returned
     from a protocol method as one that is not to be sealed.
+  - A **drafting method** is a protocol method marked `^:drafting`, declaring that it returns
+    a modified receiver; on the sealed type it is handed a draft and its result is sealed.
 
   The public surface:
 
@@ -1011,11 +1013,14 @@
   "Mark the draft `d` as a return value a protocol method is not to seal, as `reduced` marks
   a value that ends a reduction.
 
-  A method installed on the sealed type seals a draft of its type that it returns (see
-  [[defrecord]]); one returning `(unsealed d)` returns `d` itself, owned by no `drafting`, so
-  a later one adopts it. On the draft type the marker is unwrapped and nothing else changes,
-  so a body means the same thing on either type. [[drafting]] and [[seal]] unwrap the marker
-  and seal the draft inside it.
+  A drafting method installed on the sealed type seals a draft of its type that it returns
+  (see [[defrecord]]); one returning `(unsealed d)` returns `d` itself, owned by no
+  `drafting`, so a later one adopts it. On the draft type the marker is unwrapped and nothing
+  else changes, so a body means the same thing on either type. [[drafting]] and [[seal]]
+  unwrap the marker and seal the draft inside it.
+
+  An unmarked method on the sealed type is handed the sealed value, so a write in its body
+  produces a sealed value and `unsealed` of that throws.
 
   Throws `:not-a-draft` when `d` is not a draft, carrying `:value`."
   [d]
@@ -1116,12 +1121,19 @@
 
 (defn- recurrable-body
   "A method body wrapped in a `loop` rebinding every argument but the receiver to itself, so
-  that `recur` inside it means what it means in a `defrecord` method body. Neither emission
-  puts the body in tail position of the method, so the `loop` is the recur target instead.
-  The receiver is left out because a `defrecord` method body's recur leaves it out."
+  that `recur` inside it means what it means in a `defrecord` method body. No emission puts
+  the body in tail position of the method, so the `loop` is the recur target instead. The
+  receiver is left out because a `defrecord` method body's recur leaves it out."
   [args body]
   ;; The binding names are stripped: the compiler refuses a primitive hint in a binding position.
   `(loop [~@(interleave (map #(with-meta % nil) (rest args)) (rest args))] ~@body))
+
+(defn- impl-as-written
+  "The emission of a method whose body runs against the value it was called on: the receiver
+  is bound as the author wrote it, and the return goes through [[draft-impl-return]]."
+  [model-sym [mname args & body]]
+  `(~mname ~args
+     (~(internal 'draft-impl-return) ~model-sym ~(recurrable-body args body))))
 
 (defn- owned-here?
   "Is `x` a draft belonging to a `drafting` form already on the stack?"
@@ -1584,9 +1596,22 @@
                     {:error ::reserved-method :record tname :method mname :arity arity
                      :form form :reserved reserved :reserved-names names}))))
 
+(defn- marked-drafting?
+  "Is `form` marked `^:drafting`, written on the method form or on the method name?"
+  [form]
+  (boolean (or (:drafting (meta form)) (:drafting (meta (first form))))))
+
+(defn- unmark-drafting
+  "`form` with the `:drafting` mark gone from both places it may be written, so that nothing
+  downstream of here sees it."
+  [[mname & more :as form]]
+  (with-meta (cons (vary-meta mname dissoc :drafting) more)
+    (not-empty (dissoc (meta form) :drafting))))
+
 (defn- parse-impls
-  "`defrecord`'s trailing forms -> `[:type sym]` and `[:method form]` pairs, in the order they
-  were written.
+  "`defrecord`'s trailing forms -> `[:type sym]` and `[:method form drafting?]` tuples, in
+  the order they were written. `drafting?` is whether the method was marked `^:drafting`,
+  and `form` is the method with the mark stripped.
 
   A form that is neither a protocol or interface name nor a method implementation, a method
   written before any such name, and an arglist with no receiver are each refused here with
@@ -1615,7 +1640,7 @@
             (when (empty? (second form))
               (bad! form (str "has an empty arglist -- a method implementation's first "
                               "parameter is the receiver")))
-            [(conj acc [:method form]) named?])
+            [(conj acc [:method (unmark-drafting form) (marked-drafting? form)]) named?])
 
           :else
           (bad! form (str "is neither a protocol or interface name nor a method "
@@ -1715,13 +1740,25 @@
   fields are unaffected.
 
   Trailing forms are protocol implementations, written once and installed on both generated
-  types. On the draft type the body runs as written. On the sealed type it is wrapped: the
-  method opens a draft of the receiver, runs the body against that, and seals the result, so
-  a method called on a sealed value cannot produce an invalid one whatever it does inside.
-  Only a draft of this type is sealed on the way out; a number, a string, an already-sealed
-  value, a draft of some other type, all pass through untouched. The receiver is a draft in
-  both cases, so `(instance? Heist h)` inside a body is false where it was meant to hold and
-  [[of-type?]] is the question that was meant. [[unsealed]] opts a return out of the seal.
+  types. On the draft type the body runs as written, whatever the method is marked.
+
+  A method that returns a modified receiver is a drafting method, and is marked `^:drafting`
+  either on the method form or on the method name:
+
+      ^:drafting (add-member [h who cut] ...)     ; either spelling
+      (^:drafting add-member [h who cut] ...)
+
+  On the sealed type a drafting method is wrapped: it opens a draft of the receiver, runs the
+  body against that, and seals the result, so it cannot produce an invalid value whatever it
+  does inside, and the receiver is a draft, which is why `(instance? Heist h)` is false in
+  such a body and [[of-type?]] is the question that was meant. An unmarked method receives
+  the sealed value itself and its body runs as written; a write it makes is an ordinary write
+  to a sealed value, so it runs that write's checks and is refused for an `:io-limited`
+  field. [[unsealed]] there is handed a sealed value and throws `:not-a-draft`.
+
+  Either way, only a draft of this type is sealed on the way out; a number, a string, an
+  already-sealed value, a draft of some other type, all pass through untouched, and
+  [[unsealed]] opts a returned draft out of the seal.
 
   A method may not take both the name and the arity of one the generated types already carry
   -- `(seq [this])`, `(count [this])`, `(invoke [this k])` and the rest of the map and record
@@ -1912,22 +1949,20 @@
                     #{})
         limited?  (fn [k] (contains? limited k))
         ;; ---- the protocol implementations ----
-        ;; The draft type runs the body as written, unwrapping only an `unsealed` marker.
+        ;; The draft type runs every body as written, marked or not, unwrapping only an
+        ;; `unsealed` marker.
         draft-impls (mapv (fn [[kind form]]
-                            (if (= kind :type)
-                              form
-                              (let [[mname args & body] form]
-                                `(~mname ~args
-                                   (~(internal 'draft-impl-return)
-                                    ~model-sym
-                                    ~(recurrable-body args body))))))
+                            (if (= kind :type) form (impl-as-written model-sym form)))
                           impl-forms)
-        ;; The sealed type wraps it: the receiver the body sees is a draft of the value,
-        ;; owned by this call, so a `drafting` inside the body passes it straight through and
-        ;; only the wrapper seals.
-        sealed-impls (mapv (fn [[kind form]]
-                             (if (= kind :type)
-                               form
+        ;; The sealed type wraps a drafting method: the receiver the body sees is a draft of
+        ;; the value, owned by this call, so a `drafting` inside the body passes it straight
+        ;; through and only the wrapper seals. An unmarked method is emitted as the draft
+        ;; type's is, so its receiver is the sealed value itself.
+        sealed-impls (mapv (fn [[kind form drafting?]]
+                             (cond
+                               (= kind :type) form
+                               (not drafting?) (impl-as-written model-sym form)
+                               :else
                                (let [[mname args & body] form
                                      recv (first args)]
                                  `(~mname [~(with-meta selfsym (meta recv)) ~@(rest args)]
