@@ -24,6 +24,21 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       and every such assertion is listed in the report. `applyTo` is the author's business,
       as on a `defrecord`.
 
+- [ ] **I15. A value is not callable; a definition may implement `IFn` itself.** Ruled. A
+      plain `defrecord` is not a function, and the template's map-style `invoke` (from
+      potemkin's `PotemkinFn` in `AbstractRecord`) is a deviation nobody asked for that
+      also blocks a definition from implementing `clojure.lang.IFn` at one or two
+      arguments. Remove `PotemkinFn` and its `invoke` methods from the template; `invoke`
+      then leaves the derived reserved set on its own. Delete the README's deliberate-change
+      lines "A value is callable as a function of its keys, as a map is" and "A definition
+      may not implement `clojure.lang.IFn` at one or two arguments". Tests first: a
+      definition implementing `clojure.lang.IFn` with `invoke` at one and two arguments
+      installs on both types and is called; a value is not `ifn?` and calling one throws
+      `ClassCastException` as calling a `defrecord` does, twinned against a plain
+      `defrecord`; any existing assertion that a value is callable as a map is inverted,
+      and every such assertion is listed in the report. `applyTo` is the author's business,
+      as on a `defrecord`.
+
 - [ ] **I16. Untouched-seal short-circuit and `seal`'s duplicated lookups.** Two tiny
       follow-ons to the runner step. (1) In `seal-draft`, compare the mask to the all-pass
       constant before reading anything else off the model; an untouched seal is 60 ns and
@@ -128,6 +143,12 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       value, 350 ns on `draft` with the suite loaded. Fixed at those two sites with a
       `class?` test (82c7db0). Nothing else was swept; anything that looks up a value in a
       map keyed by class has the same shape.
+- [ ] **The thread binding around `drafting` and drafting methods.** After the seal
+      short-circuit, `drafting` with an empty body is 97 ns and about 60 of it is the
+      `push-thread-bindings`/`pop-thread-bindings` pair around `*owner*`. It is the largest
+      single cost left on that path. The token exists so a nested `drafting` can tell a
+      draft it owns from a free one; an alternative that avoids the binding frame would need
+      the same re-entrancy guarantee. Reported by the short-circuit agent.
 - [ ] **The model map as a type.** After the runner step, sixty of the 117 ns for a seal
       with one pending check is keyword lookups on the model, a hash map at any real
       type's width, and most of the rest is the `case` dispatch through `:run-draft` and the
