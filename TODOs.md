@@ -16,17 +16,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       marker and looks up the model, then calls the two-arity, which does both again.
       Tests first: a cost bound on the untouched seal against opening a draft.
 
-- [ ] **I19. `dissoc` of a declared field is `(assoc m k nil)`.** Ruled. The value keeps
-      its type and the field reads as `nil`: on a sealed value the checks reading the field
-      run and the shape validation decides whether `nil` is acceptable, throwing
-      `:check-failed` if not; under `:io-limited` a covered field is refused as the `assoc`
-      would be; on a draft nothing runs. `dissoc` of an undeclared key is unchanged. A
-      declared field stays present, so `contains?` answers true after the `dissoc`. The
-      `:cannot-dissoc` error and `no-dissoc!` go. README: the deliberate-changes line
-      becomes "`dissoc` of a declared field sets it to `nil`; a `defrecord` becomes a
-      map", and the Writing section's `dissoc` paragraph is rewritten. Tests first,
-      twinned in `record_test.clj`.
-
 - [ ] **I17. A failing shape validation stops the checks behind it, everywhere, and the
       report says so.** Ruled: when a field fails its shape validation, the invariant and
       external validations reading that field do not run, in every entry point and every
@@ -54,6 +43,10 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       `nil`; the long form's own docstring wins. Small.
 
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
+      - The `:io-limited` refusal's `:instead` form after a `dissoc` spells the `assoc`;
+        make it spell the call that was made.
+      - The demo shows only the refused `dissoc`, because every field of `Heist` rejects
+        `nil`. Either accept that or give the worked example a nullable field.
       - Tighten the two method-row bounds in `cost_test`: the write bound is 110x, set to
         pass the pre-change wrapper, and now guards nothing at a measured 0.8x; the read
         bound is 12x at a measured 1.0x. Bring both to the style of the existing rows,
