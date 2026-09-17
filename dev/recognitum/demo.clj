@@ -1,10 +1,7 @@
 (ns recognitum.demo
-  "Everything the library does, run rather than described.
-
-  Print it and read down the left-hand column: each line is a form, and what follows it is
-  either what that form returned or the error it threw. The IO half is the part worth
-  watching -- `recognitum.roster` counts every call made to it, so the lines that print a
-  call count are showing what the library actually did rather than asserting it."
+  "Every facility in the README, run against `recognitum.heist`. Each printed line is a
+  form, followed by what it returned or the error it threw. `recognitum.roster` counts
+  every call made to it, so the lines that print a call count show what was fetched."
   (:require
    [clojure.edn :as edn]
    [recognitum.heist :as heist]
@@ -25,7 +22,7 @@
 (defn- section [s] (println (str "\n--- " s " ---")))
 
 (defn- watching
-  "Run `f` with the call log cleared, and answer with what the fake source was asked for."
+  "Run `f` with the call log cleared, and return the names of the fetches it made."
   [f]
   (house/reset-calls!)
   (try (f) (catch Throwable _ nil))
@@ -61,14 +58,14 @@
     (show "(rec/draft? (draft job))"          (fn [] (rec/draft? (rec/draft job))))
     (show "(rec/sealed? job)"                 (fn [] (rec/sealed? job)))
 
-    (section "a check over one field, eager")
+    (section "a shape validation, run on the write")
     (show "assoc ::heist/take \"lots\"" (fn [] (assoc job ::heist/take "lots")))
     (show "assoc :getaway-car \"mini\"" (fn [] (assoc job :getaway-car "mini")))
 
     (section "dissoc refuses declared fields")
     (show "dissoc ::heist/cuts" (fn [] (dissoc job ::heist/cuts)))
 
-    (section "a check over two fields, on a single-key write")
+    (section "an invariant validation over two fields, on a single-key write")
     (show "assoc ::heist/take 4000 (cuts now stale)" (fn [] (assoc job ::heist/take 4000)))
 
     (section "merge is one atomic multi-key write")
@@ -120,7 +117,7 @@
                    (-> h (assoc ::heist/crew (conj (::heist/crew h) :mole))
                          (assoc ::heist/cuts (assoc (::heist/cuts h) :mole 400))))))
 
-    (section "what a draft has established, and what it still owes")
+    (section "which checks a draft records as passing")
     (show "(rec/passed (draft Heist)) -- from the type"
           (fn [] (rec/passed (rec/draft Heist))))
     (show "(rec/passed job) -- a sealed value is one every check passed on"
@@ -143,7 +140,7 @@
             (fn [] (rec/check d ::heist/cuts)))
       (show "(rec/check d ::heist/cuts-sum-to-take) -- it waits on the shape validations"
             (fn [] (rec/check d ::heist/cuts-sum-to-take)))
-      (show "(rec/check d ::heist/shape) -- one verb, a certificate name; take and cuts owed"
+      (show "(rec/check d ::heist/shape) -- a certificate name; take and cuts are unwritten"
             (fn [] (rec/check d ::heist/shape)))
       (show "(rec/certificates d)"           (fn [] (rec/certificates d)))
       (show "and now the shape certificate"
@@ -153,7 +150,7 @@
             (fn [] (rec/check (assoc d ::heist/name "") ::heist/name)))
       (show "check! throws the report instead"
             (fn [] (rec/check! (assoc d ::heist/name "") ::heist/name)))
-      (show "on a sealed value everything is established, so check runs nothing"
+      (show "on a sealed value every check passes, so check runs nothing"
             (fn [] [(rec/check job rec/every-check)
                     (watching #(rec/check job rec/every-check))])))
 
@@ -167,12 +164,12 @@
     (show "adding someone it has never heard of"
           (fn [] (drafting [h job] (heist/add-member h :nobody-in-particular 500))))
 
-    (section "the gate: a malformed crew never reaches the source")
+    (section "a malformed crew never reaches the fetch, so its throw never propagates")
     (show "fetch-rosters on something that is not a crew"
           (fn [] (house/fetch-rosters [["not a crew"]])))
     (show "sealing a draft holding that crew"
           (fn [] (drafting [h job] (assoc h ::heist/crew "not a crew"))))
-    (show "...and what the source was asked for while that ran"
+    (show "...and what was fetched while that ran"
           (fn [] (watching #(drafting [h job] (assoc h ::heist/crew "not a crew")))))
 
     (section "one fetch per validation call, however many things name it")
@@ -213,7 +210,7 @@
     (section "io-limited: the fields behind a fetch are draft-only")
     (show "assoc ::heist/crew on a sealed value"
           (fn [] (assoc job ::heist/crew #{:charlie :lyle})))
-    (show "...and what it fetched to tell you that"
+    (show "...and what it fetched before refusing"
           (fn [] (watching #(assoc job ::heist/crew #{:charlie :lyle}))))
     (show "the :instead form from its ex-data"
           (fn [] (try (assoc job ::heist/crew #{:charlie :lyle})
@@ -232,7 +229,7 @@
     (show "a shape failure is the whole report -- what waits on it does not run"
           (fn [] (heist/->Heist "Job" #{:a} 10 "garbage")))
 
-    (section "printing names the reader you need")
+    (section "printing: the tag names the reader")
     (show "(pr-str job)" (fn [] (pr-str job)))
     (show "a draft says it is unreadable" (fn [] (pr-str (rec/draft job))))
 

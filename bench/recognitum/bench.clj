@@ -1,19 +1,16 @@
 (ns recognitum.bench
-  "defrecord + hand-rolled validation vs. the library, sharing one set of field predicates
-  so the validation work is the same on both sides. The invariant validations are written
-  twice -- the hand-rolled side reads them out of a map, the library's are handed the two
-  fields they named -- which is the difference being measured rather than a thumb on the
-  scale: the same comparison over the same values either way.
-
-  Both sides run the same six checks and reach the same verdict on the same values, which
-  `recognitum.example-test` asserts rather than leaves to the eye. Nothing here is
-  IO-bound: a fetch would dominate every row and measure the fake rather than the library."
+  "A hand-rolled `defrecord` with the same validation against the library, sharing one set
+  of field predicates. The invariant validations are written twice: the hand-rolled side
+  reads its fields out of a map, the library's are passed the fields they named, and that
+  difference is part of what is measured. `recognitum.example-test` asserts that both sides
+  reach the same result on the same values. Nothing here fetches: a fetch would dominate
+  every row."
   (:require
    [clojure.string :as str]
    [criterium.core :as c]
    [recognitum.core :as rec :refer [drafting]]))
 
-;;; ---- the validation code, used by BOTH implementations ----
+;;; ---- the validation code, shared by both sides ----
 
 (defn non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn crew-set?        [x] (and (set? x) (seq x) (every? keyword? x)))
@@ -26,9 +23,8 @@
 (def field-preds {:name non-blank-string? :crew crew-set? :take non-neg-int? :cuts cuts-map?})
 
 (def invariant-index
-  "The hand-rolled twin of what the macro derives from the arglists: field -> the
-  invariant validations reading it. Written out here, and kept in step by hand, which is the
-  labour the library is charging for."
+  "Field -> the invariant validations reading it, written out by hand; the macro derives the
+  same index from the arglists."
   {:take [cuts-add-up?] :cuts [cuts-add-up? only-crew?] :crew [only-crew?]})
 
 ;;; ---- library version ----
@@ -62,10 +58,9 @@
     r'))
 
 (defn m-validate!
-  "The hand-rolled `seal`: check the keys that were written, then the invariant validations
-  reading them. The library selects by the draft's verdict mask instead, which is the same
-  selection reached from the other end -- a check whose bit is clear is one a write
-  cleared."
+  "The hand-rolled `seal`: the shape validations of the keys written, then the invariant
+  validations reading them. The library selects the same checks from the draft's record of
+  which checks pass."
   [r dirty]
   (doseq [k dirty] (when-not ((field-preds k) (get r k)) (bad! k)))
   (doseq [p (distinct (mapcat invariant-index dirty))] (when-not (p r) (bad! nil)))

@@ -1,8 +1,5 @@
-;; Clojure reads every data_readers.clj at the root of the classpath on startup and merges
-;; them into *data-readers*, which is what `read` and `read-string` consult. Each entry maps a
-;; tag to a fully-qualified var. Pointing it at the validating constructor is the whole trick:
-;; a literal cannot produce a value that construction would have refused.
-;;
-;; This only reaches `read`/`read-string`. `clojure.edn` never consults *data-readers* -- hand
-;; it `(recognitum.core/data-readers)` as :readers instead.
+;; Merged into `*data-readers*` at startup, which `read` and `read-string` consult and
+;; `clojure.edn` does not; `clojure.edn` takes `(recognitum.core/data-readers)` as `:readers`.
+;; The tag maps to the validating constructor, so a literal that fails a check throws at read
+;; time.
 {recognitum.heist/Heist recognitum.heist/map->Heist}

@@ -1,22 +1,16 @@
 (ns recognitum.roster
-  "An in-memory table standing in for the database an io-dep would really reach.
+  "An in-memory table standing in for the database an io-dep would reach. An io-dep is an
+  ordinary function; what matters is that it is called at most once per validation call,
+  only once the pure checks over the fields it names have passed, and that what it returns
+  is judged by the checks naming it. A map and an atom show all three.
 
-  Nothing in this library needs real infrastructure to be exercised: an io-dep is an
-  ordinary function, and what matters about it is that it is called at most once per
-  validation call, that it is called only once the fields it names are known to be
-  well-formed, and that what it returns is judged by the checks naming it rather than by
-  the library. A map and an atom show all three.
-
-  `fetch-roster` refuses anything that is not a set of keywords, and that refusal is the
-  point: it is what the gate exists to keep away from. A crew the checks over it have not
-  yet passed never reaches here, so the throw a malformed crew would cause is one nobody
-  sees -- and if it were ever seen, the gate would be broken.")
+  `fetch-roster` and `fetch-rosters` throw on anything that is not a set of keywords, so a
+  crew whose shape validation has not passed reaching either would be a throw rather than
+  a failure report.")
 
 (def table
-  "Who the house knows about, and what it knows. The keys are the only people a fetch can
-  find; anyone else is a stranger, which is a fact the checks are free to make something
-  of -- as is the difference between someone it has on file and has vouched for and
-  someone it has on file and has not."
+  "Who the house knows about, and what it knows. Anyone not among the keys is a stranger,
+  which is a different thing from someone on file and not vetted."
   {:charlie      {:vetted true}
    :lyle         {:vetted true}
    :left-ear     {:vetted true}
@@ -25,9 +19,7 @@
    :mole         {:vetted false}})
 
 (def calls
-  "Every argument a fetch here has been handed, in order -- `[fn-name arg]` pairs. A fetch
-  is supposed to happen once per validation call however many checks name it, and never at
-  all where the gate refuses; both are counted rather than argued about."
+  "Every argument a fetch here has been handed, in order, as `[fn-name arg]` pairs."
   (atom []))
 
 (defn reset-calls! [] (reset! calls []))
@@ -37,10 +29,8 @@
   ([f] (count (filter (fn [[g]] (= f g)) @calls))))
 
 (defn fetch-roster
-  "Everyone in `crew` the table knows about.
-
-  Throws on anything that is not a set of keywords. A fetch that is handed garbage is a
-  fetch that should never have run, and saying so loudly is worth more here than a nil."
+  "Everyone in `crew` the table knows about. Throws on anything that is not a set of
+  keywords."
   [crew]
   (swap! calls conj [:fetch-roster crew])
   (when-not (and (set? crew) (every? keyword? crew))
@@ -55,15 +45,9 @@
 
 (defn fetch-rosters
   "The batched form of [[fetch-roster]]: every argument tuple in one call, answered as a map
-  keyed by the tuple it was asked about.
-
-  Keying by the tuple rather than aligning positionally is what lets the library do the
-  deduplication rather than the author -- a hundred values referencing five crews arrive
-  here as five tuples, and each of them is answered once.
-
-  Throws on anything that is not a crew, for the same reason the singular form does: a fetch
-  handed garbage is a fetch the gate should have kept away, and saying so loudly is worth
-  more here than a nil."
+  keyed by tuple. Keying by tuple is what lets the library deduplicate: a hundred values
+  over five crews arrive as five tuples. Throws on anything that is not a crew, as the
+  singular form does."
   [rows]
   (swap! calls conj [:fetch-rosters rows])
   (into {}
