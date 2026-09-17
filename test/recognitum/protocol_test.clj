@@ -8,6 +8,7 @@
   the marker and seal the draft inside it."
   (:require
    [clojure.test :refer [deftest is testing]]
+   [recognitum.collections :as rc]
    [recognitum.core :as rec]
    [recognitum.internal :as internal]))
 (defn- err
@@ -31,6 +32,19 @@
 
 (defn- compile-data [form] (some-> (compiles form) root-cause ex-data))
 (defn- compile-message [form] (some-> (compiles form) root-cause ex-message))
+
+(defn- in-scratch
+  "Evaluate `form` in the scratch namespace and return what it evaluated to."
+  [form]
+  (binding [*ns* @scratch] (eval form)))
+
+(defn- template-method-names
+  "Every method name in the body of the template both generated types are built on, read out
+  of the var itself: `potemkin.types/def-abstract-type` leaves the quoted `deftype` form
+  there, and the body is interface names interleaved with method forms."
+  []
+  (let [[_deftype _name _fields & body] rc/AbstractRecord]
+    (into #{} (comp (filter seq?) (map first)) body)))
 
 ;;; ---------------------------------------- the model ----------------------------------------
 
@@ -466,3 +480,57 @@
                          {:checks {:recognitum.protocol-scratch/a int?}}
                          recognitum.protocol-test/Described
                          (describe [x] (str (:recognitum.protocol-scratch/a x))))))))
+
+(deftest a-method-named-for-anything-the-template-defines-does-not-compile
+  ;; The template answers some thirty methods, not just the eight of the map interface
+  ;; above. `deftype+` merges a body into the template by name and lets the later definition
+  ;; win, so any of these would take the template's place and still compile.
+  (doseq [m '[seq count equiv hasheq invoke valAt hashCode equals iterator entrySet
+              meta* get* assoc*]]
+    (let [tname (gensym "Template")
+          e     (compile-data (list 'recognitum.core/defrecord tname
+                                    '[a] {}
+                                    'recognitum.protocol-test/Described
+                                    (list m '[x] 1)))]
+      (is (= ::rec/reserved-method (:error e)) (str m))
+      (is (= m (:method e)) (str m))
+      (is (= tname (:record e)) (str m)))))
+
+(deftest a-method-named-for-one-the-expansion-writes-itself-does-not-compile
+  ;; The thunk a keyword call site caches on the sealed type, and the two methods a draft's
+  ;; verdicts are read and written through.
+  (doseq [m '[getLookupThunk verdict-mask record-verdict!]]
+    (let [tname (gensym "Generated")
+          e     (compile-data (list 'recognitum.core/defrecord tname
+                                    '[a] {}
+                                    'recognitum.protocol-test/Described
+                                    (list m '[x] 1)))]
+      (is (= ::rec/reserved-method (:error e)) (str m))
+      (is (= m (:method e)) (str m))
+      (is (= tname (:record e)) (str m)))))
+
+(deftest the-refusal-carries-every-name-it-refuses
+  (let [reserved (:reserved (compile-data '(recognitum.core/defrecord Listed
+                                             [a] {}
+                                             recognitum.protocol-test/Described
+                                             (keys [x] 1))))]
+    (testing "the map interface a body is written in terms of, under both spellings"
+      (is (every? reserved '[get assoc dissoc keys meta with-meta empty cons
+                             get* assoc* dissoc* keys* meta* with-meta* empty*])))
+    (testing "every method the template defines"
+      (is (= #{} (into #{} (remove reserved) (template-method-names)))))
+    (testing "the three the expansion writes into the generated bodies"
+      (is (every? reserved '[getLookupThunk verdict-mask record-verdict!])))
+    (testing "and not toString, which the template leaves to Object as a record does"
+      (is (not (contains? reserved 'toString))))))
+
+(deftest a-method-the-template-does-not-define-still-installs
+  ;; `toString` is the one name in the map and record interfaces the template leaves alone,
+  ;; so a body may take it, as on a plain `defrecord`.
+  (is (nil? (compiles '(recognitum.core/defrecord Stringy
+                         [a]
+                         {:checks {:recognitum.protocol-scratch/a int?}}
+                         Object
+                         (toString [x] (str "a=" (:recognitum.protocol-scratch/a x)))))))
+  (is (= "a=1" (str (in-scratch '(->Stringy 1)))))
+  (is (= "a=1" (str (in-scratch '(recognitum.core/draft (->Stringy 1)))))))
