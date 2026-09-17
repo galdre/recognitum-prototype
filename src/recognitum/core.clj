@@ -76,7 +76,8 @@
 ;;; ------------------------------------------ Checks ------------------------------------------
 
 (defn- unknown-key! [model k]
-  (throw (ex-info (format "%s has no field %s" (:name model) (pr-str k))
+  (throw (ex-info (format "%s has no field %s -- its fields are %s"
+                          (:name model) (pr-str k) (pr-str (:field-order model)))
                   {:error ::unknown-field :record (:name model) :key k
                    :declared (:field-order model)})))
 
@@ -180,16 +181,16 @@
   `:tuples` and `:returned`."
   [model d res tuples]
   (when-not (or (map? res) (instance? java.util.Map res))
-    (throw (ex-info (format (str "%s io-dep %s is batched, so it answers a map keyed by "
+    (throw (ex-info (format (str "%s io-dep %s is batched and must return a map keyed by "
                                  "argument tuple -- it returned %s")
                             (:name model) (pr-str (:name d)) (pr-str res))
                     {:error ::malformed-batch :record (:name model) :io-dep (:name d)
                      :tuples tuples :returned res})))
   (let [missing (into [] (remove #(contains? res %)) tuples)]
     (when (seq missing)
-      (throw (ex-info (format (str "%s io-dep %s answered nothing about %s -- a batched fetch "
-                                   "answers every tuple it is handed, and a tuple answered nil "
-                                   "is not a tuple left out")
+      (throw (ex-info (format (str "%s io-dep %s returned no entry for %s -- a batched fetch "
+                                   "must return an entry for every tuple it is given, even "
+                                   "if the entry holds nil")
                               (:name model) (pr-str (:name d))
                               (apply str (interpose ", " (map pr-str missing))))
                       {:error ::incomplete-batch :record (:name model) :io-dep (:name d)
@@ -297,7 +298,7 @@
   (cond (map? o)                     (seq o)
         (instance? java.util.Map o)  (seq (into {} o))
         (and (vector? o) (= 2 (count o))) [o]
-        :else (throw (ex-info (format "cannot conj %s onto a %s -- a conj takes a map or a [k v]"
+        :else (throw (ex-info (format "cannot conj %s onto a %s -- conj takes a map or a [k v] pair"
                                       (pr-str o) (:name model))
                               {:error ::cannot-conj :record (:name model) :value o}))))
 
@@ -305,7 +306,8 @@
   "Throw `:cannot-dissoc` for `k`, a declared field: declared fields are permanent. Carries
   `:record`, `:key`, and an `:instead` form spelling the `assoc` of `nil` that replaces it."
   [model k]
-  (throw (ex-info (format "cannot dissoc %s from %s: declared fields are permanent -- use (assoc m %s nil) if its checks admit nil"
+  (throw (ex-info (format (str "cannot dissoc %s from %s: declared fields are permanent -- "
+                               "write (assoc m %s nil) instead, if its checks admit nil")
                           (pr-str k) (:name model) (pr-str k))
                   {:error ::cannot-dissoc :record (:name model) :key k
                    :instead (list 'assoc 'm k nil)})))
@@ -327,10 +329,9 @@
         by    (apply array-map (mapcat (fn [k] [k (io-checks-on model k)]) ks))
         names (fn [xs] (apply str (interpose ", " (map pr-str xs))))
         many? (boolean (next ks))]
-    (throw (ex-info (format (str "%s is :io-limited and %s %s read by %s (%s) -- write %s "
-                                 "inside `drafting` rather than by assoc or merge on a "
-                                 "sealed value, so N writes cost one round of checks at "
-                                 "the seal instead of N")
+    (throw (ex-info (format (str "%s declares :io-limited, and %s %s read by %s (%s) -- "
+                                 "write %s inside drafting rather than by assoc or merge "
+                                 "on a sealed value")
                             (:name model)
                             (names ks)
                             (if many? "are" "is")
@@ -647,7 +648,8 @@
     [i]
     (if-let [c (get (:certificates model) cname)]
       (:ids c)
-      (throw (ex-info (format "%s declares no check or certificate named %s -- its checks are %s and its certificates are %s"
+      (throw (ex-info (format (str "%s declares no check or certificate named %s -- its "
+                                   "checks are %s and its certificates are %s")
                               (:name model) (pr-str cname)
                               (pr-str (mapv :name (:checks model)))
                               (pr-str (vec (keys (:certificates model)))))
@@ -973,7 +975,7 @@
       (if (identical? model (@registry x))
         ((:draft-empty model) *owner*)
         ((:draft-from model) x *owner*))
-      (throw (ex-info (format (str "draft expects a validated value, a draft, or a registered "
+      (throw (ex-info (format (str "draft expects a sealed value, a draft, or a registered "
                                    "type, and %s is none of them")
                               (pr-str x))
                       {:error ::cannot-draft :value x})))))
@@ -1033,7 +1035,7 @@
   ;; An undeclared key is refused before any check runs, so a draft that will be refused
   ;; anyway fetches nothing.
   (when-let [extra (extraneous d)]
-    (throw (ex-info (format "%s has no field(s) %s -- use `clean` to strip them"
+    (throw (ex-info (format "%s does not declare %s -- clean removes undeclared keys from a draft"
                             (:name model) (pr-str (vec extra)))
                     {:error ::extraneous-keys :record (:name model) :keys (vec extra)})))
   ;; Every check on the type, as the index vector the built-in certificate already holds.
@@ -1072,8 +1074,8 @@
      (if-not (identical? model (draft-model d))
        (if (identical? model (model-of d))
          d
-         (throw (ex-info (format "%s: expected a draft or an already-sealed %s, got %s"
-                                 (:name model) (:name model) (pr-str (class d)))
+         (throw (ex-info (format "seal expects a draft or an already-sealed %s, and was given a %s"
+                                 (:name model) (pr-str (class d)))
                          {:error ::cannot-seal :record (:name model) :value d})))
        (seal-draft model d)))))
 
@@ -1147,7 +1149,7 @@
        (let [model# (or dm# (~(internal 'model-of) init#))
              token# (Object.)]
          (when-not model#
-           (throw (ex-info (str "drafting expects a validated value, a draft, or a registered "
+           (throw (ex-info (str "drafting expects a sealed value, a draft, or a registered "
                                 "type, and " (pr-str init#) " is none of them")
                            {:error ::cannot-draft :value init#})))
          (push-thread-bindings {~(internal-var '*owner*) token#})
@@ -1164,7 +1166,8 @@
   (let [kind (name what)]
     (throw (ex-info (cond
                       (symbol? entry)
-                      (format "%s %s %s names %s, which is not a field of %s -- its fields are %s"
+                      (format (str "%s %s %s names %s, which is not a field of %s -- its "
+                                   "fields are %s")
                               record kind (pr-str cname) (pr-str entry) record
                               (pr-str (vec (keys fields))))
 
@@ -1315,16 +1318,13 @@
       (throw (ex-info (format (str "%s declares %s, which is not a section of a definition "
                                    "map -- the sections are %s%s")
                               tname (pr-str k) (pr-str definition-sections)
-                              (if (qualified-keyword? k)
-                                (str " (a check goes under :checks, which holds the map this "
-                                     "position used to take)")
-                                ""))
+                              (if (qualified-keyword? k) " (a check goes under :checks)" ""))
                       {:error ::unknown-section :record tname :section k
                        :sections definition-sections}))))
   (let [sections (reduce (fn [acc s]
                            (let [v (get definition s {})]
                              (when-not (map? v)
-                               (throw (ex-info (format "%s: %s is a map, and %s is not one"
+                               (throw (ex-info (format "%s: %s takes a map, and %s is not one"
                                                        tname s (pr-str v))
                                                {:error ::malformed-section :record tname
                                                 :section s :value v})))
@@ -1351,10 +1351,7 @@
   "Refuse a type with more checks than one `long` has bits."
   [tname n]
   (when (> n mask-width)
-    (throw (ex-info (format (str "%s declares %d checks, and %d is the limit -- a draft's "
-                                 "verdict mask is one long, and a wider type would alias "
-                                 "one check's bit onto another's")
-                            tname n mask-width)
+    (throw (ex-info (format "%s declares %d checks, and the limit is %d" tname n mask-width)
                     {:error ::too-many-checks :record tname :count n :limit mask-width}))))
 
 (defn- parse-certificates
@@ -1381,9 +1378,7 @@
                                            "names it covers")
                                       (pr-str names))))
                 (when (empty? names)
-                  (bad! cname (str "covers no check -- a certificate covering nothing would be "
-                                   "held by every draft of this type, including one nothing "
-                                   "has been run against")))
+                  (bad! cname "covers no check -- a certificate must name at least one"))
                 (doseq [c names]
                   (when-not (contains? ids c)
                     (throw (ex-info (format (str "%s certificate %s covers %s, which is not a "
@@ -1397,8 +1392,8 @@
                    :mask   (reduce bit-set 0 idxs)}))]
     (doseq [cname (keys certificates)]
       (when (= cname every-check)
-        (throw (ex-info (format (str "%s declares a certificate named %s, which is the built-in "
-                                     "covering every check on the type")
+        (throw (ex-info (format (str "%s declares a certificate named %s, which is the name of "
+                                     "the built-in certificate covering every check")
                                 tname (pr-str every-check))
                         {:error ::reserved-certificate :record tname :certificate cname})))
       (when (contains? ids cname)
@@ -1425,7 +1420,7 @@
   Clojure, so the body would silently read the second where it named the first."
   [tname what dname params]
   (when-let [dup (first (for [[p n] (frequencies params) :when (> n 1)] p))]
-    (throw (ex-info (format "%s %s %s binds %s twice -- an arglist entry that shadows another is a dependency the body cannot read"
+    (throw (ex-info (format "%s %s %s binds %s twice -- an arglist names each dependency once"
                             tname (name what) (pr-str dname) (pr-str dup))
                     {:error ::duplicate-dependency :record tname what dname
                      :dependency dup}))))
@@ -1452,8 +1447,9 @@
 (defn- batched-check!
   "Refuse a check written in the batched form: a check judges one value."
   [tname dname args]
-  (throw (ex-info (format (str "%s check %s is written in the batched form -- a check judges "
-                               "one value, so only an io-dep may be written [[crew] :as rows]")
+  (throw (ex-info (format (str "%s check %s is written in the batched form -- only an io-dep "
+                               "may be written [[crew] :as rows], and a check runs against "
+                               "one value")
                           tname (pr-str dname))
                   {:error ::batched-check :record tname :check dname :args args})))
 
@@ -1481,10 +1477,10 @@
                   (and (= what :io-dep) (reaching-for-a-batch? args))
                   (let [[inner as]
                         (or (batched-shape args)
-                            (bad! (str "is neither a legal arglist nor the batched form -- a "
+                            (bad! (str "is neither a plain arglist nor the batched form -- a "
                                        "batched fetch is written [[crew] :as rows]: one tuple "
-                                       "of dependencies, bound as a collection with :as, and "
-                                       "nothing else")))]
+                                       "of dependencies, then :as, then a name for the "
+                                       "collection")))]
                     (reject-duplicate-bindings! tname what dname (binding-syms inner))
                     ;; `:args` is the tuple, so everything downstream resolves a batched
                     ;; arglist as it resolves a singular one. The body sees only the
@@ -1510,7 +1506,7 @@
         (made nil args body))
 
       (and (seq? form) (seq? (first form)) (vector? (ffirst form)))
-      (bad! "gives more than one arity -- the arglist is the dependency list, so there is exactly one")
+      (bad! "gives more than one arity -- a check or io-dep takes exactly one arglist")
 
       :else
       {:name dname :doc nil :args [(symbol (name dname))] :fn form})))
@@ -1538,8 +1534,11 @@
                   (case (get @marks nm)
                     :done nil
                     :open (let [ring (conj (vec (drop-while #(not= nm %) path)) nm)]
-                            (throw (ex-info (format "%s io-deps form a cycle: %s -- a fetch cannot wait on itself"
-                                                    tname (apply str (interpose " -> " (map pr-str ring))))
+                            (throw (ex-info (format (str "%s io-deps form a cycle: %s -- a fetch "
+                                                         "cannot wait on itself")
+                                                    tname
+                                                    (apply str (interpose " -> "
+                                                                          (map pr-str ring))))
                                             {:error ::io-dep-cycle :record tname :cycle ring})))
                     (do (vswap! marks assoc nm :open)
                         (doseq [d (:deps (by-name nm))]
@@ -1585,8 +1584,8 @@
               (bad! form (str "has no arglist -- a method implementation is a name, an "
                               "arglist and a body")))
             (when (empty? (second form))
-              (bad! form (str "has an arglist with no receiver, and the receiver is what "
-                              "the sealed implementation opens a draft of")))
+              (bad! form (str "has an empty arglist -- a method implementation's first "
+                              "parameter is the receiver")))
             (when (contains? reserved-methods (first form))
               (throw (ex-info (format (str "%s implements %s, which is one of the methods "
                                            "that make a %s behave as a map -- a protocol "

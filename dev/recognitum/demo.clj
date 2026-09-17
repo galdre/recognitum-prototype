@@ -164,7 +164,7 @@
     (show "adding someone it has never heard of"
           (fn [] (drafting [h job] (heist/add-member h :nobody-in-particular 500))))
 
-    (section "a malformed crew never reaches the fetch, so its throw never propagates")
+    (section "a malformed crew is refused before any fetch")
     (show "fetch-rosters on something that is not a crew"
           (fn [] (house/fetch-rosters [["not a crew"]])))
     (show "sealing a draft holding that crew"
