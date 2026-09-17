@@ -9,21 +9,13 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
-- [ ] **I11. Protocol methods are read-only by default; a drafting method opts in.**
-      Ruled. Most methods are getters and never return a modified receiver, so wrapping
-      every method was a workaround. A method that returns a modified `this` is a
-      **drafting method**, marked `^:drafting (add-member [h who cut] ...)` or, also
-      accepted, `(^:drafting add-member ...)`; no definition-map section. An unmarked method
-      on the sealed type receives the sealed value and its body runs as written, no draft,
-      no binding, no seal; a drafting method gets today's wrapper; the draft type is
-      unchanged for both. `unsealed` in an unmarked method reaches a sealed value and throws
-      the existing `:not-a-draft`; documented, not guarded. Four commits: (1) bench rows and
-      cost-test bounds for a read and a single-field write on a sealed value against the
-      hand-rolled twin, measured before the change; (2) tests, failing; (3) the change,
-      `Heist` marked (`rename`, `add-member`, `promote`, `revise`, `begin-revision`), the
-      vocabulary entry, docstrings; (4) re-measure, README table and protocol section.
-
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
+      - Tighten the two method-row bounds in `cost_test`: the write bound is 110x, set to
+        pass the pre-change wrapper, and now guards nothing at a measured 0.8x; the read
+        bound is 12x at a measured 1.0x. Bring both to the style of the existing rows,
+        loose but real, about 4x and 3x.
+      - Re-run the whole README cost table from one run and set its date line to that
+        day; the two method rows were measured 2026-09-17 and the other nine 2026-09-16.
       - Delete `recognitum.core/check-id` and `owned-here?`: defined, never called.
         `ids-for` does `check-id`'s lookup inline with its own `:unknown-check` throw, and
         the `drafting` macro inlines `owned-here?`'s test. Reported by the prose-pass agents.
