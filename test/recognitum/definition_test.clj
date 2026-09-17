@@ -155,7 +155,7 @@
     (is (= ::rec/unknown-section (:error e)))
     (is (= :scratch/a (:section e))))
   (testing "and the message points at the section the checks belong in"
-    (is (re-find #":checks"
+    (is (re-find #"under :checks\)"
                  (compile-message '(recognitum.core/defrecord Old2
                                      [a] {:scratch/a int?}))))))
 

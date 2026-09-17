@@ -218,7 +218,7 @@
     (let [m (msg #(assoc job ::crew #{:charlie}))]
       (is (re-find #"io-limited" m))
       (is (re-find #"an external validation" m))
-      (is (re-find #"drafting" m))
+      (is (re-find #"inside drafting" m))
       (is (re-find #"crew" m))))
   (testing "and several keys at once are named in the plural"
     (let [m (msg #(merge job {::crew #{:charlie} ::cuts {}}))]

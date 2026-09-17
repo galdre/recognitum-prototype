@@ -433,10 +433,11 @@
                              recognitum.protocol-test/Described
                              (describe [] 1)))]
       (is (= ::rec/malformed-impl (:error e)))
-      (is (re-find #"receiver" (compile-message '(recognitum.core/defrecord NoRecv2
-                                                   [a] {}
-                                                   recognitum.protocol-test/Described
-                                                   (describe [] 1))))))))
+      (is (re-find #"first parameter is the receiver"
+                   (compile-message '(recognitum.core/defrecord NoRecv2
+                                       [a] {}
+                                       recognitum.protocol-test/Described
+                                       (describe [] 1))))))))
 
 (deftest a-method-named-for-the-map-interface-does-not-compile
   ;; A method called `keys` or `assoc` would silently replace the one that makes the type

@@ -319,7 +319,7 @@
     (is (= ::rec/incomplete-batch (:error e)))
     (is (= ::row (:io-dep e)))
     (is (= [[1]] (:missing e)))
-    (is (re-find #"\[1\]" (msg #(->Incomplete 1)))
+    (is (re-find #"no entry for \[1\]" (msg #(->Incomplete 1)))
         "and the message names the tuple nothing came back for")))
 
 ;;; ------------------------------ order, and naming another ------------------------------
@@ -448,7 +448,7 @@
     (is (= ::rec/batched-check (:error e)))
     (is (= 'BatchedCheck (:record e)))
     (is (= :scratch/c (:check e)))
-    (is (re-find #"one value" (compile-message
+    (is (re-find #"runs against one value" (compile-message
                                '(recognitum.core/defrecord BatchedCheck2
                                   [a]
                                   {:checks {:scratch/c ([[a] :as rows] (every? int? rows))}})))))

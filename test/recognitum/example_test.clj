@@ -279,7 +279,7 @@
 (deftest the-demo-illustrates-the-io-half
   (let [out @demo-output]
     (doseq [[what token] [["a fetch resolving"        "fetch"]
-                          ["what a fetch waits on"    "gate"]
+                          ["what a fetch waits on"    "refused before any fetch"]
                           ["deduplication"            "deduplicat"]
                           ["draft-only writes"        "io-limited"]
                           ["certificates"             "certificate"]
