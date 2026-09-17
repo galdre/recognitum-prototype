@@ -31,6 +31,21 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       marker and looks up the model, then calls the two-arity, which does both again.
       Tests first: a cost bound on the untouched seal against opening a draft.
 
+- [ ] **I17. A failing shape validation stops the checks behind it, everywhere, and the
+      report says so.** Ruled: when a field fails its shape validation, the invariant and
+      external validations reading that field do not run, in every entry point and every
+      pass, a forced `recheck` on a sealed value included. Today that pass reads
+      prerequisites off every-check-passing and runs them anyway. (1) The runner gates on
+      what the current pass found on every path; `recheck`'s docstring changes from
+      "prerequisites are read off the mask" to the rule. (2) Every `:check-failed` report
+      entry for a shape validation gains `:stopped`, the names, in declaration order, of the
+      checks that did not run because it failed; the message names them too. The answering
+      forms keep their shape, check name to what it returned. Tests first: a forced
+      `recheck!` on a sealed value whose shape validation fails runs no invariant validation
+      over that field and fetches nothing; `:stopped` on the shape entry from `seal`,
+      `check!`, `recheck!`, the constructors, `assoc`, `merge`, and the bulk forms; absent
+      from an entry that stopped nothing.
+
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
       - Tighten the two method-row bounds in `cost_test`: the write bound is 110x, set to
         pass the pre-change wrapper, and now guards nothing at a measured 0.8x; the read
@@ -108,12 +123,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       `record-verdict!` protocol call. Making the model a `deftype` with fields turns each
       lookup into a field read. Bigger than the runner step; the next lever if the seal
       needs to come down further.
-- [ ] **A forced `recheck` on a sealed value does not stop a check whose shape validation
-      fails in the same pass**, because prerequisites are read off every-check-passing
-      flat, as `recheck`'s docstring says. A merge onto a sealed value reads them less what
-      the pass just failed. Pre-existing asymmetry, left as is by the runner agent; rule
-      whether `recheck` on a sealed value should gate within the pass.
-
 - [ ] **The width ceiling is the class file's, and ours is lower than core's.** Measured
       2026-09-17: `clojure.core/defrecord` compiles up to 122 fields, ours up to 92; past
       each, "Method code too large!", the 64KB bytecode limit on one generated method; from
