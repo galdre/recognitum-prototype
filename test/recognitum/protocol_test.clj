@@ -232,6 +232,83 @@
       (is (re-find #"leave off hints" (str (compile-message form)))
           (str what " accepted a primitive hint on a protocol method's arglist")))))
 
+;;; ------------------- a hinted parameter on an interface method -------------------
+
+;; Declared as interfaces rather than protocols: an interface method can take a primitive,
+;; so an implementation of one may hint its parameter -- and an implementation of a name
+;; the interface overloads by type must.
+(definterface Arithmetical
+  (tally [^long n])
+  (drain [^long n])
+  (scale [^double factor]))
+
+(definterface Rendering
+  (render [^long n])
+  (render [^String s]))
+
+(definterface Prefixing
+  (initial [^String s]))
+
+(deftest a-parameter-hinted-in-the-implementation-installs-on-both-types
+  (is (nil? (compiles
+             '(recognitum.core/defrecord Tallied
+                [base]
+                {:checks {:recognitum.protocol-scratch/base int?}}
+                recognitum.protocol_test.Arithmetical
+                (tally [t ^long n] (+ n (:recognitum.protocol-scratch/base t)))
+                (drain [t ^long n]
+                  (if (pos? n) (recur (dec n)) [:done (:recognitum.protocol-scratch/base t)]))
+                (scale [t ^double factor]
+                  (* factor (:recognitum.protocol-scratch/base t)))))))
+  (let [sealed (in-scratch '(->Tallied 2))
+        both   [["on the sealed value" sealed]
+                ["on its draft" (rec/draft sealed)]]]
+    (testing "a long parameter"
+      (doseq [[what ^Arithmetical v] both]
+        (is (= 5 (.tally v 3)) what)))
+    (testing "a long parameter the body recurs on, down to zero"
+      (doseq [[what ^Arithmetical v] both]
+        (is (= [:done 2] (.drain v 4)) what)))
+    (testing "a double parameter"
+      (doseq [[what ^Arithmetical v] both]
+        (is (= 3.0 (.scale v 1.5)) what)))))
+
+(deftest an-overloaded-name-reaches-the-implementation-its-argument-matches
+  (is (nil? (compiles
+             '(recognitum.core/defrecord Rendered
+                [base]
+                {:checks {:recognitum.protocol-scratch/base int?}}
+                recognitum.protocol_test.Rendering
+                (render [r ^long n] [:long (+ n (:recognitum.protocol-scratch/base r))])
+                (render [r ^String s] [:string (str s (:recognitum.protocol-scratch/base r))])))))
+  (let [sealed (in-scratch '(->Rendered 2))
+        both   [["on the sealed value" sealed]
+                ["on its draft" (rec/draft sealed)]]]
+    (testing "a long argument"
+      (doseq [[what ^Rendering v] both]
+        (is (= [:long 5] (.render v 3)) what)))
+    (testing "a String argument"
+      (doseq [[what ^Rendering v] both]
+        (is (= [:string "x2"] (.render v "x")) what)))))
+
+(deftest an-object-hinted-parameter-keeps-its-class-inside-the-body
+  (let [warnings (java.io.StringWriter.)
+        refused  (binding [*warn-on-reflection* true
+                           *err*                warnings]
+                   (compiles
+                    '(recognitum.core/defrecord Prefixed
+                       [prefix]
+                       {:checks {:recognitum.protocol-scratch/prefix string?}}
+                       recognitum.protocol_test.Prefixing
+                       (initial [p ^String s]
+                         (str (:recognitum.protocol-scratch/prefix p) (.substring s 0 1))))))]
+    (is (nil? refused))
+    (is (= "" (str warnings)) "the call in the body compiled to reflection"))
+  (let [sealed (in-scratch '(->Prefixed ">"))]
+    (doseq [[what ^Prefixing v] [["on the sealed value" sealed]
+                                 ["on its draft" (rec/draft sealed)]]]
+      (is (= ">a" (.initial v "abc")) what))))
+
 ;;; ------------------------------- what the receiver is -------------------------------
 
 (deftest the-receiver-is-a-draft-in-both-implementations
