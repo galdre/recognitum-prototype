@@ -648,8 +648,8 @@ Ryzen 9 7950X, OpenJDK 26.0.2, Linux 6.18.43, 2026-09-16:
 | write one field, two invariant validations on it | 217 ns | 175 ns |
 | `merge` two fields | 860 ns | 962 ns |
 | construct | 1418 ns | 1927 ns |
-| read method on a sealed value | 27.8 ns | 76.8 ns |
-| write method on a sealed value | 16.9 ns | 858.8 ns |
+| read method on a sealed value | 29.3 ns | 29.5 ns |
+| write method on a sealed value | 15.5 ns | 11.9 ns |
 | one rename in a `drafting` | 257 ns | 888 ns |
 | 15 renames in a `drafting` | 766 ns | 1496 ns |
 | one add-member (3 writes) in a `drafting` | 1450 ns | 1927 ns |
