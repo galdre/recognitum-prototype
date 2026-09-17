@@ -788,7 +788,7 @@
   ;; above. `deftype+` merges a body into the template by name and parameter list and lets
   ;; the later definition win, so any of these would take the template's place and still
   ;; compile.
-  (doseq [[m arity] '[[seq 1] [count 1] [equiv 2] [hasheq 1] [invoke 2] [valAt 2] [valAt 3]
+  (doseq [[m arity] '[[seq 1] [count 1] [equiv 2] [hasheq 1] [valAt 2] [valAt 3]
                       [hashCode 1] [equals 2] [iterator 1] [entrySet 1] [coll-reduce 2]
                       [coll-reduce 3] [meta* 1] [get* 1] [assoc* 1]]]
     (let [e (refusal m arity 'recognitum.protocol-test/Described)]
@@ -895,21 +895,21 @@
       (is (= m (:method e)) (str m " " arity))
       (is (= arity (:arity e)) (str m " " arity)))))
 
-(deftest invoke-is-refused-at-the-two-arities-a-map-answers-and-free-above-them
+(deftest invoke-is-the-definitions-own-at-every-arity
+  ;; The template declares no `clojure.lang.IFn`, so no arity of `invoke` is spoken for.
   (doseq [arity [2 3]]
-    (let [e (refusal 'invoke arity 'clojure.lang.IFn)]
-      (is (= ::rec/reserved-method (:error e)) (str "invoke " arity))
-      (is (= 'invoke (:method e)) (str "invoke " arity))
-      (is (= arity (:arity e)) (str "invoke " arity))))
+    (is (nil? (refusal 'invoke arity 'clojure.lang.IFn)) (str "invoke " arity)))
   (is (nil? (compiles '(recognitum.core/defrecord Sum
                          [tally]
                          {:checks {:recognitum.protocol-scratch/tally int?}}
                          clojure.lang.IFn
+                         (invoke [s a] (+ (:recognitum.protocol-scratch/tally s) a))
+                         (invoke [s a b] (+ (:recognitum.protocol-scratch/tally s) a b))
                          (invoke [s a b c]
                            (+ (:recognitum.protocol-scratch/tally s) a b c))))))
   (let [sealed (in-scratch '(->Sum 1))]
-    (is (= 7 (sealed 1 2 3)))
-    (is (= 7 ((rec/draft sealed) 1 2 3)))
-    (testing "and the calls a map answers still read a key"
-      (is (= 1 (sealed :recognitum.protocol-scratch/tally)))
-      (is (= :missing (sealed :nope :missing))))))
+    (doseq [[what v] [["on the sealed value" sealed] ["on its draft" (rec/draft sealed)]]]
+      (testing what
+        (is (= 2 (v 1)))
+        (is (= 4 (v 1 2)))
+        (is (= 7 (v 1 2 3)))))))

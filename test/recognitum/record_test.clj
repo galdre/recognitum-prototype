@@ -34,6 +34,20 @@
 (clojure.core/defrecord PlainTwin [alpha beta])
 (clojure.core/defrecord PlainDoppel [alpha beta])
 
+;; A pair that implements `clojure.lang.IFn` itself, at the two arities a map would answer.
+;; Neither supplies `applyTo` or any other arity.
+(rec/defrecord Tally
+  [total]
+  {}
+  clojure.lang.IFn
+  (invoke [t x] [:one x (::total t)])
+  (invoke [t x y] [:two x y (::total t)]))
+
+(clojure.core/defrecord PlainTally [total]
+  clojure.lang.IFn
+  (invoke [t x] [:one x (:total t)])
+  (invoke [t x y] [:two x y (:total t)]))
+
 (def ^:private ours   (->Twin 1 2))
 (def ^:private theirs (->PlainTwin 1 2))
 
@@ -156,6 +170,27 @@
       (is (false? (.equiv theirs {:alpha 1 :beta 2})))
       (is (false? (.equiv theirs (->PlainDoppel 1 2))))
       (is (true? (.equiv theirs (->PlainTwin 1 2)))))))
+
+(deftest a-value-is-not-callable-as-a-defrecords-is-not
+  ;; A call site casts to `clojure.lang.IFn`, and a type that does not declare it fails the
+  ;; cast rather than looking the argument up as a key.
+  (doseq [[what x k] [["defrecord" theirs :alpha] ["sealed" ours ::alpha]
+                      ["draft" (rec/draft ours) ::alpha]]]
+    (testing what
+      (is (false? (ifn? x)))
+      (is (= ClassCastException (threw #(x k))))
+      (is (= ClassCastException (threw #(x k :fallback)))))))
+
+(deftest a-definition-implementing-ifn-installs-as-it-does-on-a-defrecord
+  (let [mine (->Tally 10)]
+    (doseq [[what x] [["defrecord" (->PlainTally 10)] ["sealed" mine] ["draft" (rec/draft mine)]]]
+      (testing what
+        (is (true? (ifn? x)))
+        (is (= [:one :a 10] (x :a)))
+        (is (= [:two :a :b 10] (x :a :b)))
+        (testing "and an arity the definition left out is missing, not inherited"
+          (is (= AbstractMethodError (threw #(x :a :b :c))))
+          (is (= AbstractMethodError (threw #(apply x [:a])))))))))
 
 ;;; ======================= equality, hash, record?, empty, Serializable =======================
 
@@ -326,13 +361,6 @@
       (is (= theirs (with-meta theirs {:src :test})))
       (is (= ours (with-meta ours {:src :test})))
       (is (= (hash ours) (hash (with-meta ours {:src :test})))))))
-
-(deftest ours-departs-a-value-is-callable-where-a-defrecord-is-not
-  ;; `recognitum.collections/AbstractRecord` makes the type an `IFn` over its keys, as
-  ;; potemkin's `AbstractMap` does; `defrecord` does not.
-  (is (= 1 (ours ::alpha)))
-  (is (= :d (ours ::nope :d)))
-  (is (= ClassCastException (threw #(theirs :alpha)))))
 
 ;;; ======================= the same treatment for both types =======================
 
