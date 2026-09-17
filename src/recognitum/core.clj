@@ -1748,9 +1748,9 @@
         key->sym  (zipmap ks fsyms)
         ;; every local is gensymed: a field could be named k, v, o, acc ...
         [ksym vsym dsym osym hsym essym cursym entsym accsym mtasym mta2sym msym thunksym
-         tgtsym isym cachesym xsym newsym tuplessym tupsym]
+         tgtsym isym cachesym xsym newsym tuplessym tupsym oversym]
         (map gensym ["k" "v" "d" "o" "h" "es" "cur" "ent" "acc" "mta" "mta2" "m" "thunk"
-                     "target" "i" "cache" "x" "new" "tuples" "tuple"])
+                     "target" "i" "cache" "x" "new" "tuples" "tuple" "overage"])
         tgthint   (with-meta tgtsym {:tag tname})
         dname     (symbol (str tname "Draft"))
         [extsym vdsym ownsym tokensym bitsym passym]
@@ -2268,15 +2268,29 @@
           :draft-seal       (fn [~dvsym] (new ~tname ~@dfields ~(dfield mtasym)))})
        ;; `deftype` interns a positional factory that checks nothing. Replace it with one
        ;; that validates, and unmap the draft's.
-       (defn ~(symbol (str "->" tname))
-         ~(str "Construct a validated " tname " from its fields, in declaration order.\n\n"
-               "  Throws `:check-failed` when a check does not pass, carrying `:record` and\n"
-               "  `:failures` exactly as [[recognitum.core/seal]] does, each entry holding the\n"
-               "  check's docstring, what it was given and what it returned"
-               batch-doc ".")
-         [~@fsyms]
-         ~(run-group (range nchecks) (fn [i] (map key->sym (deps-of i))))
-         ~(with-io (range nchecks) `(new ~tname ~@fsyms nil)))
+       ~(let [ctor-name (symbol (str "->" tname))
+              ;; A function takes at most 20 parameters, so past that width the factory
+              ;; takes the rest of its arguments in one, as `clojure.core/defrecord`'s own
+              ;; does: the same count check, and the same `ArityException` when it fails.
+              [fixed over] (split-at 20 fsyms)
+              body [(run-group (range nchecks) (fn [i] (map key->sym (deps-of i))))
+                    (with-io (range nchecks) `(new ~tname ~@fsyms nil))]]
+          `(defn ~ctor-name
+             ~(str "Construct a validated " tname " from its fields, in declaration order.\n\n"
+                   "  Throws `:check-failed` when a check does not pass, carrying `:record` and\n"
+                   "  `:failures` exactly as [[recognitum.core/seal]] does, each entry holding the\n"
+                   "  check's docstring, what it was given and what it returned"
+                   batch-doc ".")
+             [~@fixed ~@(when (seq over) ['& oversym])]
+             ~@(if (seq over)
+                 ;; The checks below read the fields as locals, so the arguments past the
+                 ;; twentieth are bound back to their field names before the body runs.
+                 [`(if (= (count ~oversym) ~(count over))
+                     (let [~@(mapcat (fn [i f] [f `(nth ~oversym ~i)]) (range) over)]
+                       ~@body)
+                     (throw (clojure.lang.ArityException.
+                             (+ ~(count fixed) (count ~oversym)) (name '~ctor-name))))]
+                 body)))
 
        (defn ~(symbol (str "map->" tname))
          ~(str "Construct a validated " tname " from a map of its declared keys.\n"
