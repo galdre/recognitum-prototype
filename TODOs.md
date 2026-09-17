@@ -18,7 +18,10 @@ the order listed.
       README cost section compares against "the table this replaces". Measured: about 1,080
       of `core.clj`'s 2,830 lines are docstring and 281 are comment. Parts, each its own
       commit, each leaving the suite green: (a) `core.clj` and `collections.clj`, the
-      namespace docstring reduced to purpose and public surface; (b) README, the cost section
+      namespace docstring reduced to purpose and public surface, landed as bf56501, with a
+      tightening pass following on Fable because sampled public docstrings still carried
+      metaphor ("ask the world again", "reach the outside") and undefined coinage ("verdict
+      mask", "phase order"); (b) README, the cost section
       as one table plus how to re-run it; (c) `dev/`, `bench/`, and test-namespace prose;
       (d) thrown messages, which are operator-facing under the standard and are pinned by
       tests, so each message edit lands with its test. Renames of code names are not part of
@@ -77,6 +80,8 @@ the order listed.
       section and the `Heist` example marked accordingly.
 
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
+      - Delete `recognitum.core/check-id`: defined, never called; `ids-for` does the same
+        lookup inline with its own `:unknown-check` throw. Reported by the prose-pass agent.
       - README re-entrancy section: one sentence that the ownership token is a dynamic
         binding, so a draft handed to a bare executor or thread pool has no owner there and a
         nested `drafting` on that thread seals it as its own. `future` conveys bindings; plain
@@ -130,6 +135,17 @@ the order listed.
       and `passed-in` read fine against the published vocabulary. Public names stay.
 
 ## For discussion
+
+- [ ] **A test that reads the model map's keys.** The comments on `:checks` and `:io-deps`
+      inside the `defrecord` macro are the only statement of the model's shape, and nothing
+      tests them. Reported by the prose-pass agent as the prose most likely to rot.
+- [ ] **Three places the prose-pass agent thought warranted an explanatory docstring** and
+      wrote the short form instead: `seal-draft` (why running only the checks the mask does
+      not claim equals running all of them; now a four-line body comment), `run-group` in the
+      macro (why a check whose gate did not return `true` may stand as `true`; sound only
+      because the failed gate is in the same group and about to throw; a test would pin it
+      better than prose), and `internal` (why generated code dereferences a var). Rule keep
+      short, expand, or pin with a test.
 
 - [ ] **Per-call overhead** (perf, later). `run-checks!` builds three phase vectors, a failure
       set, a lazy `remove` over the pure phase, and a `some` per check in the gate test, on
