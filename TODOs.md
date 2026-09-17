@@ -18,10 +18,8 @@ the order listed.
       README cost section compares against "the table this replaces". Measured: about 1,080
       of `core.clj`'s 2,830 lines are docstring and 281 are comment. Parts, each its own
       commit, each leaving the suite green: (a) `core.clj` and `collections.clj`, the
-      namespace docstring reduced to purpose and public surface, landed as bf56501, with a
-      tightening pass following on Fable because sampled public docstrings still carried
-      metaphor ("ask the world again", "reach the outside") and undefined coinage ("verdict
-      mask", "phase order"); (b) README, the cost section
+      namespace docstring reduced to purpose and public surface, landed as bf56501 and, after a
+      tightening pass on Fable, 2163166; (b) README, the cost section
       as one table plus how to re-run it; (c) `dev/`, `bench/`, and test-namespace prose;
       (d) thrown messages, which are operator-facing under the standard and are pinned by
       tests, so each message edit lands with its test. Renames of code names are not part of
@@ -80,8 +78,9 @@ the order listed.
       section and the `Heist` example marked accordingly.
 
 - [ ] **I12. README and dev items from the walkthrough.** Small, batchable, one commit:
-      - Delete `recognitum.core/check-id`: defined, never called; `ids-for` does the same
-        lookup inline with its own `:unknown-check` throw. Reported by the prose-pass agent.
+      - Delete `recognitum.core/check-id` and `owned-here?`: defined, never called.
+        `ids-for` does `check-id`'s lookup inline with its own `:unknown-check` throw, and
+        the `drafting` macro inlines `owned-here?`'s test. Reported by the prose-pass agents.
       - README re-entrancy section: one sentence that the ownership token is a dynamic
         binding, so a draft handed to a bare executor or thread pool has no owner there and a
         nested `drafting` on that thread seals it as its own. `future` conveys bindings; plain
@@ -115,6 +114,13 @@ the order listed.
       and nothing else. Nothing needs it yet.
 
 ## Needs a ruling
+
+- [ ] **The definition of "invariant validation".** The namespace docstring and the README say
+      "a pure check over more than one field". A pure check over one field that is not named
+      after it, such as `::valid-name ([name] ...)`, is classified by the code as an invariant
+      validation (second phase) and is not covered by that sentence. "A pure check not named
+      after a field" matches the code. The README pass uses the code-accurate wording; revert
+      if the ruled definition was meant to exclude that case.
 
 - [ ] **I11 marker spelling.** Metadata on the method name, `(^:drafting add-member [h who cut] ...)`,
       is the recommendation: it names what the wrapper does (opens a draft) rather than what
