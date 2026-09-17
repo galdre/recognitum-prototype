@@ -9,15 +9,6 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ### Waiting on a go
 
-- [ ] **I10. The 20-field cap, by `defrecord`'s recipe.** Plain `defrecord` with 21 fields
-      compiles: `build-positional-factory` takes the first 20 positionally and the rest as
-      `& overage`, checks the count, and throws `ArityException` otherwise. Ours emits a flat
-      arglist and fails with Clojure's "Can't specify more than 20 params", which does not name
-      fields. Do what core does. Every other emission site constructs through `new`, which has
-      no such limit. Tests: a 21-field and a 25-field type construct positionally and by map,
-      round-trip through print and read, and `->Type` with the wrong count throws
-      `ArityException`. The 64-check mask is a separate limit and stays in I12.
-
 - [ ] **I11. Protocol methods are read-only by default; a method opts in to a draft receiver.**
       Ruled direction. Today every method installed on the sealed type opens a draft, pushes a
       thread binding, runs the body, pops, and seals, whether or not the body writes. A pure
@@ -98,6 +89,14 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       and `passed-in` read fine against the published vocabulary. Public names stay.
 
 ## For discussion
+
+- [ ] **The width ceiling is now the class file's.** A 90-field type compiles; 100 fails
+      with "Method code too large!", a generated method past the 64KB bytecode limit, the
+      `case` dispatches over the fields being the likely one; 260 fails with "Too many
+      arguments in method signature". Where plain `defrecord` hits its own version was not
+      measured. Nothing in the library announces a limit, so a type that wide fails with the
+      JVM's message. Worth a measurement against `defrecord` and, if ours is materially
+      lower, a look at which emitted method is the large one. Reported by the field-cap agent.
 
 - [ ] **Interface methods the template inherits but does not define.** `java.util.Map` and
       `Iterable` carry default methods `AbstractRecord` never writes (`merge`, `forEach`,
