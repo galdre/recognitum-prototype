@@ -90,13 +90,15 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 ## For discussion
 
-- [ ] **The width ceiling is now the class file's.** A 90-field type compiles; 100 fails
-      with "Method code too large!", a generated method past the 64KB bytecode limit, the
-      `case` dispatches over the fields being the likely one; 260 fails with "Too many
-      arguments in method signature". Where plain `defrecord` hits its own version was not
-      measured. Nothing in the library announces a limit, so a type that wide fails with the
-      JVM's message. Worth a measurement against `defrecord` and, if ours is materially
-      lower, a look at which emitted method is the large one. Reported by the field-cap agent.
+- [ ] **The width ceiling is the class file's, and ours is lower than core's.** Measured
+      2026-09-17: `clojure.core/defrecord` compiles up to 122 fields, ours up to 92; past
+      each, "Method code too large!", the 64KB bytecode limit on one generated method; from
+      254 both fail on the JVM's 255-parameter constructor limit. The large methods are the
+      `case`-over-fields forms whose every branch rebuilds the value with every field, so
+      bytecode grows with the square of the width; core's `assoc` has that shape, and ours
+      has it in `assoc`, the merge loop, and the draft's `assoc`. Raising ours to core's
+      means rebuilding through an array or a per-field setter rather than a full
+      constructor call per branch. Not needed for any type under 92 fields.
 
 - [ ] **Interface methods the template inherits but does not define.** `java.util.Map` and
       `Iterable` carry default methods `AbstractRecord` never writes (`merge`, `forEach`,
