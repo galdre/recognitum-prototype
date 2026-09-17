@@ -62,7 +62,7 @@
     (show "assoc ::heist/take \"lots\"" (fn [] (assoc job ::heist/take "lots")))
     (show "assoc :getaway-car \"mini\"" (fn [] (assoc job :getaway-car "mini")))
 
-    (section "dissoc refuses declared fields")
+    (section "dissoc of a declared field is the assoc of nil")
     (show "dissoc ::heist/cuts" (fn [] (dissoc job ::heist/cuts)))
 
     (section "an invariant validation over two fields, on a single-key write")

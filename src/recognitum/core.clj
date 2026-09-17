@@ -268,16 +268,6 @@
                                       (pr-str o) (:name model))
                               {:error ::cannot-conj :record (:name model) :value o}))))
 
-(defn- no-dissoc!
-  "Throw `:cannot-dissoc` for `k`, a declared field: declared fields are permanent. Carries
-  `:record`, `:key`, and an `:instead` form spelling the `assoc` of `nil` that replaces it."
-  [model k]
-  (throw (ex-info (format (str "cannot dissoc %s from %s: declared fields are permanent -- "
-                               "write (assoc m %s nil) instead, if its checks admit nil")
-                          (pr-str k) (:name model) (pr-str k))
-                  {:error ::cannot-dissoc :record (:name model) :key k
-                   :instead (list 'assoc 'm k nil)})))
-
 (defn- io-checks-on
   "The external validations that read `k`, by name and in declaration order."
   [model k]
@@ -1733,6 +1723,10 @@
   `::h/name` wherever the namespace is aliased. A bare keyword is a key the type does not
   declare, so two types that happen to share a field name share nothing else.
 
+  A declared field is present whatever it holds, so there is no value of the type without
+  one: `dissoc` of a declared field is `(assoc x k nil)`, checks and all, and the field
+  reads as `nil` afterwards.
+
   Every section is optional and an absent one is empty. A key that names no section is a
   compile error, as is every other declaration this macro cannot resolve while it runs: a
   mistyped `:cheks` would otherwise define a type with no checks.
@@ -1798,10 +1792,10 @@
 
   `:options` holds `:io-limited`, which takes `true`, `false`, or a symbol naming a var
   holding one -- read where the form is written, so the type is compiled with what the var
-  held then and a later `alter-var-root` leaves it alone. `:io-limited` makes direct `assoc`
-  and `merge` on a sealed value throw `:io-limited` for any field an external validation
-  reads, directly or through an io-dep, so those writes go through [[drafting]]. Other
-  fields are unaffected.
+  held then and a later `alter-var-root` leaves it alone. `:io-limited` makes a direct write
+  to a sealed value -- `assoc`, `dissoc` or `merge` -- throw `:io-limited` for any field an
+  external validation reads, directly or through an io-dep, so those writes go through
+  [[drafting]]. Other fields are unaffected.
 
   Trailing forms are protocol implementations, written once and installed on both generated
   types. On the draft type the body runs as written, whatever the method is marked.
@@ -2149,11 +2143,12 @@
                         (range n) ks)
               (~(internal 'unknown-key!) ~model-sym ~ksym)))
 
-          ;; A sealed value cannot hold an undeclared key, so dissoc of one is the ordinary
-          ;; map no-op. Only the declared fields are permanent.
+          ;; A declared field is always present, so dissoc of one is the write above with
+          ;; `nil`, dispatched there rather than repeated here. A sealed value cannot hold an
+          ;; undeclared key, so dissoc of one is the ordinary map no-op.
           (~'dissoc [this# ~ksym]
             (case ~ksym
-              ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
+              ~(apply list ks) (assoc this# ~ksym nil)
               this#))
           (~'keys [_#] ~ks)
           ;; The library's keys over the caller's. Here they are constant: a sealed value is
@@ -2218,9 +2213,12 @@
                                     `(bit-and ~vdsym ~(survives k)) ownsym mtasym)])
                         (range n) ks)
               ~(dctor fsyms `(assoc ~extsym ~ksym ~vsym) vdsym ownsym mtasym)))
+          ;; A declared field is always present, so dissoc of one is the write above with
+          ;; `nil`, verdicts and all; an undeclared key is removed from the map beside the
+          ;; fields, where a write moved no verdict either.
           (~'dissoc [this# ~ksym]
             (case ~ksym
-              ~(apply list ks) (~(internal 'no-dissoc!) ~model-sym ~ksym)
+              ~(apply list ks) (assoc this# ~ksym nil)
               (if (contains? ~extsym ~ksym)
                 ~(dctor fsyms `(dissoc ~extsym ~ksym) vdsym ownsym mtasym)
                 this#)))

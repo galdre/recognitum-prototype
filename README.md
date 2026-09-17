@@ -20,7 +20,7 @@ The deliberate changes:
 
 - Two types are generated rather than one: a sealed value and a draft.
 - Checks run on every write.
-- `dissoc` of a declared field is refused.
+- `dissoc` of a declared field sets it to `nil`, where a `defrecord` answers with a map.
 - An undeclared key is refused on a sealed value.
 - Field keys are qualified by the namespace the type is defined in.
 - The print tag is namespace-qualified.
@@ -202,8 +202,9 @@ update is atomic:
 (assoc heist ::h/take 4000)
 ```
 
-`dissoc` of a declared field throws. Where a field's checks admit `nil`,
-`(assoc heist ::h/cuts nil)` spells absence, and the error says so.
+A declared field is always present, so `dissoc` of one is `(assoc heist ::h/cuts nil)`: the
+value keeps its type, the field reads as `nil`, and the checks reading it decide whether that
+is acceptable.
 
 Undeclared keys are ordinary: `dissoc` removes one from a draft, and on a sealed value, which
 cannot hold one, it is the usual no-op. `clean` strips them in bulk.
