@@ -146,10 +146,13 @@
       (show "and now the shape certificate"
             (fn [] (let [d (-> d (assoc ::heist/take 2) (assoc ::heist/cuts {:charlie 1 :lyle 1}))]
                      [(rec/check d ::heist/shape) (rec/certificates d)])))
-      (show "a check that fails answers with what it returned, under its own name"
+      (show "a check that fails answers with the report, under its own name"
             (fn [] (rec/check (assoc d ::heist/name "") ::heist/name)))
-      (show "check! throws the report instead"
+      (show "check! throws that same report"
             (fn [] (rec/check! (assoc d ::heist/name "") ::heist/name)))
+      (show "and a failure names the checks it stopped"
+            (fn [] (rec/check (-> d (assoc ::heist/take 10) (assoc ::heist/cuts "garbage"))
+                              rec/every-check)))
       (show "on a sealed value every check passes, so check runs nothing"
             (fn [] [(rec/check job rec/every-check)
                     (watching #(rec/check job rec/every-check))])))
@@ -226,7 +229,7 @@
     (show "->Heist with everything wrong at once" (fn [] (heist/->Heist "" :not-a-set -1 "garbage")))
     (show "map->Heist with a key left out -- it is nil, and the shape validation says so"
           (fn [] (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))
-    (show "a shape failure is the whole report -- what waits on it does not run"
+    (show "a shape failure names what it stopped, and none of them ran"
           (fn [] (heist/->Heist "Job" #{:a} 10 "garbage")))
 
     (section "printing: the tag names the reader")

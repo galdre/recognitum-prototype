@@ -150,9 +150,10 @@ validation names exactly its own field, or the form does not compile.
 
 Every other check waits on the shape validations of the fields it names. `::cuts-sum-to-take
 [take cuts]` runs only once `::take` and `::cuts` have passed, so it receives well-formed input.
-A check does not run while a shape validation it waits on is failing, and is not reported; the
-shape validation's failure is what is reported. Failures come back shape validations first, then
-invariant validations, then external validations, in declaration order within each.
+A check does not run while a shape validation it waits on is failing, and has no entry of its
+own; the shape validation's failure is what is reported, and that entry names what it stopped.
+Failures come back shape validations first, then invariant validations, then external
+validations, in declaration order within each.
 
 A field with no shape validation has no declared shape. The checks naming it run against
 whatever it holds and have to be total over anything.
@@ -324,17 +325,18 @@ Checks can be run against a draft before it is complete:
 
 | | returns |
 |---|---|
-| `(rec/check x ::name)` | `true`, or `{check-name failure-data}` for those that failed |
-| `(rec/check! x ::name)` | `true`, or throws |
+| `(rec/check x ::name)` | `true`, or a report of the checks that failed |
+| `(rec/check! x ::name)` | `true`, or throws that same report |
 | `(rec/recheck x ::name)` | the same, running everything named whether or not it is recorded as passing |
 | `(rec/recheck! x ::name)` | `true`, or throws |
 | `(rec/passed x)` | the set of check names currently passing |
 | `(rec/certificates x)` | the set of certificate names currently held |
 
 `::name` is a check's name or a **certificate**'s, a name the type gives to a subset of its
-checks. A lone check is a certificate containing itself. The answer is keyed by check name, so a
-`false` a check returned is not mistaken for a report, and a check that did not run because one
-it waits on is failing is absent from it; the failing check's entry is what says why.
+checks. A lone check is a certificate containing itself. The report is keyed by check name, so a
+`false` a check returned is not mistaken for the report itself; **Errors** below gives the shape
+of an entry. A check that did not run because one it waits on is failing has no entry of its
+own, and the failing check's entry names it under `:stopped`.
 
 None of them return a draft. Each result is written into the draft's record, which `passed` and
 `certificates` read.
@@ -444,7 +446,8 @@ batched fetch sees every argument tuple in one call and distinct tuples are fetc
 many values share them:
 
 ```clojure
-(rec/check-all drafts rec/every-check)   ;=> [true true {::h/cuts-sum-to-take false} …]
+(rec/check-all drafts rec/every-check)
+;=> [true true {::h/cuts-sum-to-take {:doc "the cuts add up to the take" :values … :returned false}} …]
 ```
 
 Results are index-aligned with the input, since two drafts holding identical data are `=`.
@@ -549,9 +552,9 @@ nothing.
 A `:check-failed` carries every failure: each throwing entry point runs everything it was asked
 to run before it throws. They arrive under `:failures`, keyed by check name, shape validations
 first, then invariant validations, then external validations, in declaration order within each.
-Those are the same keys, in the same order, that `check` answers with when it does not answer
-`true`; a throw adds a report under each one, carrying the check's docstring, the dependencies
-it declared with what it was given for each, and what it returned:
+That map is the report `check` answers with when it does not answer `true`. Each entry carries
+the check's docstring, the dependencies it declared with what it was given for each, and what it
+returned:
 
 ```clojure
 {:error    :recognitum.core/check-failed
@@ -562,6 +565,25 @@ it declared with what it was given for each, and what it returned:
                                       :cuts {:charlie 1000 :stranger 100}}
              :returned false}}}
 ```
+
+A check that did not run because one it waits on failed has no entry. It is named instead under
+the `:stopped` of the check that failed, in declaration order, so the report accounts for every
+check the call was going to run:
+
+```clojure
+{:error    :recognitum.core/check-failed
+ :record   Heist
+ :failures {:my.app.heist/cuts
+            {:doc      nil
+             :values   #:my.app.heist{:cuts "not a map"}
+             :returned false
+             :stopped  [:my.app.heist/cuts-sum-to-take
+                        :my.app.heist/only-crew-get-cuts
+                        :my.app.heist/crew-is-vouched-for]}}}
+```
+
+An entry that stopped nothing has no `:stopped`, and a check two failures stopped is named under
+both.
 
 A caller dispatches on the keyword and reads the rest of the map:
 
