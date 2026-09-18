@@ -8,7 +8,8 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
+   [recognitum.core :as rec]
+   [recognitum.reports :refer [returned returned-all]]))
 
 (defn- err [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
@@ -109,7 +110,7 @@
 
 (deftest a-check-naming-an-unwritten-field-runs-and-answers
   (let [d (rec/draft Strict)]
-    (is (= {::title false} (rec/check d ::title))
+    (is (= {::title false} (returned (rec/check d ::title)))
         "nil is what it judged, and false is what it said")
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::title)))))
     (is (= #{} (rec/passed d))))
@@ -119,14 +120,14 @@
       (is (contains? (rec/passed d) ::title)))))
 
 (deftest a-certificate-judges-an-incomplete-draft-rather-than-refusing-it
-  (is (= {::title false} (rec/check (rec/draft Strict) rec/every-check)))
+  (is (= {::title false} (returned (rec/check (rec/draft Strict) rec/every-check))))
   (is (true? (rec/check (rec/draft Note) rec/every-check))))
 
 (deftest a-group-of-incomplete-drafts-is-judged-value-by-value
   (let [empty-one (rec/draft Strict)
         full      (assoc (rec/draft Strict) ::title "t")]
-    (is (= [{::title false} true] (rec/check-all [empty-one full] ::title)))
-    (is (= [{::title false} true] (rec/check-all [empty-one full] rec/every-check)))))
+    (is (= [{::title false} true] (returned-all (rec/check-all [empty-one full] ::title))))
+    (is (= [{::title false} true] (returned-all (rec/check-all [empty-one full] rec/every-check))))))
 
 ;;; ------------------------------------ what it prints ------------------------------------
 

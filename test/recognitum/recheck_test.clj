@@ -9,7 +9,8 @@
   `check`: the same names, arguments, keyed answer, and one fetch per call."
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
-   [recognitum.core :as rec]))
+   [recognitum.core :as rec]
+   [recognitum.reports :refer [returned returned-all]]))
 
 (defn- err
   [f]
@@ -97,8 +98,8 @@
 
 (deftest the-answer-is-keyed-exactly-as-check-s-is
   (let [d (crew 42 #{:charlie})]
-    (is (= {::name false} (rec/recheck d ::name)))
-    (is (= {::name false} (rec/recheck d ::shape)) "::crew passes and is not reported")
+    (is (= {::name false} (returned (rec/recheck d ::name))))
+    (is (= {::name false} (returned (rec/recheck d ::shape))) "::crew passes and is not reported")
     (let [e (err #(rec/recheck! d ::shape))]
       (is (= ::rec/check-failed (:error e)))
       (is (= [::name] (vec (keys (:failures e))))))))
@@ -115,7 +116,7 @@
       (is (true? (rec/check d ::all-vetted)))
       (is (= 1 (ran ::roster)) "and fetches nothing"))
     (testing "recheck fetches again"
-      (is (= {::all-vetted false} (rec/recheck d ::all-vetted)))
+      (is (= {::all-vetted false} (returned (rec/recheck d ::all-vetted))))
       (is (= 2 (ran ::roster)))
       (is (not (contains? (rec/passed d) ::all-vetted))
           "no longer recorded as passing")
@@ -135,7 +136,7 @@
 
 (deftest a-check-that-was-failing-and-now-passes-is-recorded-by-recheck
   (let [d (crew "one" #{:charlie :mole})]
-    (is (= {::all-vetted false} (rec/check d ::all-vetted)))
+    (is (= {::all-vetted false} (returned (rec/check d ::all-vetted))))
     (is (not (contains? (rec/passed d) ::all-vetted)))
     (swap! vetted conj :mole)
     (is (true? (rec/recheck d ::all-vetted)))
@@ -150,7 +151,7 @@
 
 (deftest a-failing-shape-validation-stops-a-recheck-as-it-stops-a-check
   (let [d (crew "one" "not a crew")]
-    (is (= {::crew false} (rec/recheck d ::all-vetted))
+    (is (= {::crew false} (returned (rec/recheck d ::all-vetted)))
         "the failing check's entry, and no entry for the one that never ran")
     (is (= 0 (ran ::roster)) "and nothing was fetched")))
 
@@ -166,7 +167,7 @@
     (is (= 1 (ran ::roster)))
     (testing "and answers with the current result rather than about the value"
       (swap! vetted disj :lyle)
-      (is (= {::all-vetted false} (rec/recheck c ::all-vetted)))
+      (is (= {::all-vetted false} (returned (rec/recheck c ::all-vetted))))
       (is (= ::rec/check-failed (:error (err #(rec/recheck! c ::all-vetted)))))
       (is (rec/sealed? c) "the value is what it always was")
       (is (= #{::name ::crew ::all-vetted} (rec/passed c))
@@ -194,7 +195,7 @@
   (let [ds [(crew "one" #{:charlie}) (crew "two" #{:lyle})]]
     (is (= [true true] (rec/check-all ds ::all-vetted)))
     (swap! vetted disj :lyle)
-    (is (= [true {::all-vetted false}] (rec/recheck-all ds ::all-vetted)))
+    (is (= [true {::all-vetted false}] (returned-all (rec/recheck-all ds ::all-vetted))))
     (is (contains? (rec/passed (first ds)) ::all-vetted))
     (is (not (contains? (rec/passed (second ds)) ::all-vetted)))))
 
@@ -224,7 +225,7 @@
     (is (= [true true] (rec/recheck-all ds ::all-vetted)))
     (is (= 1 (ran ::roster)) "one fetch spanning both forms")
     (swap! vetted disj :lyle)
-    (is (= [true {::all-vetted false}] (rec/recheck-all ds ::all-vetted)))))
+    (is (= [true {::all-vetted false}] (returned-all (rec/recheck-all ds ::all-vetted))))))
 
 ;;; ----------------------------------- what it refuses -----------------------------------
 

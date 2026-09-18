@@ -45,7 +45,7 @@
   (testing "all three check forms"
     (let [e (err #(->Wrapped "x" "yy"))]
       (is (= ::rec/check-failed (:error e)))
-      (is (= {:doc nil :values {::a "x"} :returned false} (get (:failures e) ::a))))
+      (is (= {:doc nil :values {::a "x"} :returned false :stopped [::a-below-count]} (get (:failures e) ::a))))
     (let [e (err #(->Wrapped 1 :nope))]
       (is (= {:doc nil :values {::b :nope} :returned false} (get (:failures e) ::b-string))))
     (let [e (err #(->Wrapped 9 "yy"))]

@@ -12,6 +12,7 @@
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
    [recognitum.internal :as internal]
+   [recognitum.reports :refer [returned]]
    [recognitum.roster :as roster]))
 
 (defn- err
@@ -379,9 +380,9 @@
 
 (deftest a-failed-io-check-is-run-again-next-time
   (let [d (-> (whole) (assoc ::cuts {:stranger 1}))]
-    (is (= {::only-roster-gets-a-cut false} (rec/check d ::only-roster-gets-a-cut)))
+    (is (= {::only-roster-gets-a-cut false} (returned (rec/check d ::only-roster-gets-a-cut))))
     (is (= 1 (ran ::roster)))
-    (is (= {::only-roster-gets-a-cut false} (rec/check d ::only-roster-gets-a-cut)))
+    (is (= {::only-roster-gets-a-cut false} (returned (rec/check d ::only-roster-gets-a-cut))))
     (is (= 2 (ran ::roster)) "a failure is not recorded, so it runs again")))
 
 ;;; ------------------------- writes to a sealed value reach IO too -------------------------

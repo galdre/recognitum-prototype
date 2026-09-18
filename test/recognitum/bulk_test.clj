@@ -10,6 +10,7 @@
   (:require
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.core :as rec]
+   [recognitum.reports :refer [returned returned-all]]
    [recognitum.roster :as roster]))
 
 (defn- err
@@ -107,7 +108,7 @@
         rs (rec/check-all ds ::a)]
     (is (vector? rs))
     (is (= 3 (count rs)) "one answer per value")
-    (is (= [true {::a {:not-an-int :nope}} true] rs)
+    (is (= [true {::a {:not-an-int :nope}} true] (returned-all rs))
         "true where it passed, and the check's own return value under its name where not")))
 
 (deftest the-answer-is-the-checks-own-data-as-it-is-for-check
@@ -127,7 +128,7 @@
 
 (deftest any-collection-of-drafts-will-do-and-a-vector-comes-back
   (let [ds (list (ledger 1 "xxx") (ledger :nope "xxx"))]
-    (is (= [true {::a {:not-an-int :nope}}] (rec/check-all ds ::a)))
+    (is (= [true {::a {:not-an-int :nope}}] (returned-all (rec/check-all ds ::a))))
     (is (vector? (rec/check-all ds ::a)))
     (is (vector? (rec/check-all (seq ds) ::shape)))))
 
@@ -142,8 +143,8 @@
         rs (rec/check-all ds ::shape)]
     (is (= 2 (count rs)))
     (is (true? (first rs)))
-    (is (= {::a {:not-an-int :nope} ::b :nope} (second rs))
-        "check name -> what that check returned, for those that did not pass")
+    (is (= {::a {:not-an-int :nope} ::b :nope} (returned (second rs)))
+        "one entry per check that did not pass, under its own name")
     (is (= [::a ::b] (vec (keys (second rs)))) "in declaration order")))
 
 ;;; ------------------------------ nothing bulk seals ------------------------------
@@ -180,12 +181,12 @@
     (is (= #{::a} (rec/passed good)))
     (is (= #{} (rec/passed bad)) "a failure is not recorded as passing")
     (testing "and a second call re-runs only what is not passing"
-      (is (= [true {::a {:not-an-int :nope}}] (rec/check-all [good bad] ::a))))))
+      (is (= [true {::a {:not-an-int :nope}}] (returned-all (rec/check-all [good bad] ::a)))))))
 
 (deftest a-certificate-a-group-call-ran-is-held-per-value
   (let [good (ledger 1 "xxx")
         bad  (ledger 1 :nope)]
-    (is (= [true {::b :nope}] (rec/check-all [good bad] ::shape)))
+    (is (= [true {::b :nope}] (returned-all (rec/check-all [good bad] ::shape))))
     (is (= #{::shape} (rec/certificates good)))
     (is (= #{} (rec/certificates bad)))
     (is (= #{::a} (rec/passed bad)) "what passed for it is still recorded")))
@@ -244,7 +245,7 @@
       (reset-log!)
       (let [ds [(crew-draft "one" #{:charlie} {:charlie 1})
                 (crew-draft "two" #{:lyle}    {:stranger 1})]]
-        (is (= [true {::known-get-cuts false}] (rec/check-all ds ::known-get-cuts)))))))
+        (is (= [true {::known-get-cuts false}] (returned-all (rec/check-all ds ::known-get-cuts))))))))
 
 (deftest a-singular-fetch-is-deduplicated-across-the-group-too
   (let [ds [(sing #{:charlie}) (sing #{:lyle}) (sing #{:charlie})]]
@@ -280,7 +281,7 @@
             (crew-draft "two" "not a crew" {:lyle 1})]
         rs (rec/check-all ds ::known-get-cuts)]
     (is (true? (first rs)))
-    (is (= {::crew false} (second rs))
+    (is (= {::crew false} (returned (second rs)))
         "the shape validation's failure is the answer; the check that waited on it never ran")
     (is (= 1 (count @handed)))
     (is (= [[#{:charlie}]] (first @handed))
@@ -289,7 +290,7 @@
 (deftest a-group-that-is-entirely-malformed-fetches-nothing
   (let [ds [(crew-draft "one" "nope" {:charlie 1})
             (crew-draft "two" 42     {:lyle 1})]]
-    (is (= [{::crew false} {::crew false}] (rec/check-all ds ::known-get-cuts)))
+    (is (= [{::crew false} {::crew false}] (returned-all (rec/check-all ds ::known-get-cuts))))
     (is (= 0 (ran ::roster)))
     (is (= 0 (roster/call-count)))
     (is (= 0 (ran ::known-get-cuts)))))
@@ -370,7 +371,7 @@
   ;; An incomplete draft is an ordinary draft holding nils, and one incomplete value
   ;; discards nothing about the others.
   (let [ds [(ledger 1 "xxx") (assoc (rec/draft Ledger) ::a 1)]]
-    (is (= [true {::b :nope}] (rec/check-all ds ::fits))
+    (is (= [true {::b :nope}] (returned-all (rec/check-all ds ::fits)))
         "::fits waits on ::b, which judged the nil nobody wrote")
     (is (= #{::a ::b ::fits} (rec/passed (first ds)))
         "and every check on the first value ran and passed, not held up by the second")))
@@ -380,13 +381,13 @@
             (ledger 1 "xxx")
             (rec/draft Ledger)]]
     (is (= [{::b :nope} true {::a {:not-an-int nil} ::b :nope}]
-           (rec/check-all ds ::shape))
+           (returned-all (rec/check-all ds ::shape)))
         "index-aligned, and each of them the whole of what that value owes")))
 
 (deftest an-unwritten-field-behind-a-fetch-stops-that-values-fetch
   (let [ds [(crew-draft "one" #{:charlie} {:charlie 1})
             (assoc (rec/draft Crew) ::cuts {:lyle 1})]]
-    (is (= [true {::crew false}] (rec/check-all ds ::known-get-cuts))
+    (is (= [true {::crew false}] (returned-all (rec/check-all ds ::known-get-cuts)))
         "the shape validation of the field the fetch names is what the second value failed")
     (is (= 1 (ran ::roster)) "one fetch, for the value that earned it")
     (is (= [[#{:charlie}]] (first @handed))
@@ -460,8 +461,8 @@
   (let [ds [(ledger :nope "xxx") (sing "not a crew") (ledger 1 "xxx")]
         rs (rec/check-all ds rec/every-check)]
     (is (= 3 (count rs)))
-    (is (= {::a {:not-an-int :nope}} (first rs)) "Ledger's check name")
-    (is (= {::c false} (second rs)) "Sing's")
+    (is (= {::a {:not-an-int :nope}} (returned (first rs))) "Ledger's check name")
+    (is (= {::c false} (returned (second rs))) "Sing's")
     (is (true? (nth rs 2)))))
 
 (deftest a-mixed-group-throws-once-naming-every-type-that-failed

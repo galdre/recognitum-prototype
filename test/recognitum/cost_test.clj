@@ -17,6 +17,7 @@
    [clojure.test :refer [deftest is testing use-fixtures]]
    [recognitum.bench :as b]
    [recognitum.core :as rec :refer [drafting]]
+   [recognitum.reports :refer [returned-all]]
    [recognitum.roster :as roster])
   (:import
    (recognitum.bench BenchHeist)))
@@ -229,7 +230,7 @@
         "the first value passes on its own, so the group call has nothing to run for it")
     (roster/reset-calls!)
     (let [rs (rec/check-all ds ::known)]
-      (is (= [true {::known false} true] rs)
+      (is (= [true {::known false} true] (returned-all rs))
           "index-aligned, with the first value's answer read off its record")
       (is (= 1 (roster/call-count :fetch-rosters))
           "one batched call for the whole group")

@@ -49,7 +49,7 @@
       (is (= ::rec/check-failed (:error e)))
       (is (= 'Forms (:record e)))
       (is (contains? (:failures e) ::a))
-      (is (= {:doc nil :values {::a "x"} :returned false} (get (:failures e) ::a)))))
+      (is (= {:doc nil :values {::a "x"} :returned false :stopped [::ordered]} (get (:failures e) ::a)))))
   (testing "the arglist form"
     (let [e (err #(->Forms 1 -1))]
       (is (= ::rec/check-failed (:error e)))

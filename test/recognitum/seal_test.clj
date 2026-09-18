@@ -8,7 +8,8 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
-   [recognitum.internal :as internal]))
+   [recognitum.internal :as internal]
+   [recognitum.reports :refer [returned]]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
   is not an ExceptionInfo propagates, which is where a check body throws."
@@ -220,7 +221,7 @@
 (deftest a-failed-check-runs-again-at-the-seal
   (reset-runs!)
   (let [d (-> (rec/draft Ledger) (assoc ::a "not an int") (assoc ::b "xxx") (assoc ::c :x))]
-    (is (= {::a false} (rec/check d ::a)))
+    (is (= {::a false} (returned (rec/check d ::a))))
     (is (= 1 (ran ::a)))
     (let [e (err #(rec/seal d))]
       (is (= ::rec/check-failed (:error e)))

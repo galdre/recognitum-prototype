@@ -9,7 +9,8 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
-   [recognitum.internal :as internal]))
+   [recognitum.internal :as internal]
+   [recognitum.reports :refer [returned returned-all]]))
 
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
@@ -220,7 +221,7 @@
 
 (deftest a-check-whose-shape-validations-pass-answers-for-itself
   (let [d (fresh {::item "hat" ::price 500 ::cuts {:a 1} ::tags [:x]})]
-    (is (= {::cheap false} (rec/check d ::cheap))
+    (is (= {::cheap false} (returned (rec/check d ::cheap)))
         "run, and its own return value is the answer, under its own name")
     (is (true? (rec/check d ::price)) "which ran and passed on the way")))
 
@@ -236,7 +237,7 @@
 
 (deftest a-certificate-reports-the-shape-validation-that-stopped-it
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
-    (is (= {::price false} (rec/check d ::pricing))
+    (is (= {::price false} (returned (rec/check d ::pricing)))
         "a check the certificate does not name, and the reason nothing in it ran")
     (is (= #{} (rec/certificates d)) "nothing in ::pricing passed"))
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
@@ -245,15 +246,15 @@
 (deftest a-group-reports-the-shape-failure-per-value
   (let [bad  (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})
         good (fresh {::item "hat" ::price 50 ::cuts {:a 50} ::tags [:x]})]
-    (is (= [{::price false} true] (rec/check-all [bad good] ::cheap))
+    (is (= [{::price false} true] (returned-all (rec/check-all [bad good] ::cheap)))
         "one value's shape failure discards nothing about the other")
-    (is (= [{::price false} true] (rec/check-all [bad good] ::pricing)))))
+    (is (= [{::price false} true] (returned-all (rec/check-all [bad good] ::pricing))))))
 
 ;;; ------------------------- a skipped check records no verdict -------------------------
 
 (deftest a-check-that-did-not-run-is-not-recorded-as-passing
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
-    (is (= {::price false} (rec/check d rec/every-check)))
+    (is (= {::price false} (returned (rec/check d rec/every-check))))
     (is (= #{::item ::cuts ::tagged} (rec/passed d))
         "everything that ran and passed, and nothing that was skipped")
     (is (= #{} (rec/certificates d)))
@@ -304,8 +305,12 @@
   (is (rec/sealed? (->Account 1 "n")))
   (is (= [1] @fetched)))
 
-(deftest a-pure-failure-elsewhere-still-keeps-the-fetch-from-happening
+(deftest a-pure-failure-the-fetch-does-not-wait-on-does-not-hold-it-up
+  ;; ::short reads the note and the fetch reads the id, so the external validation is waiting
+  ;; on nothing that just failed and runs.
   (reset! fetched [])
   (let [e (err #(->Account 1 "a note that is far too long"))]
-    (is (= [::short] (keys (:failures e)))))
-  (is (= [] @fetched)))
+    (is (= [::short] (keys (:failures e))))
+    (is (not (contains? (get (:failures e) ::short) :stopped))
+        "and the note's failure stopped nothing"))
+  (is (= [1] @fetched)))

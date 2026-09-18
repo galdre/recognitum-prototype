@@ -1,17 +1,18 @@
 (ns recognitum.check-test
   "Running one named check against a draft.
 
-  `check` returns `true` or a map of what each failing check returned, keyed by check name;
-  `check!` throws on failure. Neither returns a draft: each result is written into the
+  `check` returns `true` or a report of the checks that failed, keyed by check name;
+  `check!` throws that same report. Neither returns a draft: each result is written into the
   draft's record of which checks pass. A check already recorded as passing does not run
   again, and a write clears the checks reading the field written. A check not named after
   a field waits on the shape validations of the fields it names, and where one of those
-  fails the check asked about does not run and has no entry. A field never written reads as
+  fails the check asked about does not run and has no entry of its own. A field never written reads as
   `nil`. Checking is not sealing: an undeclared key, or an unwritten field elsewhere, does
   not stop the check in hand."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.core :as rec]))
+   [recognitum.core :as rec]
+   [recognitum.reports :refer [returned]]))
 
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
@@ -100,18 +101,18 @@
 
 (deftest check-answers-with-whatever-the-failing-check-returned-keyed-by-its-name
   (let [d (assoc (rec/draft Reporting) ::n -1)]
-    (is (= {::data {:too-small -1}} (rec/check d ::data)))
-    (is (= {::truthy :nope} (rec/check d ::truthy))
+    (is (= {::data {:too-small -1}} (returned (rec/check d ::data))))
+    (is (= {::truthy :nope} (returned (rec/check d ::truthy)))
         "truthy is not `true`, and the contract is `true` exactly")
-    (is (= {::nil nil} (rec/check d ::nil))
+    (is (= {::nil nil} (returned (rec/check d ::nil)))
         "a check that returned nil still has an entry -- the key is what says it failed")
-    (is (= {::boolean false} (rec/check d ::boolean)))
+    (is (= {::boolean false} (returned (rec/check d ::boolean))))
     (is (= #{} (rec/passed d)) "none of them passed, so none of them are recorded")))
 
 (deftest a-lone-check-is-a-certificate-containing-itself
   (let [d (assoc (rec/draft Reporting) ::n -1)]
-    (is (= {::data {:too-small -1}} (rec/check d ::data)))
-    (is (= {::data {:too-small -1} ::truthy :nope ::nil nil} (rec/check d ::most))
+    (is (= {::data {:too-small -1}} (returned (rec/check d ::data))))
+    (is (= {::data {:too-small -1} ::truthy :nope ::nil nil} (returned (rec/check d ::most)))
         "the certificate's answer has the same shape, with an entry per failing check"))
   (let [d (assoc (rec/draft Reporting) ::n 1)]
     (is (true? (rec/check d ::data)))
@@ -161,7 +162,7 @@
 
 (deftest a-check-that-fails-is-not-recorded-as-passing
   (let [d (-> (rec/draft Ledger) (assoc ::a "not an int") (assoc ::b "xx"))]
-    (is (= {::a false} (rec/check d ::a)))
+    (is (= {::a false} (returned (rec/check d ::a))))
     (is (= #{} (rec/passed d)))
     (is (true? (rec/check d ::b)))
     (is (= #{::b} (rec/passed d)) "and the one that passed alongside it is recorded")
@@ -223,8 +224,8 @@
 (deftest a-failed-check-is-run-again-next-time
   (reset! runs {})
   (let [d (assoc (rec/draft Counted) ::n "not an int")]
-    (is (= {::n false} (rec/check d ::n)))
-    (is (= {::n false} (rec/check d ::n)))
+    (is (= {::n false} (returned (rec/check d ::n))))
+    (is (= {::n false} (returned (rec/check d ::n))))
     (is (= 2 (ran ::n)))
     (is (= #{} (rec/passed d)))))
 
@@ -249,7 +250,7 @@
 
 (deftest a-check-naming-a-field-never-written-judges-nil
   (let [d (rec/draft Ledger)]
-    (is (= {::a false} (rec/check d ::a)) "`(int? nil)`, which is the check's own answer")
+    (is (= {::a false} (returned (rec/check d ::a))) "`(int? nil)`, which is the check's own answer")
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::a)))))
     (testing "and nothing is recorded, because nothing passed"
       (is (= #{} (rec/passed d))))))
@@ -272,7 +273,7 @@
 
 (deftest an-unwritten-field-reaches-a-check-body-as-nil
   (reset! runs {})
-  (is (= {::n false} (rec/check (rec/draft Counted) ::n)))
+  (is (= {::n false} (returned (rec/check (rec/draft Counted) ::n))))
   (is (= {::n 1} @runs) "the body ran, and what it was given was nil"))
 
 (deftest writing-nil-is-the-same-as-never-writing

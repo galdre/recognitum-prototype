@@ -8,7 +8,8 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
-   [recognitum.internal :as internal]))
+   [recognitum.internal :as internal]
+   [recognitum.reports :refer [returned]]))
 (defn- err
   "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
   is not an ExceptionInfo propagates, which is the point where a check body throws."
@@ -297,7 +298,7 @@
 
 (deftest a-failing-check-leaves-its-certificate-unheld
   (let [d (whole "heist" #{:a :b} :free nil)]
-    (is (= {::pay false} (rec/check d ::shape)))
+    (is (= {::pay false} (returned (rec/check d ::shape))))
     (is (= #{::title ::crew} (rec/passed d)) "and what did pass is still recorded")
     (is (= #{} (rec/certificates d)))))
 
@@ -340,27 +341,27 @@
       (is (not (rec/sealed? r))))))
 
 (deftest check-answers-with-whatever-each-failing-check-returned
-  ;; The same reading `check` takes: the failure data is what the check returned, and the
-  ;; richer report is what the throwing form throws.
+  ;; The failure data is what the check returned, which the report carries under
+  ;; `:returned`.
   (let [d (assoc (rec/draft Reporting) ::n -1)
         r (rec/check d ::most)]
-    (is (= {::data {:too-small -1} ::truthy :nope ::nil nil} r))
+    (is (= {::data {:too-small -1} ::truthy :nope ::nil nil} (returned r)))
     (is (= [::data ::truthy ::nil] (vec (keys r))) "declaration order")
     (is (not (contains? r ::boolean)) "which the certificate does not name")
     (is (= #{} (rec/passed d)))))
 
 (deftest check-reports-only-the-checks-the-certificate-names
   (let [d (whole :untitled #{:a :b} :free nil)]
-    (is (= {::pay false} (rec/check d ::payroll))
+    (is (= {::pay false} (returned (rec/check d ::payroll)))
         "::title fails too, and is no business of this certificate -- and ::paid-enough
          waits on ::pay, so it did not run")
-    (is (= {::title false ::pay false} (rec/check d ::shape))
+    (is (= {::title false ::pay false} (returned (rec/check d ::shape)))
         "::paid-enough shares a field with ::pay and is still no part of ::shape")))
 
 (deftest check-runs-everything-it-was-asked-to-and-stops-at-no-failure
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n :no) (assoc ::s :no))]
-    (is (= {::n false ::s false} (rec/check d rec/every-check))
+    (is (= {::n false ::s false} (returned (rec/check d rec/every-check)))
         "both shape validations ran and both are reported -- the first stopped neither")
     (is (= {::n 1 ::s 1} @runs)
         "::both waits on the pair, so it was not run and is not reported")))
@@ -441,8 +442,8 @@
 (deftest a-failed-check-in-a-certificate-is-run-again-next-time
   (reset! runs {})
   (let [d (-> (rec/draft Counted) (assoc ::n :no) (assoc ::s "x"))]
-    (is (= {::n false} (rec/check d ::ns)))
-    (is (= {::n false} (rec/check d ::ns)))
+    (is (= {::n false} (returned (rec/check d ::ns))))
+    (is (= {::n false} (returned (rec/check d ::ns))))
     (is (= {::n 2 ::s 1} @runs)
         "the failure is not retained, and the one that passed is")))
 
@@ -450,7 +451,7 @@
 
 (deftest a-certificate-over-fields-nobody-wrote-judges-nil
   (let [d (rec/draft Job)]
-    (is (= {::title false ::crew false ::pay false} (rec/check d ::shape))
+    (is (= {::title false ::crew false ::pay false} (returned (rec/check d ::shape)))
         "every check in it ran, and every one of them is reported")
     (testing "check! throws the ordinary report"
       (is (= ::rec/check-failed (:error (err #(rec/check! d ::shape))))))
@@ -459,9 +460,9 @@
 
 (deftest an-invariant-validation-does-not-run-on-a-shape-that-failed
   (let [d (-> (rec/draft Job) (assoc ::title "heist") (assoc ::crew #{:a}))]
-    (is (= {::pay false} (rec/check d ::shape))
+    (is (= {::pay false} (returned (rec/check d ::shape)))
         "::title and ::crew were written and pass; ::pay judges the nil nobody wrote")
-    (is (= {::pay false} (rec/check d ::payroll))
+    (is (= {::pay false} (returned (rec/check d ::payroll)))
         "::paid-enough waits on ::pay, so it neither runs nor appears")
     (is (not (contains? (rec/passed d) ::paid-enough))
         "and it is not recorded as passing either")))
@@ -470,7 +471,7 @@
   (let [d  (rec/draft job)
         d' (assoc (rec/draft Job) ::title "heist")]
     (is (true? (rec/check d ::shape)))
-    (is (= {::crew false ::pay false} (rec/check d' ::shape))
+    (is (= {::crew false ::pay false} (returned (rec/check d' ::shape)))
         "and a draft from the type runs what is not passing")))
 
 (deftest a-certificate-does-not-demand-the-fields-of-checks-it-does-not-name
