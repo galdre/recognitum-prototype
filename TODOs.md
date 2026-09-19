@@ -16,6 +16,32 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       marker and looks up the model, then calls the two-arity, which does both again.
       Tests first: a cost bound on the untouched seal against opening a draft.
 
+- [ ] **I20. What a `drafting` drafts, it seals; ownership goes.** Ruled. `drafting` given a
+      sealed value or a type opens a draft, runs the body, and seals the result; given a
+      draft it binds it, runs the body, and returns what the body returns. The form passed
+      in is the form that comes back. Adoption of a free draft was a mistake and is removed.
+      Deleted with it: the `*owner*` dynamic var and the thread-binding push and pop in
+      `drafting` and in the drafting-method wrapper, the owner field on every draft,
+      `adopt`, `open`'s adoption path, `owner-of`, `:draft-owner`, `:draft-with-owner`, and
+      the re-owning in `sealed-impl-return`. `unsealed` stays: it opts a drafting method's
+      return out of the wrapper's seal, and what it returns is simply the draft. Tests
+      first: a free draft handed to `drafting` comes back a draft; a nested `drafting`
+      passes a draft through on another thread (a bare executor), which fails today; a
+      drafting method whose body uses `drafting` seals once; existing assertions that a free
+      draft is adopted and sealed are inverted and listed. README re-entrancy section and
+      the `drafting`, `draft`, and `unsealed` docstrings. Re-measure the `drafting` rows.
+
+- [ ] **I21. `seal-all` and `drafting-all`.** Ruled. `seal-all` walks a shape, checks every
+      draft it finds as one group so batched fetches see every tuple, then seals each; one
+      throw carrying every failure. `drafting-all` is open-all, body, `seal-all`. The walk
+      descends plain maps by value and vectors and lists by element, tests for a value of
+      this library before testing for a map and does not descend into one, leaves sets and
+      everything else untouched, and realizes a lazy sequence to a vector. Failures are
+      keyed by path, the vector `get-in` takes: `{[:cards 2] report}`. The body may return
+      a different shape than it was given. After I20, since no pipeline step can then seal
+      a draft it was handed. README: the sentence that nothing bulk produces sealed values
+      is replaced by the all-or-nothing rule.
+
 - [ ] **I18. A shorthand check takes its `:doc` from the predicate's var.** `::cuts
       cuts-map?` parses with `:doc nil` because only the long form carries a docstring. At
       expansion, resolve the shorthand's symbol and use the var's `:doc` when it has one, so
