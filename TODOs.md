@@ -37,10 +37,12 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       ruled: the walk recurses through the data structure, and the boundary is any record it
       turns into a draft; it never descends into that record's fields, so what a field holds
       stays sealed. Mechanically: test for a value of this library before testing for a
-      map; walk maps by value, vectors, lists, and sets by element; realize a lazy sequence
+      map; walk maps as `clojure.walk` does, keys and values alike, and vectors, lists, and sets
+      by element; realize a lazy sequence
       to a vector; leave everything else as it is. Failures are keyed by path, each step
       what `get` takes at that level: a map key, an index, or for a set the member itself,
-      as in `{[:cards 2] report}`. The body may return
+      as in `{[:cards 2] report}`. A record in key position has no `get-in` address, so its
+      path is the path of the value under it plus a final `::rec/key` step. The body may return
       a different shape than it was given. After I20, since no pipeline step can then seal
       a draft it was handed. README: the sentence that nothing bulk produces sealed values
       is replaced by the all-or-nothing rule.
