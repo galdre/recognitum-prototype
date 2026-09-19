@@ -112,7 +112,10 @@ the order listed. Every string a step writes is held to `PROSE.md`.
       opened, rebuilt, sealed once at the end, and a draft is walked as itself. Same public
       names (`walk`, `prewalk`, `postwalk`, `keywordize-keys`, `stringify-keys`,
       `prewalk-replace`, `postwalk-replace`, `macroexpand-all`), so a consumer swaps the require
-      and nothing else. Nothing needs it yet.
+      and nothing else. Measured 2026-09-19: Specter runs `clojure.walk` over a value passed as
+      a navigator argument, so `(s/map-key sealed-value)` ran the value's checks, and with an
+      `:io-limited` type threw the refusal. Anyone using Specter, or any library that walks,
+      with our values hits this today, so this is no longer hypothetical.
 
 ## Needs a ruling
 
