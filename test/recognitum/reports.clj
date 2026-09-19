@@ -1,6 +1,6 @@
 (ns recognitum.reports
   "Reading a validation report in a test. The answering and throwing forms carry the same
-  report: check name -> `{:doc :values :returned}`, and `:stopped` where that failure kept
+  report: check name -> `{:doc :values :returned}`, and `:blocked` where that failure kept
   other checks from running. Where a test is about which check failed and what it returned,
   it reads the report through here; where it is about the report itself, it reads the report
   whole.")

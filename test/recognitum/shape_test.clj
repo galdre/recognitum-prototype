@@ -235,7 +235,7 @@
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
     (is (= ::rec/check-failed (:error (err #(rec/check! d ::cheap)))))))
 
-(deftest a-certificate-reports-the-shape-validation-that-stopped-it
+(deftest a-certificate-reports-the-shape-validation-that-blocked-it
   (let [d (fresh {::item "hat" ::price "free" ::cuts {:a 1} ::tags [:x]})]
     (is (= {::price false} (returned (rec/check d ::pricing)))
         "a check the certificate does not name, and the reason nothing in it ran")
@@ -311,6 +311,6 @@
   (reset! fetched [])
   (let [e (err #(->Account 1 "a note that is far too long"))]
     (is (= [::short] (keys (:failures e))))
-    (is (not (contains? (get (:failures e) ::short) :stopped))
-        "and the note's failure stopped nothing"))
+    (is (not (contains? (get (:failures e) ::short) :blocked))
+        "and the note's failure blocked nothing"))
   (is (= [1] @fetched)))

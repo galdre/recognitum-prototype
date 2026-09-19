@@ -1,10 +1,10 @@
-(ns recognitum.stopped-test
-  "What a failing check stopped, and the one report every form carries.
+(ns recognitum.blocked-test
+  "What a failing check blocked, and the one report every form carries.
 
   A check waits on the shape validations of the fields it names, and an external validation
   waits as well on the pure checks over the fields its fetches read. Where one of those
   fails, the checks behind it do not run and the failing check's entry names them under
-  `:stopped`; a failure nothing behind it was waiting on stops nothing and holds up no
+  `:blocked`; a failure nothing behind it was waiting on blocks nothing and holds up no
   fetch. Every entry point answers with the same report, and the answering form and the
   throwing form of one call report the same thing about the same value."
   (:require
@@ -96,7 +96,7 @@
 
 ;;; -------------------- a forced pass over a sealed value gates within itself --------------------
 
-(deftest a-forced-pass-on-a-sealed-value-stops-what-the-shape-validation-stops
+(deftest a-forced-pass-on-a-sealed-value-blocks-what-the-shape-validation-blocks
   ;; The value has not changed and cannot; the world the title is judged against has.
   (reset! tide true)
   (let [r (rec/recheck job rec/every-check)]
@@ -104,20 +104,20 @@
     (is (= 1 (times ::crew)) "the other shape validation ran and passed")
     (is (zero? (times ::titled)) "the invariant validation over that field did not run")
     (is (= [] @fetched) "and nothing was fetched for the external validation")
-    (is (= [::titled ::vouched] (:stopped (entry r ::title)))
+    (is (= [::titled ::vouched] (:blocked (entry r ::title)))
         "which is what the title's entry says")))
 
-(deftest a-forced-throwing-pass-on-a-sealed-value-stops-the-same-checks
+(deftest a-forced-throwing-pass-on-a-sealed-value-blocks-the-same-checks
   (reset! tide true)
   (let [e (err #(rec/recheck! job rec/every-check))]
     (is (= ::rec/check-failed (:error e)))
     (is (zero? (times ::titled)))
     (is (= [] @fetched))
-    (is (= [::titled ::vouched] (:stopped (entry e ::title))))))
+    (is (= [::titled ::vouched] (:blocked (entry e ::title))))))
 
 ;;; ------------------------------ the entry points, one at a time ------------------------------
 
-(deftest every-entry-point-that-can-stop-a-check-says-what-it-stopped
+(deftest every-entry-point-that-can-block-a-check-says-what-it-blocked
   (doseq [[label f] [["check"        #(rec/check (draft-of 42 #{:charlie}) rec/every-check)]
                      ["check!"       #(err (fn [] (rec/check! (draft-of 42 #{:charlie})
                                                               rec/every-check)))]
@@ -144,14 +144,14 @@
                      ["map->Job"     #(err (fn [] (map->Job {::title 42 ::crew #{:charlie}})))]
                      ["merge"        #(err (fn [] (merge job {::title 42 ::crew #{:charlie}})))]]]
     (let [r (f)]
-      (is (= [::titled ::vouched] (:stopped (entry r ::title))) label)
+      (is (= [::titled ::vouched] (:blocked (entry r ::title))) label)
       (is (= false (:returned (entry r ::title))) label)))
-  (testing "and a write to a sealed value stops what that write was going to run"
+  (testing "and a write to a sealed value blocks what that write was going to run"
     (let [e (err #(assoc job ::title 42))]
-      (is (= [::titled] (:stopped (entry e ::title)))
+      (is (= [::titled] (:blocked (entry e ::title)))
           "no fetch reads the title, so the external validation was never in this plan"))))
 
-(deftest nothing-is-fetched-for-a-check-a-shape-validation-stopped
+(deftest nothing-is-fetched-for-a-check-a-shape-validation-blocked
   (doseq [[label f] [["seal"  #(err (fn [] (rec/seal (draft-of 42 #{:charlie}))))]
                      ["->Job" #(err (fn [] (->Job 42 #{:charlie})))]
                      ["check" #(rec/check (draft-of 42 #{:charlie}) rec/every-check)]
@@ -160,50 +160,50 @@
     (f)
     (is (= [] @fetched) label)))
 
-;;; ------------------------------- what belongs in :stopped -------------------------------
+;;; ------------------------------- what belongs in :blocked -------------------------------
 
-(deftest a-failure-that-stopped-nothing-carries-no-stopped-key
+(deftest a-failure-that-blocked-nothing-carries-no-blocked-key
   (testing "a lone shape validation, with nothing else in the plan"
     (let [r (rec/check (draft-of 42 #{:charlie}) ::title)]
       (is (= [::title] (vec (keys r))))
-      (is (not (contains? (entry r ::title) :stopped)))))
+      (is (not (contains? (entry r ::title) :blocked)))))
   (testing "an external validation, which nothing waits on"
     (let [r (rec/check (draft-of "The Italian Job" #{:mole}) ::vouched)]
       (is (= [::vouched] (vec (keys r))))
-      (is (not (contains? (entry r ::vouched) :stopped)))))
+      (is (not (contains? (entry r ::vouched) :blocked)))))
   (testing "an invariant validation the external validation does wait on"
     (let [r (rec/check (draft-of "charlie" #{:charlie}) rec/every-check)]
       (is (= [::titled] (vec (keys r))) "the shape validations passed and the invariant did not")
-      (is (= [::vouched] (:stopped (entry r ::titled)))
+      (is (= [::vouched] (:blocked (entry r ::titled)))
           "the external validation waits on it through the fields its fetch reads"))))
 
-(deftest stopped-holds-the-names-in-declaration-order
+(deftest blocked-holds-the-names-in-declaration-order
   (let [r (rec/check (draft-of 42 #{:charlie}) rec/every-check)]
-    (is (= [::titled ::vouched] (:stopped (entry r ::title)))
+    (is (= [::titled ::vouched] (:blocked (entry r ::title)))
         "::titled is declared before ::vouched")))
 
-(deftest stopped-names-only-what-this-call-was-going-to-run
+(deftest blocked-names-only-what-this-call-was-going-to-run
   (testing "a certificate that names neither the invariant nor the external validation"
     (let [r (rec/check (draft-of 42 "not a crew") ::shape)]
       (is (= [::title ::crew] (vec (keys r))))
-      (is (not (contains? (entry r ::title) :stopped)))
-      (is (not (contains? (entry r ::crew) :stopped)))))
+      (is (not (contains? (entry r ::title) :blocked)))
+      (is (not (contains? (entry r ::crew) :blocked)))))
   (testing "a request that reaches the invariant validation and no further"
     (let [r (rec/check (draft-of 42 #{:charlie}) ::titled)]
-      (is (= [::titled] (:stopped (entry r ::title)))))))
+      (is (= [::titled] (:blocked (entry r ::title)))))))
 
-(deftest a-check-two-failures-stopped-appears-under-both
+(deftest a-check-two-failures-blocked-appears-under-both
   (let [r (rec/check (draft-of 42 "not a crew") rec/every-check)]
     (is (= [::title ::crew] (vec (keys r))))
-    (is (= [::titled ::vouched] (:stopped (entry r ::title))))
-    (is (= [::titled ::vouched] (:stopped (entry r ::crew))))))
+    (is (= [::titled ::vouched] (:blocked (entry r ::title))))
+    (is (= [::titled ::vouched] (:blocked (entry r ::crew))))))
 
 ;;; ------------------- a failure holds up only what was waiting on it -------------------
 
 (deftest a-failing-check-holds-up-only-the-fetch-that-waits-on-it
   (let [r (rec/check (pair-of "not an int" 2) rec/every-check)]
     (is (= [::left] (vec (keys r))))
-    (is (= [::left-on-file] (:stopped (entry r ::left)))
+    (is (= [::left-on-file] (:blocked (entry r ::left)))
         "the external validation over the other field was waiting on nothing that failed")
     (is (= [::right-row] @fetched) "so only the other field's fetch was made")
     (is (= 1 (times ::right-on-file)) "and the external validation behind it ran")
@@ -218,13 +218,13 @@
     (reset! ran [])
     (reset! fetched [])
     (let [r (f)]
-      (is (= [::left-on-file] (:stopped (entry r ::left))) label)
+      (is (= [::left-on-file] (:blocked (entry r ::left))) label)
       (is (= [::right-row] @fetched) label)
       (is (= 1 (times ::right-on-file)) label))))
 
 (deftest a-check-a-call-planned-and-did-not-run-is-named-under-a-failure
   ;; `every-check` against a draft with nothing recorded plans every check the type declares,
-  ;; so what ran and what a failure is reported as having stopped have to cover them between
+  ;; so what ran and what a failure is reported as having blocked have to cover them between
   ;; them, whichever side of the failure the fetch sits on.
   (doseq [[label d planned]
           [["the fetch waits on the failure"
@@ -233,7 +233,7 @@
             (pair-of "not an int" 2)   #{::left ::right ::left-on-file ::right-on-file}]]]
     (reset! ran [])
     (let [r     (rec/check d rec/every-check)
-          named (into #{} (mapcat :stopped) (vals r))]
+          named (into #{} (mapcat :blocked) (vals r))]
       (is (= planned (into (set @ran) named)) label))))
 
 ;;; --------------------------- the two forms report the same thing ---------------------------
@@ -254,12 +254,10 @@
 
 ;;; ------------------------------------ the thrown message ------------------------------------
 
-(deftest the-message-names-the-checks-the-failure-stopped
+(deftest the-message-names-the-checks-the-failure-blocked
   (let [m (msg #(rec/seal (draft-of 42 #{:charlie})))]
-    (is (str/includes? m (str ::titled)))
-    (is (str/includes? m (str ::vouched)))
-    (is (str/includes? m "did not run"))
-    (is (str/includes? m (str ::title)) "after the check that stopped them"))
-  (testing "and says nothing about stopping where nothing was stopped"
+    (is (str/includes? m (str "which blocked " ::titled " and " ::vouched)))
+    (is (str/includes? m (str ::title)) "after the check that blocked them"))
+  (testing "and says nothing about blocking where nothing was blocked"
     (let [m (msg #(rec/check! (draft-of 42 #{:charlie}) ::title))]
-      (is (not (str/includes? m "did not run"))))))
+      (is (not (str/includes? m "which blocked"))))))
