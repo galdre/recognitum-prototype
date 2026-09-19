@@ -28,6 +28,10 @@ the order listed. Every string a step writes is held to `PROSE.md`.
         make it spell the call that was made.
       - The demo shows only the refused `dissoc`, because every field of `Heist` rejects
         `nil`. Either accept that or give the worked example a nullable field.
+      - Six test names still say "stops" for what the report calls blocked, for example
+        `a-failing-shape-validation-stops-a-recheck-as-it-stops-a-check` and
+        `a-failing-check-that-is-not-a-shape-validation-stops-nothing`; rename to "blocks"
+        so the suite uses one word. Listed by the rename agent with file and line.
       - Tighten the two method-row bounds in `cost_test`: the write bound is 110x, set to
         pass the pre-change wrapper, and now guards nothing at a measured 0.8x; the read
         bound is 12x at a measured 1.0x. Bring both to the style of the existing rows,
