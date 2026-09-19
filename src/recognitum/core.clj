@@ -98,12 +98,12 @@
 
 (defn- failure-entry
   "The `[check-name report]` pair for a check that did not return `true`. `ret` is what it
-  returned, which is the failure data; `vals` is what it was given; `stopped` the names of
-  the checks that did not run because this one failed, left out where it stopped none."
-  [check ret vals stopped]
+  returned, which is the failure data; `vals` is what it was given; `blocked` the names of
+  the checks that did not run because this one failed, left out where it blocked none."
+  [check ret vals blocked]
   [(:name check)
    (cond-> {:doc (:doc check) :values vals :returned ret}
-     (seq stopped) (assoc :stopped stopped))])
+     (seq blocked) (assoc :blocked blocked))])
 
 (defn- name-list
   "`xs` as an English list: `a`, then `a and b`, then `a, b and c`."
@@ -113,11 +113,11 @@
       (str (apply str (interpose ", " (butlast ss))) " and " (last ss))
       (str (first ss)))))
 
-(defn- failure-str [[cname {:keys [doc values returned stopped]}]]
+(defn- failure-str [[cname {:keys [doc values returned blocked]}]]
   (str (format "%s%s: given %s it returned %s"
                cname (if doc (str " (" doc ")") "") (pr-str values) (pr-str returned))
-       (when (seq stopped)
-         (format ", so %s did not run" (name-list stopped)))))
+       (when (seq blocked)
+         (format ", which blocked %s" (name-list blocked)))))
 
 (defn- checks-failed!
   "Throw one `:check-failed` carrying every failure in `fs`, [[failure-entry]] pairs in the
@@ -246,7 +246,7 @@
               (if (true? ret) acc (conj acc [i ret]))))
           [] idxs))
 
-(defn- stopped-by
+(defn- blocked-by
   "The names of the checks `plan` names that did not run because the check at index `i`
   failed: those waiting on it, directly or through another check that waits on it, in
   declaration order."
@@ -262,11 +262,11 @@
 (defn- failure-entries
   "The report for `fs`, which is [[failures-of]]'s answer: the check's docstring, the
   dependencies it declared with what it was given for each, what it returned, and which of
-  the checks `plan` names its failure stopped."
+  the checks `plan` names its failure blocked."
   [model x fs cache plan]
   (map (fn [[i ret]]
          (let [c (nth (:checks model) i)]
-           (failure-entry c ret (dep-values model c x cache) (stopped-by model plan i))))
+           (failure-entry c ret (dep-values model c x cache) (blocked-by model plan i))))
        fs))
 
 (defn- failure-report
@@ -280,7 +280,7 @@
 
 (defn- run-group!
   "Run `idxs` and throw once carrying every failure among them. `idxs` is the whole of what
-  this call had to run, so it is also what a failure among them can have stopped."
+  this call had to run, so it is also what a failure among them can have blocked."
   [model run x idxs cache]
   (let [fs (failures-of run x idxs cache)]
     (when (seq fs)
@@ -627,7 +627,7 @@
 (defn- establish-one
   "Run the checks `plan` names against `x` and return
   `{:failures [[i ret] ...] :cache {io-dep-name value} :plan plan}`, the plan being what a
-  report reads to say which checks a failure stopped. Where `draft?`, each result is written
+  report reads to say which checks a failure blocked. Where `draft?`, each result is written
   into `x`'s verdict mask.
 
   The external validations that run are those the pure phase left with everything they wait
@@ -834,8 +834,8 @@
 
   Each entry holds `:doc`, the check's own docstring; `:values`, what it was given, keyed by
   the dependency it was given for; `:returned`, what it returned; and, where its failure kept
-  other checks from running, `:stopped`, their names in declaration order. An entry that
-  stopped nothing has no `:stopped`, and a check two failures stopped is named under both.
+  other checks from running, `:blocked`, their names in declaration order. An entry that
+  blocked nothing has no `:blocked`, and a check two failures blocked is named under both.
   [[check!]] throws this same report.
 
   `cname` is a check's name or a certificate's; a lone check is a certificate containing
@@ -844,7 +844,7 @@
   Every check named runs; nothing stops at the first failure. A check does not run while one
   it waits on is failing -- a shape validation of a field it names, or, for an external
   validation, a pure check over a field its io-deps name -- so it has no entry of its own,
-  and the `:stopped` of the check that failed is what names it. Nothing is fetched for an
+  and the `:blocked` of the check that failed is what names it. Nothing is fetched for an
   external validation that will not run, and a failure nothing was waiting on holds up no
   fetch. A check the certificate does not name can appear in the report, since what a named
   check waits on runs first.
@@ -890,7 +890,7 @@
 
   What a named check waits on is not re-run where `x` already records it as passing; what is
   not recorded as passing runs first. Either way a check does not run when something it waits
-  on failed in this pass, a sealed value included, and the failing check's `:stopped` names
+  on failed in this pass, a sealed value included, and the failing check's `:blocked` names
   it. An io-dep is fetched at most once within this one call, and what it returned is not
   kept after the call returns.
 
@@ -2197,7 +2197,7 @@
                 gate    (fn [is] (filterv in is))
                 ;; The checks this call was going to run that wait on the one that failed: a
                 ;; literal, since both the plan and what each check waits on are known here.
-                stopped (fn [i]
+                blocked (fn [i]
                           (into []
                                 (comp (filter #(bit-test (nth closures %) i))
                                       (map #(:name (nth parsed %))))
@@ -2216,7 +2216,7 @@
                                       (~(internal 'failure-entry)
                                        (nth (:checks ~model-sym) ~i) ~(rs i)
                                        (array-map ~@(interleave (deps-of i) (argvs-of i)))
-                                       ~(stopped i))))
+                                       ~(blocked i))))
                                  order)]
                 ;; Which external validations still have everything they wait on, decided
                 ;; from the results in hand.
@@ -2546,7 +2546,7 @@
              ~(str "Construct a validated " tname " from its fields, in declaration order.\n\n"
                    "  Throws `:check-failed` when a check does not pass, carrying `:record` and\n"
                    "  `:failures`, the report [[recognitum.core/check]] answers with: what each\n"
-                   "  failing check was given, what it returned, and which checks it stopped"
+                   "  failing check was given, what it returned, and which checks it blocked"
                    batch-doc ".")
              [~@fixed ~@(when (seq over) ['& oversym])]
              ~@(if (seq over)

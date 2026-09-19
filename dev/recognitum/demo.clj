@@ -150,7 +150,7 @@
             (fn [] (rec/check (assoc d ::heist/name "") ::heist/name)))
       (show "check! throws that same report"
             (fn [] (rec/check! (assoc d ::heist/name "") ::heist/name)))
-      (show "and a failure names the checks it stopped"
+      (show "and a failure names the checks it blocked"
             (fn [] (rec/check (-> d (assoc ::heist/take 10) (assoc ::heist/cuts "garbage"))
                               rec/every-check)))
       (show "on a sealed value every check passes, so check runs nothing"
@@ -229,7 +229,7 @@
     (show "->Heist with everything wrong at once" (fn [] (heist/->Heist "" :not-a-set -1 "garbage")))
     (show "map->Heist with a key left out -- it is nil, and the shape validation says so"
           (fn [] (heist/map->Heist {::heist/name "Job" ::heist/crew #{:a} ::heist/take 10})))
-    (show "a shape failure names what it stopped, and none of them ran"
+    (show "a shape failure names what it blocked, and none of them ran"
           (fn [] (heist/->Heist "Job" #{:a} 10 "garbage")))
 
     (section "printing: the tag names the reader")

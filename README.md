@@ -151,7 +151,7 @@ validation names exactly its own field, or the form does not compile.
 Every other check waits on the shape validations of the fields it names. `::cuts-sum-to-take
 [take cuts]` runs only once `::take` and `::cuts` have passed, so it receives well-formed input.
 A check does not run while a shape validation it waits on is failing, and has no entry of its
-own; the shape validation's failure is what is reported, and that entry names what it stopped.
+own; the shape validation's failure is what is reported, and that entry names what it blocked.
 Failures come back shape validations first, then invariant validations, then external
 validations, in declaration order within each.
 
@@ -336,7 +336,7 @@ Checks can be run against a draft before it is complete:
 checks. A lone check is a certificate containing itself. The report is keyed by check name, so a
 `false` a check returned is not mistaken for the report itself; **Errors** below gives the shape
 of an entry. A check that did not run because one it waits on is failing has no entry of its
-own, and the failing check's entry names it under `:stopped`.
+own, and the failing check's entry names it under `:blocked`.
 
 None of them return a draft. Each result is written into the draft's record, which `passed` and
 `certificates` read.
@@ -567,7 +567,7 @@ returned:
 ```
 
 A check that did not run because one it waits on failed has no entry. It is named instead under
-the `:stopped` of the check that failed, in declaration order, so the report accounts for every
+the `:blocked` of the check that failed, in declaration order, so the report accounts for every
 check the call was going to run:
 
 ```clojure
@@ -577,12 +577,12 @@ check the call was going to run:
             {:doc      nil
              :values   #:my.app.heist{:cuts "not a map"}
              :returned false
-             :stopped  [:my.app.heist/cuts-sum-to-take
+             :blocked  [:my.app.heist/cuts-sum-to-take
                         :my.app.heist/only-crew-get-cuts
                         :my.app.heist/crew-is-vouched-for]}}}
 ```
 
-An entry that stopped nothing has no `:stopped`, and a check two failures stopped is named under
+An entry that blocked nothing has no `:blocked`, and a check two failures blocked is named under
 both.
 
 A caller dispatches on the keyword and reads the rest of the map:
