@@ -33,11 +33,14 @@ the order listed. Every string a step writes is held to `PROSE.md`.
 
 - [ ] **I21. `seal-all` and `drafting-all`.** Ruled. `seal-all` walks a shape, checks every
       draft it finds as one group so batched fetches see every tuple, then seals each; one
-      throw carrying every failure. `drafting-all` is open-all, body, `seal-all`. The walk
-      descends plain maps by value and vectors and lists by element, tests for a value of
-      this library before testing for a map and does not descend into one, leaves sets and
-      everything else untouched, and realizes a lazy sequence to a vector. Failures are
-      keyed by path, the vector `get-in` takes: `{[:cards 2] report}`. The body may return
+      throw carrying every failure. `drafting-all` is open-all, body, `seal-all`. One rule,
+      ruled: the walk recurses through the data structure, and the boundary is any record it
+      turns into a draft; it never descends into that record's fields, so what a field holds
+      stays sealed. Mechanically: test for a value of this library before testing for a
+      map; walk maps by value, vectors, lists, and sets by element; realize a lazy sequence
+      to a vector; leave everything else as it is. Failures are keyed by path, each step
+      what `get` takes at that level: a map key, an index, or for a set the member itself,
+      as in `{[:cards 2] report}`. The body may return
       a different shape than it was given. After I20, since no pipeline step can then seal
       a draft it was handed. README: the sentence that nothing bulk produces sealed values
       is replaced by the all-or-nothing rule.
