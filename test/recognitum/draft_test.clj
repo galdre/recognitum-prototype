@@ -1,165 +1,155 @@
 (ns recognitum.draft-test
-  "Drafts, `drafting`, and what `seal` guarantees."
+  "Drafts: what they accept, what they remember, and what seal runs because of it."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [recognitum.heist :as heist]
-   [recognitum.roster :as house]
    [recognitum.core :as rec]
-   [recognitum.internal :as internal])
+   [recognitum.heist :as h]
+   [recognitum.house :as house])
   (:import
-   (recognitum.heist Heist)))
-
-(def job heist/italian-job)
+   (recognitum.heist Heist)
+   (recognitum.record Draft)))
 
 (defn- err [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-;;; ------------------------------- a draft validates nothing -------------------------------
+(def ^:private entries
+  {::h/name "The Italian Job" ::h/crew #{"Charlie" "Stella" "Lyle"} ::h/take 3000
+   ::h/cuts {"Charlie" 1000 "Stella" 1000 "Lyle" 1000}})
 
-(deftest writes-into-a-draft-are-unchecked
-  (let [d (assoc (rec/draft job) ::heist/take "nope")]
+(deftest a-draft-of-the-type-holds-and-passes-nothing
+  (let [d (rec/draft Heist)]
     (is (rec/draft? d))
-    (is (= "nope" (::heist/take d)) "the bad value is simply there"))
-  (testing "seal is where it fails"
-    (is (contains? (:failures (err #(rec/seal (assoc (rec/draft job) ::heist/take "nope"))))
-                   ::heist/take))))
+    (is (= 0 (count d)))
+    (is (= #{} (rec/proven-checks d)))
+    (is (not (rec/proves? d rec/every)))))
 
-(deftest a-draft-may-pass-through-states-no-single-write-could
-  (testing "either write alone throws on a validated value"
-    (is (= ::rec/check-failed (:error (err #(assoc job ::heist/take 3500))))))
-  (testing "but the pair is fine inside one drafting"
-    (is (instance? Heist (rec/drafting [x job] (heist/add-member x :napster 500))))))
+(deftest a-draft-accepts-any-write
+  (let [d (-> (rec/draft Heist) (assoc ::h/take "lots") (assoc :scratch 1))]
+    (is (= "lots" (::h/take d)))
+    (is (= 1 (:scratch d)))))
 
-;;; ---------------------------------------- sealing ----------------------------------------
+(deftest a-draft-of-a-value-passes-everything-and-a-draft-of-a-draft-is-itself
+  (let [d (rec/draft h/italian-job)]
+    (is (= (rec/checks-of rec/every Heist) (rec/proven-checks d)))
+    (is (identical? d (rec/draft d)))
+    (testing "sealing it again runs nothing"
+      (reset! house/calls [])
+      (is (= h/italian-job (rec/seal d)))
+      (is (empty? @house/calls)))))
 
-(deftest seal-reports-keys-the-type-does-not-declare
-  (let [e (err #(rec/drafting [x job] (assoc x :getaway-car "mini")))]
-    (is (= ::rec/extraneous-keys (:error e)))
-    (is (= [:getaway-car] (:keys e)))))
+(deftest a-write-forgets-the-checks-that-read-the-key
+  (let [d (rec/draft h/italian-job)
+        d2 (assoc d ::h/take 3001)]
+    (is (= (rec/checks-of rec/every Heist) (rec/proven-checks d)) "the old draft is unchanged")
+    (is (= (disj (rec/checks-of rec/every Heist) ::h/take ::h/cuts-sum-to-take)
+           (rec/proven-checks d2))
+        "only-crew-get-cuts waits on cuts-sum-to-take but does not read take, so it is kept")))
 
-(deftest clean-strips-them-instead
-  (is (instance? Heist (rec/drafting [x job] (-> x (assoc :getaway-car "mini") rec/clean)))))
+(deftest a-failed-seal-remembers-what-passed
+  (let [d (into (rec/draft Heist) (assoc entries ::h/take -1))
+        e (err #(rec/seal d))]
+    (is (= #{::h/take} (set (keys (:failed e)))))
+    (is (= #{::h/cuts-sum-to-take ::h/only-crew-get-cuts} (get-in e [:failed ::h/take :blocked]))
+        "directly, and through a check it blocked")
+    (is (contains? (rec/proven-checks d) ::h/crew-vetted))
+    (testing "the next seal of the mended draft runs only the rest"
+      (reset! house/calls [])
+      (is (instance? Heist (rec/seal (assoc d ::h/take 3000))))
+      (is (empty? @house/calls)))))
 
-(deftest dissoc-removes-one-undeclared-key-from-a-draft
-  (is (instance? Heist (rec/drafting [x job] (-> x (assoc :getaway-car "mini") (dissoc :getaway-car)))))
-  (testing "while a declared field is set to nil rather than removed"
-    (let [d (dissoc (rec/draft job) ::heist/cuts)]
-      (is (rec/draft? d))
-      (is (nil? (::heist/cuts d)))
-      (is (contains? d ::heist/cuts))
-      (is (= [::heist/name ::heist/crew ::heist/take ::heist/cuts] (keys d)))))
-  (testing "and removing an absent undeclared key allocates nothing"
-    (let [d (rec/draft job)]
-      (is (identical? d (dissoc d :never-there))))))
+(deftest seal-refuses-undeclared-keys-before-running-anything
+  (let [d (into (rec/draft Heist) (assoc entries :scratch 1))]
+    (reset! house/calls [])
+    (is (= {:error :recognitum/undeclared-keys :type 'recognitum.heist/Heist :keys #{:scratch}}
+           (select-keys (err #(rec/seal d)) [:error :type :keys])))
+    (is (empty? @house/calls))
+    (is (= #{} (rec/proven-checks d)))
+    (testing "clean and dissoc remove them"
+      (is (instance? Heist (rec/seal (rec/clean d))))
+      (is (instance? Heist (rec/seal (dissoc d :scratch)))))))
 
-(deftest seal-judges-a-field-never-written-as-nil
-  (let [e (err #(rec/drafting [x Heist] (assoc x ::heist/name "X")))]
-    (is (= ::rec/check-failed (:error e)))
-    (is (= [::heist/crew ::heist/take ::heist/cuts] (vec (keys (:failures e))))
-        "each shape validation says what it thinks of the nil nobody wrote, and the two
-         invariant validations wait on them")))
+(deftest check-remembers-and-recheck-reruns
+  (let [d (into (rec/draft Heist) entries)]
+    (is (true? (rec/check d rec/shape)))
+    (is (= (rec/checks-of rec/shape Heist) (rec/proven-checks d)))
+    (reset! house/calls [])
+    (is (true? (rec/check d ::h/crew-vetted)))
+    (is (true? (rec/check d ::h/crew-vetted)))
+    (is (= 1 (count @house/calls)) "remembered after the first check")
+    (is (true? (rec/recheck d ::h/crew-vetted)))
+    (is (= 2 (count @house/calls)) "recheck runs it in any case")))
 
-;;; ------------------------- "never written" is "written to nil" -------------------------
+(deftest marks-moved-onto-other-entries-show-nothing
+  (let [d (rec/draft h/italian-job)
+        forged (Draft. (assoc entries ::h/take -1) (.-cell ^Draft d) nil)]
+    (is (= #{} (rec/proven-checks forged)))
+    (is (= :recognitum/check-failed (:error (err #(rec/seal forged)))))))
 
-(rec/defrecord Note
-  [title body]
-  {:checks
-   {::title string?
-    ::body  ([body] (or (nil? body) (string? body)))}})
+;;; A type whose external check reads a source the tests change under it.
 
-(deftest nil-is-a-legal-value-when-the-shape-validation-admits-it
-  (let [n (rec/drafting [x Note] (merge x {::title "t" ::body nil}))]
-    (is (nil? (::body n)))
-    (is (= [::title ::body] (keys n)) "the field is present, holding nil"))
-  (testing "and leaving it unwritten is the same thing, judged the same way"
-    (let [n (rec/drafting [x Note] (assoc x ::title "t"))]
-      (is (nil? (::body n)))
-      (is (= [::title ::body] (keys n))))))
+(def ^:private on-file (atom #{0 7}))
+(def ^:private hold (atom nil))
+(def ^:private source-calls (atom 0))
 
-;;; --------------------------------------- drafting ---------------------------------------
+(defn- files [ks]
+  (swap! source-calls inc)
+  (let [answer (into {} (for [k ks] [k (contains? @on-file k)]))]
+    (when-let [h @hold] (h))
+    answer))
 
-(deftest drafting-builds-from-the-type-itself
-  (let [h (rec/drafting [x Heist]
-            (merge x {::heist/name "A" ::heist/crew #{:x} ::heist/take 1 ::heist/cuts {:x 1}}))]
-    (is (instance? Heist h))
-    (is (= "A" (::heist/name h))))
-  (testing "and from an explicit draft of the type"
-    (let [h (rec/drafting [x (rec/draft Heist)]
-              (merge x {::heist/name "B" ::heist/crew #{:x} ::heist/take 1 ::heist/cuts {:x 1}}))]
-      (is (instance? Heist h))
-      (is (= "B" (::heist/name h))))))
+(rec/defproven Filed [a b]
+  rec/checks
+  (a [] (int? a))
+  (b [] (int? b))
+  (b-not-below-a [] (>= b a))
+  (a-known [b-not-below-a] (rec/fetch files a)))
 
-(deftest drafting-is-re-entrant
-  (testing "standalone, the inner form seals"
-    (is (instance? Heist (heist/promote job :lyle 250))))
-  (testing "nested, it passes the draft through and only the outer form seals"
-    (let [seen (atom nil)
-          h    (rec/drafting [x job]
-                 (let [inner (heist/promote x :lyle 250)]
-                   (reset! seen (rec/draft? inner))
-                   (heist/rename inner "The Sequel")))]
-      (is (true? @seen))
-      (is (instance? Heist h))
-      (is (= "The Sequel" (::heist/name h)))
-      (is (= 3250 (::heist/take h))))))
+(deftest a-pass-found-before-a-recheck-is-not-written-after-it
+  (dotimes [_ 20]
+    (reset! on-file #{0 7})
+    (let [d (into (rec/draft Filed) {::a 0 ::b 1})
+          entered (java.util.concurrent.CountDownLatch. 1)
+          release (java.util.concurrent.CountDownLatch. 1)]
+      (reset! hold (fn [] (reset! hold nil) (.countDown entered) (.await release 10 java.util.concurrent.TimeUnit/SECONDS)))
+      (let [checking (future (rec/check d ::a-known))]
+        (is (.await entered 10 java.util.concurrent.TimeUnit/SECONDS) "the check has its yes from the source")
+        (reset! on-file #{})
+        (is (= #{::a-known} (set (keys (:failed (rec/recheck d ::a-known))))))
+        (.countDown release)
+        (is (true? @checking))
+        (is (not (contains? (rec/proven-checks d) ::a-known))
+            "the check's pass, found before the recheck, is not written after it")))))
 
-(deftest seal-is-idempotent
-  ;; A sealed value is a fixed point of seal, so seal is a projection: seal . seal = seal.
-  (is (identical? job (rec/seal job)))
-  (let [once (rec/seal (rec/draft job))]
-    (is (identical? once (rec/seal once))))
-  (testing "which lets a drafting body end in a call that may already have sealed"
-    (is (= 3250 (::heist/take (rec/drafting [x job] (heist/promote job :lyle 250)))))
-    (is (= "S"  (::heist/name (rec/drafting [x job] (rec/seal (heist/rename x "S")))))))
-  (testing "but a value that is neither a draft nor sealed is still refused"
-    (is (= ::rec/cannot-seal (:error (err #(rec/seal {:a 1})))))
-    (is (= ::rec/cannot-seal (:error (err #(rec/drafting [x job] {:a 1})))))))
+(deftest recheck-forgets-an-external-check-it-names-even-when-blocked
+  (reset! on-file #{0 7})
+  (let [d (assoc (rec/draft (map->Filed {::a 0 ::b 1})) ::b -1)]
+    (is (contains? (rec/proven-checks d) ::a-known) "writing b keeps the check that reads only a")
+    (reset! on-file #{})
+    (is (= #{::a-known} (:blocked (rec/recheck d ::a-known))))
+    (is (not (contains? (rec/proven-checks d) ::a-known)))
+    (testing "the next seal asks the source again"
+      (reset! source-calls 0)
+      (is (= :recognitum/check-failed (:error (err #(rec/seal (assoc d ::b 1))))))
+      (is (= 1 @source-calls))))
+  (testing "a recheck that runs it and passes remembers it"
+    (reset! on-file #{0 7})
+    (let [d (rec/draft (map->Filed {::a 0 ::b 1}))]
+      (is (true? (rec/recheck d ::a-known)))
+      (is (contains? (rec/proven-checks d) ::a-known)))))
 
-(deftest sealed?-distinguishes-the-two
-  (is (true?  (rec/sealed? job)))
-  (is (false? (rec/sealed? (rec/draft job))))
-  (is (false? (rec/sealed? {})))
-  (is (false? (rec/draft? job)))
-  (is (true?  (rec/draft? (rec/draft job)))))
-
-(deftest a-draft-made-outside-any-drafting-is-adopted
-  (is (instance? Heist (rec/drafting [x (rec/draft job)] (heist/rename x "S"))))
-  (testing "or can be sealed by hand"
-    (is (instance? Heist (rec/seal (heist/rename (rec/draft job) "S"))))))
-
-(deftest a-failed-drafting-returns-nothing-and-changes-nothing
-  (is (thrown? clojure.lang.ExceptionInfo
-               (rec/drafting [x job] (assoc x ::heist/take 9999))))
-  (is (= 3000 (::heist/take job)))
-  (is (= {:charlie 1000 :lyle 1000 :left-ear 1000} (::heist/cuts job))))
-
-;;; ------------------------------------ the seal contract ------------------------------------
-
-(defn- dep-value
-  "What a check of `Heist` gets for the dependency `d` against the sealed value `h`.
-
-  A field is read off the value; an io-dep is fetched here, by hand, rather than through
-  the library -- an oracle that reached into the library's own fetching would be asserting
-  that seal agrees with itself."
-  [h d]
-  (case d
-    ::heist/roster (house/fetch-roster (::heist/crew h))
-    ::heist/vetted (house/fetch-vetted (house/fetch-roster (::heist/crew h)))
-    (get h d)))
-
-(deftest whatever-seal-returns-passes-every-check
-  ;; The guarantee is not "seal ran the checks it selected" but "the result is valid as if
-  ;; every check had run". Assert the second directly: seal's key selection is the thing
-  ;; under test, so re-running everything is the only honest oracle. Each check is called
-  ;; here the way it declared it wanted to be -- its arglist, read off the model, is the
-  ;; whole of what it depends on, io-deps included.
-  (let [model     (internal/model-of job)
-        run       (fn [{:keys [deps pred]} h] (apply pred (map #(dep-value h %) deps)))
-        changeset (fn [i] {:op :add-member :who (keyword (str "m" i)) :cut (* 10 (inc i))})
-        history   (reductions (fn [h i] (rec/drafting [x h] (heist/apply-changeset x (changeset i))))
-                              job (range 25))]
-    (is (= 7 (count (:checks model))) "and every one of them is exercised")
-    (doseq [[i h] (map-indexed vector history)]
-      (is (instance? Heist h))
-      (doseq [c (:checks model)]
-        (is (true? (run c h)) (str "step " i ", check " (:name c)))))))
+(deftest a-recheck-that-loses-the-race-still-forgets-what-failed
+  (dotimes [_ 20]
+    (reset! on-file #{0 7})
+    (let [d (rec/draft (map->Filed {::a 0 ::b 1}))
+          entered (java.util.concurrent.CountDownLatch. 1)
+          release (java.util.concurrent.CountDownLatch. 1)]
+      (is (contains? (rec/proven-checks d) ::a-known))
+      (reset! on-file #{})
+      (reset! hold (fn [] (reset! hold nil) (.countDown entered) (.await release 10 java.util.concurrent.TimeUnit/SECONDS)))
+      (let [rechecking (future (rec/recheck d ::a-known))]
+        (is (.await entered 10 java.util.concurrent.TimeUnit/SECONDS) "the recheck has its no from the source")
+        (is (true? (rec/check d ::a)) "another run writes the memory meanwhile")
+        (.countDown release)
+        (is (= #{::a-known} (set (keys (:failed (deref rechecking 10000 nil))))))
+        (is (not (contains? (rec/proven-checks d) ::a-known))
+            "the losing recheck still forgets the check that failed")))))

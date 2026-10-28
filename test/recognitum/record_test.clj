@@ -1,420 +1,186 @@
 (ns recognitum.record-test
-  "The generated types against `clojure.core/defrecord`, operation by operation.
-
-  A `defrecord` over the same two fields is asked every map-surface operation alongside the
-  generated type. Where the answers agree the assertion is written once against both; where
-  this library departs on purpose the test says so in its name and pins each side
-  separately."
+  "Sealed values as maps: closed types, required fields, equality, meta, redefinition, and the
+  paths that cannot skip the checks."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [clojure.walk :as walk]
    [recognitum.core :as rec]
-   [recognitum.heist :as heist])
-  (:import
-   (java.io ByteArrayInputStream ByteArrayOutputStream ObjectInputStream ObjectOutputStream)
-   (java.util HashSet)
-   (recognitum.heist Heist)))
-
-;;; ----------------------------------- the two types -----------------------------------
-
-;; No checks, so every difference from the `defrecord` below is a difference of the map
-;; surface rather than of validation.
-(rec/defrecord Twin [alpha beta] {})
-
-;; The same two fields under another name: `defrecord` holds that the two are not equal and
-;; hash differently.
-(rec/defrecord Doppel [alpha beta] {})
-
-;; A type with checks, for the paths where a rebuild has to survive them.
-(rec/defrecord Ledger
-  [owner balance]
-  {:checks {::owner   string?
-            ::balance int?}})
-
-(clojure.core/defrecord PlainTwin [alpha beta])
-(clojure.core/defrecord PlainDoppel [alpha beta])
-
-;; A pair that implements `clojure.lang.IFn` itself, at the two arities a map would answer.
-;; Neither supplies `applyTo` or any other arity.
-(rec/defrecord Tally
-  [total]
-  {}
-  clojure.lang.IFn
-  (invoke [t x] [:one x (::total t)])
-  (invoke [t x y] [:two x y (::total t)]))
-
-(clojure.core/defrecord PlainTally [total]
-  clojure.lang.IFn
-  (invoke [t x] [:one x (:total t)])
-  (invoke [t x y] [:two x y (:total t)]))
-
-(def ^:private ours   (->Twin 1 2))
-(def ^:private theirs (->PlainTwin 1 2))
-
-(defn- bare
-  "`m` with the defining namespace dropped from its keys, which is how the `defrecord`
-  spells them. Qualified keys are pinned in `recognitum.qualified-keys-test`."
-  [m]
-  (into {} (map (fn [[k v]] [(keyword (name k)) v])) m))
-
-(defn- round-trip
-  "`x` through Java serialization and back."
-  [x]
-  (let [bos (ByteArrayOutputStream.)]
-    (with-open [o (ObjectOutputStream. bos)] (.writeObject o x))
-    (with-open [i (ObjectInputStream. (ByteArrayInputStream. (.toByteArray bos)))]
-      (.readObject i))))
+   [recognitum.proof :as proof]
+   [recognitum.proof.key-class :as key-class]))
 
 (defn- err [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-(defn- threw [f]
-  (try (f) nil (catch Throwable t (class t))))
+(rec/defproven Pair [a ^:optional b ^:optional c]
+  rec/checks
+  (a [] (int? a))
+  (b [] (int? b))
+  (c [] (int? c))
+  (b-not-below-a [a b] (rec/when-extant b (>= b a)))
+  (c-needs-b [] (or (not (rec/extant? c)) (rec/extant? b))))
 
-;;; ============================== the surface both share ==============================
+(def v (map->Pair {::a 0}))
 
-(deftest reading-answers-what-a-defrecord-answers
-  (testing "get, by key and by the keyword itself"
-    (is (= (get theirs :alpha) (get ours ::alpha) 1))
-    (is (= (:alpha theirs) (::alpha ours) 1))
-    (is (= (get theirs :nope) (get ours ::nope) nil))
-    (is (= (get theirs :nope :fallback) (get ours ::nope :fallback) :fallback))
-    (testing "and a declared field never reaches the default"
-      (is (= (get theirs :alpha :fallback) (get ours ::alpha :fallback) 1))
-      (is (= (get (->PlainTwin nil 2) :alpha :fallback)
-             (get (->Twin nil 2) ::alpha :fallback)
-             nil))))
-  (testing "destructuring"
-    (is (= (let [{:keys [alpha beta]} theirs] [alpha beta])
-           (let [{::keys [alpha beta]} ours] [alpha beta])
-           [1 2]))
-    (is (= (let [{:keys [gamma] :or {gamma :d}} theirs] gamma)
-           (let [{::keys [gamma] :or {gamma :d}} ours] gamma)
-           :d)))
-  (testing "keys, vals, count, seq"
-    (is (= (keys theirs) (map (comp keyword name) (keys ours)) '(:alpha :beta)))
-    (is (= (vals theirs) (vals ours) '(1 2)))
-    (is (= (count theirs) (count ours) 2))
-    (is (= (mapv (fn [e] [(key e) (val e)]) (seq theirs))
-           (mapv (fn [e] [(keyword (name (key e))) (val e)]) (seq ours))
-           [[:alpha 1] [:beta 2]])))
-  (testing "contains? and find"
-    (is (= (contains? theirs :alpha) (contains? ours ::alpha) true))
-    (is (= (contains? theirs :nope) (contains? ours ::nope) false))
-    (is (= (contains? (->PlainTwin nil 2) :alpha) (contains? (->Twin nil 2) ::alpha) true)
-        "a declared field is present whatever it holds")
-    (is (= (val (find theirs :alpha)) (val (find ours ::alpha)) 1))
-    (is (= (find theirs :nope) (find ours ::nope) nil))
-    (testing "and an entry is a real IMapEntry, which is what clojure.walk descends into"
-      (is (instance? clojure.lang.IMapEntry (find theirs :alpha)))
-      (is (instance? clojure.lang.IMapEntry (find ours ::alpha)))
-      (is (instance? clojure.lang.IMapEntry (first (seq ours))))))
-  (testing "into {}"
-    (is (= (into {} theirs) (bare (into {} ours)) {:alpha 1 :beta 2}))))
+(deftest a-value-reads-and-compares-as-a-map
+  (is (= {::a 0} v))
+  (is (= v {::a 0}))
+  (is (= (hash {::a 0}) (hash v)))
+  (is (= #{::a} (set (keys v))))
+  (is (nil? (::b v))))
 
-(deftest writing-a-declared-field-answers-what-a-defrecord-answers
-  (is (= (class theirs) (class (assoc theirs :alpha 9))))
-  (is (= (class ours) (class (assoc ours ::alpha 9))))
-  (is (= (into {} (assoc theirs :alpha 9)) (bare (into {} (assoc ours ::alpha 9)))))
-  (testing "and conj of an entry is the same write"
-    (is (= (assoc theirs :alpha 9) (conj theirs [:alpha 9])))
-    (is (= (assoc ours ::alpha 9) (conj ours [::alpha 9])))))
+(deftest writes-are-checked-as-one-write-in-any-order
+  (is (instance? Pair (merge v {::c 0 ::b 1})))
+  (is (instance? Pair (into v {::c 0 ::b 1})))
+  (is (instance? Pair (conj v [::b 1])))
+  (is (= :recognitum/check-failed (:error (err #(assoc v ::c 1)))) "c needs b")
+  (is (= :recognitum/check-failed (:error (err #(dissoc v ::a)))) "a is required")
+  (is (identical? v (assoc v ::a 0)) "a write that changes nothing returns the value")
+  (is (identical? v (dissoc v ::z))))
 
-(deftest a-value-is-a-map-to-java-as-a-defrecord-is
-  (doseq [[what x k] [["defrecord" theirs :alpha] ["ours" ours ::alpha]]]
-    (testing what
-      (is (instance? java.util.Map x))
-      (is (map? x))
-      (is (= 2 (.size x)))
-      (is (false? (.isEmpty x)))
-      (is (= 1 (.get x k)))
-      (is (true? (.containsKey x k)))
-      (is (= [1 2] (vec (.values x))))
-      (is (= #{:alpha :beta} (set (map (comp keyword name) (.keySet x)))))
-      (is (= #{[:alpha 1] [:beta 2]}
-             (set (map (fn [e] [(keyword (name (key e))) (val e)]) (.entrySet x)))))
-      (is (= [[:alpha 1] [:beta 2]]
-             (mapv (fn [e] [(keyword (name (key e))) (val e)]) (iterator-seq (.iterator x)))))
-      (testing "and the mutators refuse, as an immutable map's do"
-        (is (= UnsupportedOperationException (threw #(.put x :z 1))))
-        (is (= UnsupportedOperationException (threw #(.remove x k))))
-        (is (= UnsupportedOperationException (threw #(.clear x))))))))
+(deftest a-type-is-closed
+  (is (= :recognitum/undeclared-keys (:error (err #(map->Pair {::a 0 ::z 1})))))
+  (is (= :recognitum/undeclared-keys (:error (err #(assoc v ::z 1))))))
 
-(deftest equals-and-hashcode-match-a-defrecords-map-contract
-  ;; `emit-defrecord` leaves `Object.equals` and `Object.hashCode` to
-  ;; `APersistentMap/mapEquals` and `APersistentMap/mapHash`, both class-blind: at the Java
-  ;; level a record is a bare map with the same entries, and hashes as one.
-  (doseq [[what x m] [["defrecord" theirs {:alpha 1 :beta 2}]
-                      ["ours"      ours   {::alpha 1 ::beta 2}]]]
-    (testing what
-      (is (true? (.equals x m)) "true to a bare map with the same entries")
-      (is (true? (.equals m x)) "and true from the map's side, so it is symmetric")
-      (is (= (.hashCode x) (.hashCode m)) "and hashes as that map does")
-      (is (true? (.contains (HashSet. [m]) x))
-          "so a Java hash collection holding the map finds the value in it")))
-  (testing "and two unrelated types with the same entries are equal at the Java level"
-    (is (true? (.equals theirs (->PlainDoppel 1 2))))
-    (is (true? (.equals ours (->Doppel 1 2)))))
-  (testing "while = and hash stay type-aware, which is where equiv and hasheq live"
-    (is (false? (= ours {::alpha 1 ::beta 2})))
-    (is (false? (= {::alpha 1 ::beta 2} ours)))
-    (is (false? (= ours (->Doppel 1 2))))
-    (is (not= (hash ours) (hash (into {} ours))))
-    (is (false? (.equiv ours {::alpha 1 ::beta 2})))
-    (is (false? (.equiv ours (->Doppel 1 2))))
-    (is (true? (.equiv ours (->Twin 1 2))))
-    (testing "as a defrecord's do"
-      (is (false? (= theirs {:alpha 1 :beta 2})))
-      (is (false? (= theirs (->PlainDoppel 1 2))))
-      (is (not= (hash theirs) (hash (into {} theirs))))
-      (is (false? (.equiv theirs {:alpha 1 :beta 2})))
-      (is (false? (.equiv theirs (->PlainDoppel 1 2))))
-      (is (true? (.equiv theirs (->PlainTwin 1 2)))))))
+(rec/defproven Unread [a b]
+  rec/checks
+  (a [] (int? a)))
 
-(deftest a-value-is-not-callable-as-a-defrecords-is-not
-  ;; A call site casts to `clojure.lang.IFn`, and a type that does not declare it fails the
-  ;; cast rather than looking the argument up as a key.
-  (doseq [[what x k] [["defrecord" theirs :alpha] ["sealed" ours ::alpha]
-                      ["draft" (rec/draft ours) ::alpha]]]
-    (testing what
-      (is (false? (ifn? x)))
-      (is (= ClassCastException (threw #(x k))))
-      (is (= ClassCastException (threw #(x k :fallback)))))))
+(deftest a-required-field-no-check-reads-must-still-be-present
+  (is (instance? Unread (map->Unread {::a 1 ::b nil})))
+  (is (= {:error :recognitum/missing-fields :keys #{::b}}
+         (select-keys (err #(map->Unread {::a 1})) [:error :keys]))))
 
-(deftest a-definition-implementing-ifn-installs-as-it-does-on-a-defrecord
-  (let [mine (->Tally 10)]
-    (doseq [[what x] [["defrecord" (->PlainTally 10)] ["sealed" mine] ["draft" (rec/draft mine)]]]
-      (testing what
-        (is (true? (ifn? x)))
-        (is (= [:one :a 10] (x :a)))
-        (is (= [:two :a :b 10] (x :a :b)))
-        (testing "and an arity the definition left out is missing, not inherited"
-          (is (= AbstractMethodError (threw #(x :a :b :c))))
-          (is (= AbstractMethodError (threw #(apply x [:a])))))))))
+(deftest meta-travels-with-the-value
+  (let [m (with-meta v {:source :test})]
+    (is (instance? Pair m))
+    (is (= {:source :test} (meta m)))
+    (is (= {:source :test} (meta (assoc m ::b 3))))))
 
-;;; ======================= equality, hash, record?, empty, Serializable =======================
+(deftest the-installed-write-needs-a-value-to-start-from
+  (let [gate (proof/installed key-class/strategy Pair)]
+    (is (thrown? IllegalArgumentException (gate nil {::a 1})))
+    (is (thrown? IllegalArgumentException (gate {::a 0 ::b 5} {::a 0 ::b 5 ::c 9})))
+    (is (instance? Pair (gate v {::a 0 ::b 1})) "from a value, it is the checked write")))
 
-(deftest a-bare-map-with-the-right-keys-is-not-a-value-of-the-type
-  ;; Both directions: `APersistentMap.equiv` refuses any `IPersistentMap` that does not
-  ;; carry `clojure.lang.MapEquivalence`, so the answer from the map's side rests on the
-  ;; absence of that marker.
-  (let [m {::alpha 1 ::beta 2}]
-    (is (= m (into {} ours)) "the same entries, exactly")
-    (is (false? (= ours m)))
-    (is (false? (= m ours)))
-    (testing "which is what a defrecord answers for the same question"
-      (is (false? (= theirs {:alpha 1 :beta 2})))
-      (is (false? (= {:alpha 1 :beta 2} theirs)))))
-  (testing "and a draft is no more a map than a sealed value is"
-    (is (false? (= (rec/draft ours) {::alpha 1 ::beta 2})))
-    (is (false? (= {::alpha 1 ::beta 2} (rec/draft ours))))))
+(deftest redefining-a-type-unproves-its-old-values
+  (let [ns' (create-ns 'recognitum.record-test.redefined)
+        define #(binding [*ns* ns'] (refer-clojure) (eval '(recognitum.core/defproven R [a] recognitum.core/checks (a [] (int? a)))))
+        _ (define)
+        old ((ns-resolve ns' 'map->R) {:recognitum.record-test.redefined/a 1})]
+    (is (rec/sealed? old))
+    (define)
+    (is (not (rec/sealed? old)))
+    (is (not (rec/proves? old rec/every)))
+    (is (rec/sealed? ((ns-resolve ns' 'map->R) {:recognitum.record-test.redefined/a 1})))))
 
-(deftest two-unrelated-types-with-the-same-fields-are-not-equal
-  ;; Twin and Doppel are declared in one namespace, so their field keys are the same
-  ;; keywords and their entries are indistinguishable; the class is the whole of the
-  ;; difference.
-  (let [d (->Doppel 1 2)]
-    (is (= (into {} ours) (into {} d)) "the same entries, exactly")
-    (is (false? (= ours d)))
-    (is (false? (= d ours)))
-    (is (false? (= (rec/draft ours) (rec/draft d))))
-    (testing "which is what a defrecord answers for the same question"
-      (is (false? (= theirs (->PlainDoppel 1 2))))
-      (is (false? (= (->PlainDoppel 1 2) theirs)))))
-  (testing "and a draft is not the value it was opened from"
-    (is (false? (= ours (rec/draft ours))))
-    (is (false? (= (rec/draft ours) ours))))
-  (testing "while equal data of the same class is still equal"
-    (is (= ours (->Twin 1 2)))
-    (is (= (rec/draft ours) (rec/draft ours)))
-    (is (= theirs (->PlainTwin 1 2)))))
+(defn- redefinable
+  "A namespace of its own and a fn that evaluates `(defproven R [a] ...)` in it, returning R."
+  [ns-sym]
+  (let [ns' (create-ns ns-sym)]
+    (binding [*ns* ns'] (refer-clojure))
+    [ns' #(binding [*ns* ns'] (eval '(recognitum.core/defproven R [a] recognitum.core/checks (a [] (int? a)))))]))
 
-(deftest hash-is-type-aware
-  ;; `=` and `hash` have to agree, or the value is broken as a key.
-  (is (= (hash ours) (hash (->Twin 1 2))))
-  (is (not= (hash ours) (hash (into {} ours))))
-  (is (not= (hash ours) (hash (->Doppel 1 2))))
-  (is (not= (hash ours) (hash (rec/draft ours))))
-  (testing "which is what a defrecord answers for the same question"
-    (is (= (hash theirs) (hash (->PlainTwin 1 2))))
-    (is (not= (hash theirs) (hash (into {} theirs))))
-    (is (not= (hash theirs) (hash (->PlainDoppel 1 2)))))
-  (testing "so a value works as a key, and a look-alike map does not find it"
-    (is (= 2 (count #{ours {::alpha 1 ::beta 2}})))
-    (is (= 3 (count #{ours (->Doppel 1 2) (rec/draft ours)})))
-    (is (contains? #{ours} (->Twin 1 2)))
-    (is (false? (contains? #{ours} {::alpha 1 ::beta 2})))
-    (is (= :v (get {ours :v} (->Twin 1 2))))
-    (is (nil? (get {ours :v} {::alpha 1 ::beta 2}))))
-  (testing "and the hash is the same number in the next JVM as in this one"
-    (is (= (hash ours) (hash (round-trip ours)))
-        "mixed in by class name rather than by Class identity")))
+(deftest a-displaced-value-reseals-as-the-current-definition-and-prints
+  (let [[ns' define] (redefinable 'recognitum.record-test.displaced)
+        k :recognitum.record-test.displaced/a
+        old-class (define)
+        old (with-meta ((ns-resolve ns' 'map->R) {k 1}) {:from :old})
+        new-class (define)]
+    (is (not (rec/sealed? old)))
+    (is (not (rec/proves? old rec/every)))
+    (testing "draft then seal gives a value of the current definition, with the old value's meta"
+      (let [d (rec/draft old)]
+        (is (= #{} (rec/proven-checks d)) "the current definition's checks have not run on it")
+        (let [v' (rec/seal d)]
+          (is (instance? new-class v'))
+          (is (rec/sealed? v'))
+          (is (= {k 1} v'))
+          (is (= {:from :old} (meta v'))))))
+    (testing "it prints as its tagged literal, and the printer's table keeps no entry for any type's class"
+      (is (= "#recognitum.record-test.displaced/R #:recognitum.record-test.displaced{:a 1}" (str old) (pr-str old)))
+      (is (nil? (get (methods print-method) old-class)))
+      (is (nil? (get (methods print-method) new-class))))
+    (testing "the readers name the current definition"
+      (is (instance? new-class ((get (rec/data-readers) 'recognitum.record-test.displaced/R) {k 2}))))))
 
-(deftest a-value-is-a-record
-  ;; `IRecord` is what `clojure.walk` asks for.
-  (is (true? (record? ours)))
-  (is (true? (record? (rec/draft ours))))
-  (is (true? (record? theirs)))
-  (is (instance? clojure.lang.IRecord ours))
-  (testing "and is not a MapEquivalence, which is the same claim from the other side"
-    (is (false? (instance? clojure.lang.MapEquivalence ours)))
-    (is (false? (instance? clojure.lang.MapEquivalence (rec/draft ours))))
-    (is (false? (instance? clojure.lang.MapEquivalence theirs)))))
+(deftest readers-held-across-a-redefinition-refuse-and-say-to-read-again
+  (let [[_ define] (redefinable 'recognitum.record-test.held-readers)
+        k :recognitum.record-test.held-readers/a
+        tname 'recognitum.record-test.held-readers/R
+        _ (define)
+        held (get (rec/data-readers) tname)
+        _ (define)]
+    (is (= [(str tname " was redefined: this constructor is of an earlier definition and makes nothing."
+                 " Read again with the current readers: (rec/data-readers)")
+            {:error :recognitum/displaced-constructor :type tname}]
+           (try (held {k 1}) nil
+                (catch clojure.lang.ExceptionInfo e [(ex-message e) (ex-data e)]))))
+    (is (rec/sealed? ((get (rec/data-readers) tname) {k 1})) "read again, the readers seal")))
 
-(deftest there-is-no-empty-value-of-the-type
-  ;; The fields are the type, so a value without them is not one.
-  (is (= UnsupportedOperationException (threw #(empty ours))))
-  (is (= UnsupportedOperationException (threw #(empty (rec/draft ours)))))
-  (is (= UnsupportedOperationException (threw #(empty theirs)))))
+(deftest a-draft-of-a-displaced-class-refuses-to-seal
+  (let [[ns' define] (redefinable 'recognitum.record-test.held-class)
+        k :recognitum.record-test.held-class/a
+        tname 'recognitum.record-test.held-class/R
+        old-class (define)
+        opened-before (into (rec/draft old-class) {k 1})
+        new-class (define)
+        refusal (fn [d] (try (rec/seal d) nil
+                             (catch clojure.lang.ExceptionInfo e [(ex-message e) (ex-data e)])))
+        want [(str tname " was redefined: this draft is of an earlier definition and seals nothing."
+                   " Make a value of the current definition with recognitum.record-test.held-class/map->R,"
+                   " or seal a draft of the class recognitum.record-test.held-class now names R:"
+                   " (rec/seal (into (rec/draft R) m))")
+              {:error :recognitum/displaced-constructor :type tname}]]
+    (is (= want (refusal (into (rec/draft old-class) {k 1}))) "a draft opened from the held class")
+    (is (= want (refusal opened-before)) "a draft opened before the redefinition")
+    (is (= want (refusal (into (rec/draft old-class) {k :not-an-int}))) "refused before any check runs")
+    (testing "the remedies seal"
+      (is (rec/sealed? ((ns-resolve ns' 'map->R) {k 1})))
+      (is (instance? new-class (rec/seal (into (rec/draft new-class) {k 1})))))))
 
-(deftest a-value-serializes
-  (is (instance? java.io.Serializable ours))
-  (is (instance? java.io.Serializable (rec/draft ours)))
-  (is (instance? java.io.Serializable theirs))
-  (testing "and comes back as itself"
-    (let [back (round-trip ours)]
-      (is (= (class ours) (class back)))
-      (is (= ours back))
-      (is (rec/sealed? back))
-      (is (rec/of-type? Twin back)))
-    (let [back (round-trip theirs)]
-      (is (= (class theirs) (class back)))
-      (is (= theirs back))))
-  (testing "a draft too, still a draft of its type"
-    (let [d    (rec/draft (->Ledger "zoe" 1))
-          back (round-trip d)]
-      (is (rec/draft? back))
-      (is (rec/of-type? Ledger back))
-      (is (= d back))
-      (is (= (rec/passed d) (rec/passed back))
-          "the record of which checks pass is a field, so it comes back too"))))
+(deftest a-value-prints-as-its-tagged-literal
+  (is (= "#recognitum.record-test/Pair #:recognitum.record-test{:a 0}" (pr-str v))))
 
-;;; ==================================== clojure.walk ====================================
+(rec/defproven Wide [f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f21 f22]
+  rec/checks
+  (f22 [] (int? f22)))
 
-(deftest postwalk-hands-back-the-value-rather-than-a-plain-map
-  ;; Without `IRecord`, `clojure.walk/walk` falls through to `(into (empty form) ...)`, and
-  ;; `empty` refuses; with it, `walk` never asks for `empty`.
-  (doseq [[what x] [["a sealed value" ours]
-                    ["a draft"        (rec/draft ours)]
-                    ["a checked type" (->Ledger "zoe" 10)]]]
-    (testing what
-      (let [back (walk/postwalk identity x)]
-        (is (= (class x) (class back)))
-        (is (= x back)))))
-  (testing "which is what a defrecord does"
-    (is (= (class theirs) (class (walk/postwalk identity theirs)))))
-  (testing "nested inside something else"
-    (is (= (class ours) (class (::v (walk/postwalk identity {::v ours}))))))
-  (testing "and prewalk the same way"
-    (is (= (class ours) (class (walk/prewalk identity ours)))))
-  (testing "editing a field rebuilds the value, not a map of it"
-    (let [back (walk/postwalk #(if (= % 10) 25 %) (->Ledger "zoe" 10))]
-      (is (rec/of-type? Ledger back))
-      (is (= 25 (::balance back))))
-    (is (= (->PlainTwin 9 2) (walk/postwalk #(if (= % 1) 9 %) theirs))))
-  (testing "and an edit the checks refuse is refused, because a rebuild is a write"
-    (is (= ::rec/check-failed
-           (:error (err #(walk/postwalk (fn [x] (if (= x 10) :free x)) (->Ledger "zoe" 10))))))))
+(deftest the-positional-constructor-takes-more-than-twenty-fields
+  (is (instance? Wide (apply ->Wide (range 22))))
+  (is (thrown? clojure.lang.ArityException (apply ->Wide (range 21)))))
 
-(deftest postwalk-on-an-io-limited-value-refuses-rather-than-degrades
-  ;; `clojure.walk` rebuilds a record by `conj`-ing its entries back one at a time, so on
-  ;; an `:io-limited` type every field an external validation reads is written directly on
-  ;; a sealed value, and the option refuses that.
-  (is (= ::rec/io-limited (:error (err #(walk/postwalk identity heist/italian-job)))))
-  (testing "and the draft, which the option says nothing about, walks"
-    (let [d (rec/draft heist/italian-job)]
-      (is (rec/of-type? Heist (walk/postwalk identity d)))
-      (is (= d (walk/postwalk identity d))))))
+(deftest naming-a-shape-check-in-a-wait-changes-nothing
+  (let [ns' (create-ns 'recognitum.record-test.waits)
+        define (fn [waits]
+                 (binding [*ns* ns'] (refer-clojure)
+                   (eval `(recognitum.core/defproven ~'W [~'a]
+                            recognitum.core/checks
+                            (~'a [] (~'int? ~'a))
+                            (~'positive ~waits (~'pos? ~'a))))))
+        failed (fn [W] (try ((ns-resolve ns' 'map->W) {:recognitum.record-test.waits/a "x"}) nil
+                            (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+    (define [])
+    (let [unnamed (failed nil)]
+      (define '[a])
+      (is (= unnamed (failed nil)))
+      (is (= #{:recognitum.record-test.waits/positive} (:blocked unnamed))))))
 
-;;; ======================= where ours departs from defrecord =======================
+(defn- refusal [form]
+  (try (binding [*ns* (the-ns 'recognitum.record-test)] (eval form))
+       nil
+       (catch clojure.lang.Compiler$CompilerException e (ex-data (ex-cause e)))))
 
-(deftest ours-departs-dissoc-of-a-declared-field-writes-nil-where-a-defrecord-drops-to-a-map
-  ;; A declared field is always present, so there is nothing to take off; what dissoc does
-  ;; is the write that spells absence, and the value keeps its type.
-  (is (= {:beta 2} (dissoc theirs :alpha)))
-  (is (= clojure.lang.PersistentArrayMap (class (dissoc theirs :alpha))))
-  (is (false? (contains? (dissoc theirs :alpha) :alpha)))
-  (let [x (dissoc ours ::alpha)]
-    (is (= (class ours) (class x)))
-    (is (rec/sealed? x))
-    (is (nil? (::alpha x)))
-    (is (true? (contains? x ::alpha)) "as it is for a field nobody wrote")
-    (is (= 2 (count x)))
-    (is (= (assoc ours ::alpha nil) x)))
-  (testing "and a draft answers the same way"
-    (let [d (dissoc (rec/draft ours) ::alpha)]
-      (is (rec/draft? d))
-      (is (nil? (::alpha d)))
-      (is (true? (contains? d ::alpha)))))
-  (testing "an undeclared key dissocs the same way on both"
-    (is (= theirs (dissoc theirs :nope)))
-    (is (= ours (dissoc ours ::nope)))))
-
-(deftest ours-departs-an-undeclared-key-is-refused-on-a-sealed-value
-  ;; A draft accepts any key, and sealing is where what is left over is rejected.
-  (is (= {:alpha 1 :beta 2 :gamma 3} (into {} (assoc theirs :gamma 3))))
-  (is (= (class theirs) (class (assoc theirs :gamma 3))))
-  (is (= ::rec/unknown-field (:error (err #(assoc ours ::gamma 3)))))
-  (testing "while a draft takes it, and sealing is where it is refused"
-    (let [d (assoc (rec/draft ours) ::gamma 3)]
-      (is (= 3 (::gamma d)))
-      (is (= ::rec/extraneous-keys (:error (err #(rec/seal d))))))))
-
-(deftest ours-departs-meta-carries-the-librarys-keys-over-the-callers
-  ;; A fresh defrecord has no metadata; ours always answers with what the value can show
-  ;; for itself, in both forms.
-  (is (nil? (meta theirs)))
-  (is (= #{::rec/passed ::rec/certificates} (set (keys (meta ours)))))
-  (testing "and otherwise with-meta behaves the same on both"
-    (is (= {:src :test} (meta (with-meta theirs {:src :test}))))
-    (is (= :test (:src (meta (with-meta ours {:src :test})))))
-    (is (= (class ours) (class (with-meta ours {:src :test}))))
-    (testing "taking no part in equality or hash"
-      (is (= theirs (with-meta theirs {:src :test})))
-      (is (= ours (with-meta ours {:src :test})))
-      (is (= (hash ours) (hash (with-meta ours {:src :test})))))))
-
-;;; ======================= the same treatment for both types =======================
-
-(deftest str-is-the-identity-string-as-a-defrecords-is
-  ;; A record overrides no `toString`, so `str` of one is `Object`'s: class name, `@`, hex
-  ;; identity hash. `str` is what concatenation and logging call, so the entries form would
-  ;; dump a whole collection field into every log line; the identity string is bounded, and
-  ;; the readable form is `pr-str`.
-  (let [marker "tostring-marker"
-        mine   (->Twin marker 2)
-        twin   (->PlainTwin marker 2)]
-    (doseq [[what x] [["the defrecord" twin] ["sealed" mine] ["draft" (rec/draft mine)]]]
-      (testing what
-        (let [s (str x)]
-          (is (re-matches (re-pattern (str "\\Q" (.getName (class x)) "\\E@[0-9a-f]+")) s))
-          (testing "carrying no field value, no key and no print tag"
-            (is (false? (.contains s marker)))
-            (is (false? (.contains s "alpha")))
-            (is (false? (.contains s "#")))
-            (is (false? (.contains s "{"))))
-          (testing "and concatenation, which calls it implicitly, says exactly that"
-            (is (= (str "got " s) (str "got " x)))))))
-    (testing "while what pr-str answers is untouched"
-      (is (re-find #"^#recognitum\.record-test/Twin\{" (pr-str mine)))
-      (is (.contains (pr-str mine) marker))
-      (is (.startsWith (pr-str (rec/draft mine)) "#<Twin draft ")))))
-
-(deftest the-draft-type-is-the-sealed-type-in-everything-but-the-recorded-departures
-  (let [d (rec/draft ours)]
-    (doseq [[what x] [["sealed" ours] ["draft" d]]]
-      (testing what
-        (is (record? x))
-        (is (map? x))
-        (is (instance? java.io.Serializable x))
-        (is (false? (instance? clojure.lang.MapEquivalence x)))
-        (is (= UnsupportedOperationException (threw #(empty x))))
-        (is (false? (= x {::alpha 1 ::beta 2})))
-        (is (false? (= {::alpha 1 ::beta 2} x)))
-        (is (= 2 (count x)))
-        (is (= 1 (::alpha x)))
-        (is (= (class x) (class (walk/postwalk identity x))))))
-    (testing "and the two are not each other"
-      (is (not= (class ours) (class d)))
-      (is (false? (= ours d)))
-      (is (not= (hash ours) (hash d))))))
+(deftest shape-checks-that-read-each-other-form-a-cycle
+  (let [e (refusal '(recognitum.core/defproven Loop [a b]
+                      recognitum.core/checks
+                      (a [] (int? b))
+                      (b [] (int? a))))]
+    (is (= :recognitum/refused (:error e)))
+    (is (= (str "the waits form a cycle: :recognitum.record-test/a -> :recognitum.record-test/b"
+                " -> :recognitum.record-test/a (a check waits on the shape checks of the fields it reads)")
+           (:message e))))
+  (testing "a cycle of named waits alone says nothing of reads"
+    (is (= "the waits form a cycle: :recognitum.record-test/p -> :recognitum.record-test/q -> :recognitum.record-test/p"
+           (:message (refusal '(recognitum.core/defproven Loop2 [a]
+                                 recognitum.core/checks
+                                 (p [q] true)
+                                 (q [p] true))))))))

@@ -1,0 +1,54 @@
+{;; module -> the modules it may depend on, among this project's namespaces.
+ ;; A dependency is a require, a qualified symbol naming one of the module's vars (quoted or
+ ;; syntax-quoted forms included), or an import of a class the module defines.
+ :layers {;; the proof
+          recognitum.proof           #{}
+          recognitum.proof.key-class #{recognitum.proof}
+          ;; the check engine
+          recognitum.engine.runtime  #{}
+          recognitum.engine.rewrite  #{recognitum.engine.runtime}
+          recognitum.engine          #{recognitum.engine.rewrite recognitum.engine.runtime}
+          ;; the record layer: it names neither a proof strategy nor an engine
+          recognitum.select          #{}
+          recognitum.body            #{}
+          recognitum.record          #{recognitum.proof recognitum.select}
+          recognitum.define          #{recognitum.body recognitum.record recognitum.select}}
+
+ ;; the only module that may name a concrete proof strategy or engine: it wires the record
+ ;; layer to the engine and the key-class strategy, and is the library's public API
+ :wiring #{recognitum.core}
+
+ ;; code that uses the library: the examples and the tests. Each may depend on the wiring
+ ;; module where listed; a test of one layer depends on that layer.
+ :users {recognitum.house                           #{}
+         recognitum.heist                           #{recognitum.core recognitum.house}
+         recognitum.demo                            #{recognitum.core recognitum.heist recognitum.house}
+         recognitum.show                            #{}
+         recognitum.permissions                     #{}
+         recognitum.authz                           #{recognitum.core recognitum.permissions recognitum.show}
+         recognitum.orders                          #{recognitum.core recognitum.show}
+         recognitum.example.db                      #{}
+         recognitum.example.perms                   #{recognitum.core recognitum.example.db}
+         recognitum.example.card                    #{recognitum.core recognitum.example.db recognitum.example.perms}
+
+         recognitum.body-test                       #{recognitum.core}
+         recognitum.bundle-test                     #{recognitum.core recognitum.example.card recognitum.example.db
+                                                      recognitum.example.perms}
+         ;; counts the engine's runs by redefining recognitum.engine/run-all
+         recognitum.check-test                      #{recognitum.core recognitum.engine recognitum.example.card
+                                                      recognitum.example.db recognitum.example.perms recognitum.heist}
+         recognitum.corpus-test                     #{}
+         ;; forges a recognitum.record.Draft to show that seal refuses it
+         recognitum.draft-test                      #{recognitum.core recognitum.heist recognitum.house recognitum.record}
+         recognitum.engine-test                     #{recognitum.engine}
+         recognitum.heist-test                      #{recognitum.core recognitum.heist recognitum.house}
+         ;; asks the key-class strategy whether a type's checked write is installed
+         recognitum.record-test                     #{recognitum.core recognitum.proof recognitum.proof.key-class}
+         recognitum.key-class-test                  #{recognitum.proof recognitum.proof.key-class}
+         recognitum.protocol-test                   #{recognitum.core}
+         recognitum.layers-test                     #{}
+         recognitum.walkthrough-test                #{recognitum.authz recognitum.demo recognitum.orders}}
+
+ ;; dependencies the design forbids that the code still has, each to be removed from the code;
+ ;; the check fails on any other violation, and on an entry here the code no longer has
+ :to-fix {}}

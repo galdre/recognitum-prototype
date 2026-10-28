@@ -1,0 +1,27 @@
+{:hooks {:analyze-call {recognitum.core/defproven    hooks.recognitum/defproven
+                        recognitum.core/defchecks    hooks.recognitum/defchecks
+                        recognitum.core/defcopy      hooks.recognitum/defcopy
+                        recognitum.core/defconcern   hooks.recognitum/defconcern
+                        recognitum.core/fetch        hooks.recognitum/body-read
+                        recognitum.core/fetch-each   hooks.recognitum/body-read
+                        recognitum.core/extant?      hooks.recognitum/body-read
+                        recognitum.core/when-extant  hooks.recognitum/body-read}}
+ :linters {:recognitum/read-outside-body    {:level :error}
+           :recognitum/fetch-in-fn          {:level :error}
+           :recognitum/fetch-in-locking     {:level :error}
+           :recognitum/fetch-as-value       {:level :error}
+           :recognitum/engine-read-form     {:level :error}
+           :recognitum/extant-on-required   {:level :warning}
+           :recognitum/unknown-input        {:level :error}
+           :recognitum/missing-input        {:level :error}
+           :recognitum/override-unbound     {:level :error}
+           :recognitum/not-a-concern        {:level :error}
+           :recognitum/copy-form            {:level :error}
+           :recognitum/copy-incomplete      {:level :error}
+           :recognitum/copy-duplicate       {:level :error}
+           :recognitum/copy-unknown-check   {:level :error}
+           :recognitum/unknown-wait         {:level :error}
+           :recognitum/when-extant-field    {:level :error}
+           :recognitum/bound-twice          {:level :error}
+           :recognitum/wait-cycle           {:level :error}
+           :recognitum/checks-after-protocol {:level :error}}}

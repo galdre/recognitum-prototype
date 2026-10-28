@@ -1,382 +1,165 @@
 (ns recognitum.check-test
-  "Running one named check against a draft.
-
-  `check` returns `true` or a report of the checks that failed, keyed by check name;
-  `check!` throws that same report. Neither returns a draft: each result is written into the
-  draft's record of which checks pass. A check already recorded as passing does not run
-  again, and a write clears the checks reading the field written. A check not named after
-  a field waits on the shape validations of the fields it names, and where one of those
-  fails the check asked about does not run and has no entry of its own. A field never written reads as
-  `nil`. Checking is not sealing: an undeclared key, or an unwritten field elsewhere, does
-  not stop the check in hand."
+  "Selections, check-all across types, and what proves? asks."
   (:require
    [clojure.test :refer [deftest is testing]]
    [recognitum.core :as rec]
-   [recognitum.reports :refer [returned]]))
+   [recognitum.engine :as engine]
+   [recognitum.example.card :as card]
+   [recognitum.example.db :as db]
+   [recognitum.example.perms :as perms]
+   [recognitum.heist :as h])
+  (:import
+   (recognitum.example.card Card Dashboard)
+   (recognitum.heist Heist)))
 
-(defn- err
-  "The ex-data of the ExceptionInfo `f` throws, or nil if it throws nothing. Anything that
-  is not an ExceptionInfo propagates, which is the point where a check body throws."
-  [f]
-  (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
+(def row {::card/id 1 ::card/name "Plan" ::card/collection-id 1 ::card/archived false
+          ::card/acting-user "ann"})
 
-;;; ---------------------------------------- types ----------------------------------------
+(def board {::card/id 7 ::card/title "Board" ::card/collection-id 2 ::card/acting-user "cy"})
 
-;; `a` and `b` are each named by a check of their own and together by a third; `c` is named
-;; by no check at all; `::always` names no field, so it can run against an empty draft.
-(rec/defrecord Ledger
-  [a b c]
-  {:checks
-   {::a      int?
-    ::b      ([b] (string? b))
-    ::a-fits ("a fits inside b" [a b] (and (int? a) (string? b) (< a (count b))))
-    ::always ([] true)}
-   :certificates {::shape #{::a ::b}}})
+;;; ------------------------------------------------------------------ selections
 
-(def led (->Ledger 1 "xxx" :anything))
+(deftest selections-name-checks-in-a-type
+  (is (= #{::card/name ::card/collection-id ::card/archived} (rec/checks-of rec/shape Card)))
+  (is (= #{::perms/may-write ::perms/current-may-write ::card/moves-only-where-allowed}
+         (rec/checks-of perms/permission Card)
+         (rec/checks-of ::perms/permission Card))
+      "a concern by its var or its keyword")
+  (is (= #{::card/owner-active} (rec/checks-of (rec/fetching db/users) Card)))
+  (is (= #{::card/name ::card/collection-id ::card/archived ::card/not-archived-on-edit
+           ::card/moves-only-where-allowed}
+         (rec/checks-of rec/pure Card)))
+  (is (= #{::perms/current-collection-exists ::perms/current-may-write ::card/not-archived-on-edit}
+         (rec/checks-of (rec/union (rec/reading ::card/stored-collection-id)
+                                   (rec/reading ::card/stored-archived))
+                        Card)))
+  (is (= #{::card/name} (rec/checks-of (rec/except rec/shape ::card/collection-id ::card/archived) Card)))
+  (testing "a selection that names nothing in a type selects nothing there"
+    (is (= #{} (rec/checks-of perms/permission Heist)))
+    (is (rec/proves? h/italian-job perms/permission))))
 
-(def all-checks #{::a ::b ::a-fits ::always})
+(defn- refusal [f]
+  (try (f) nil (catch clojure.lang.ExceptionInfo e [(ex-message e) (ex-data e)])))
 
-;; What each check returns when it disapproves, so a failure is visibly the check's own
-;; return value rather than something the library supplied.
-(rec/defrecord Reporting
-  [n]
-  {:checks
-   {::data    ("n is positive" [n] (if (pos? n) true {:too-small n}))
-    ::truthy  ([n] (if (pos? n) true :nope))
-    ::nil     ([n] (if (pos? n) true nil))
-    ::boolean ([n] (pos? n))}
-   :certificates {::most #{::data ::truthy ::nil}}})
+(deftest a-keyword-naming-nothing-is-refused-when-the-selection-is-built
+  (is (= ["no concern, bundle check or check of a type is named :recognitum.example.perms/permision"
+          {:error :recognitum/unknown-name :name ::perms/permision}]
+         (refusal #(rec/except rec/every ::perms/permision))))
+  (is (= :recognitum/unknown-name (:error (second (refusal #(rec/union rec/shape ::card/nmae))))))
+  (is (= :recognitum/unknown-name (:error (second (refusal #(rec/union :no.such.ns/check))))))
+  (testing "a concern, a bundle check, or a check of a type of the keyword's namespace is accepted"
+    (is (map? (rec/union ::perms/permission ::perms/may-write ::card/name ::card/owner-active)))))
 
-;; Counts its own runs, so a check recorded as passing can be seen not to run again.
-(def ^:private runs (atom {}))
+(deftest an-own-check-id-a-type-lacks-is-refused-when-the-selection-meets-the-type
+  (is (= ["recognitum.example.card/Card has no check :recognitum.example.card/nmae, and no concern or bundle check is named :recognitum.example.card/nmae"
+          {:error :recognitum/unknown-name :name ::card/nmae :type 'recognitum.example.card/Card}]
+         (refusal #(rec/checks-of ::card/nmae Card))))
+  (is (= 'recognitum.heist/Heist (:type (second (refusal #(rec/checks-of ::card/name Heist)))))
+      "another type's own check")
+  (is (= 'recognitum.example.card/Dashboard
+         (:type (second (refusal #(rec/checks-of (rec/union ::card/owner-active) Dashboard))))))
+  (is (= :recognitum/unknown-name (:error (second (refusal #(rec/check (rec/draft Card) ::perms/permision)))))))
 
-(defn- tally! [k] (swap! runs update k (fnil inc 0)) nil)
+(deftest a-concern-or-bundle-check-a-type-lacks-selects-nothing-in-it
+  (is (= #{} (rec/checks-of ::perms/permission Heist)))
+  (is (= #{} (rec/checks-of ::perms/may-write Heist)))
+  (is (= #{} (rec/checks-of perms/may-write Heist))))
 
-(defn- ran [k] (get @runs k 0))
+;;; ------------------------------------------------------------------ check-all
 
-(rec/defrecord Counted
-  [n s]
-  {:checks
-   {::n    ([n]   (do (tally! ::n) (int? n)))
-    ::s    ([s]   (do (tally! ::s) (string? s)))
-    ::both ([n s] (do (tally! ::both) (and (int? n) (string? s))))}})
+(deftest check-all-runs-a-group-of-several-types-in-one-run
+  (let [runs (atom [])
+        run-all engine/run-all
+        drafts [(into (rec/draft Card) row)
+                (into (rec/draft Dashboard) board)
+                (into (rec/draft Card) (assoc row ::card/acting-user "bob"))]]
+    (with-redefs [engine/run-all (fn [items] (swap! runs conj (count items)) (run-all items))]
+      (let [[a b c] (rec/check-all drafts perms/may-write)]
+        (is (true? a))
+        (is (true? b))
+        (is (= #{::perms/may-write} (set (keys (:failed c)))))))
+    (is (= [3] @runs))))
 
-;; `nil` is a legal value here, which is what makes "never written" a different thing.
-(rec/defrecord Maybe
-  [n]
-  {:checks {::m ([n] (or (nil? n) (int? n)))}})
+(def ^:private runs (atom []))
 
-(rec/defrecord Fragile
-  [n]
-  {:checks
-   {::boom ([n] (if (number? n) true (throw (IllegalArgumentException. "boom"))))}})
+(rec/defproven Counted [a b]
+  rec/checks
+  (a [] (swap! runs conj ::a) (int? a))
+  (b [] (swap! runs conj ::b) (int? b))
+  (a-below-b [] (swap! runs conj ::a-below-b) (< a b)))
 
-(defn- fresh
-  "A draft of `Ledger` with every field written, so nothing is waiting on anything, and
-  nothing recorded as passing."
-  []
-  (-> (rec/draft Ledger) (assoc ::a 1) (assoc ::b "xxx") (assoc ::c :anything)))
+(deftest check-all-remembers-on-each-draft-as-check-does
+  (let [d1 (into (rec/draft Counted) {::a 1 ::b 2})
+        d2 (into (rec/draft Counted) {::a 3 ::b 4})
+        v (map->Counted {::a 5 ::b 6})]
+    (reset! runs [])
+    (is (= [true true true] (rec/check-all [d1 d2 v] rec/shape)))
+    (is (= {::a 2 ::b 2} (frequencies @runs)) "the sealed value runs nothing")
+    (is (= #{::a ::b} (rec/proven-checks d1) (rec/proven-checks d2)))
+    (is (rec/sealed? v))
+    (is (= (rec/checks-of rec/every Counted) (rec/proven-checks v)))
+    (testing "sealing each draft runs only the rest"
+      (reset! runs [])
+      (is (instance? Counted (rec/seal d1)))
+      (is (instance? Counted (rec/seal d2)))
+      (is (= [::a-below-b ::a-below-b] @runs))))
+  (testing "a failed check is not remembered, and a check that did not run is left as it was"
+    (let [d (into (rec/draft Counted) {::a 1 ::b "two"})]
+      (rec/check d ::a)
+      (is (= [{:failed {::b {:data false :blocked #{::a-below-b}}} :blocked #{::a-below-b}}]
+             (rec/check-all [d] rec/every)))
+      (is (= #{::a} (rec/proven-checks d))))))
 
-;;; -------------------------------- what they hand back --------------------------------
+(deftest check-all-runs-nothing-on-sealed-values
+  (let [runs (atom 0)
+        run-all engine/run-all
+        values [(card/map->Card row) h/italian-job]]
+    (with-redefs [engine/run-all (fn [items] (swap! runs inc) (run-all items))]
+      (is (= [true true] (rec/check-all values rec/every))))
+    (is (zero? @runs))))
 
-(deftest a-passing-check-answers-true
-  (let [d (fresh)]
-    (is (true? (rec/check d ::a)))
-    (is (true? (rec/check d ::b)))
-    (is (true? (rec/check d ::a-fits)))
-    (is (true? (rec/check d ::always))))
-  (testing "and check! answers exactly the same way"
-    (let [d (fresh)]
-      (doseq [c [::a ::b ::a-fits ::always]]
-        (is (true? (rec/check! d c)) (pr-str c))))))
+(deftest a-wait-pulls-back-a-check-that-except-removed
+  (let [d (into (rec/draft Card) (dissoc row ::card/acting-user))
+        sel (rec/except rec/every perms/permission)]
+    (testing "owner-active waits on collection-exists only, so leaving out permissions leaves out may-write"
+      (is (true? (rec/check d sel))))
+    (testing "a check that waits on may-write pulls it back, and the report says why it ran"
+      (let [T (binding [*ns* (the-ns 'recognitum.example.card)]
+                (eval '(rec/defproven Puller [collection-id ^:optional acting-user]
+                         perms/collection-write
+                         (user [] acting-user)
+                         (collection-id [] collection-id)
+                         rec/checks
+                         (audited [perms/collection-write] true))))
+            r (rec/check (into (rec/draft T) {::card/collection-id 1}) sel)]
+        (is (= #{::perms/may-write} (set (keys (:failed r)))))
+        (is (= #{::card/audited} (get-in r [:pulled-back ::perms/may-write :waited-on-by])))
+        (is (re-find #"ran although an except removed it" (get-in r [:pulled-back ::perms/may-write :hint])))))))
 
-(deftest neither-form-returns-a-draft
-  (let [d (fresh)]
-    (doseq [r [(rec/check d ::a) (rec/check! d ::b)]]
-      (is (not (rec/draft? r)))
-      (is (not (rec/sealed? r))))
-    (is (= #{::a ::b} (rec/passed d))
-        "the results are recorded on the draft, not returned")))
+;;; ------------------------------------------------------------------ proves?
 
-(deftest check-answers-with-whatever-the-failing-check-returned-keyed-by-its-name
-  (let [d (assoc (rec/draft Reporting) ::n -1)]
-    (is (= {::data {:too-small -1}} (returned (rec/check d ::data))))
-    (is (= {::truthy :nope} (returned (rec/check d ::truthy)))
-        "truthy is not `true`, and the contract is `true` exactly")
-    (is (= {::nil nil} (returned (rec/check d ::nil)))
-        "a check that returned nil still has an entry -- the key is what says it failed")
-    (is (= {::boolean false} (returned (rec/check d ::boolean))))
-    (is (= #{} (rec/passed d)) "none of them passed, so none of them are recorded")))
+(deftest proves?-holds-for-every-sealed-value-and-asks-a-drafts-memory
+  (is (rec/proves? (card/map->Card row) rec/every))
+  (let [d (into (rec/draft Card) row)]
+    (is (not (rec/proves? d rec/shape)))
+    (rec/check d rec/shape)
+    (is (rec/proves? d rec/shape))
+    (testing "a check runs with what it waits on"
+      (rec/check d ::card/moves-only-where-allowed)
+      (is (every? (rec/proven-checks d) [::perms/may-write ::perms/collection-exists])))
+    (testing "every shape check of a present or required field is a floor under each proof"
+      (let [d (into (rec/draft Card) row)]
+        (rec/check d ::perms/collection-exists)
+        (is (not (rec/proves? d ::perms/collection-exists)))
+        (rec/check d rec/shape)
+        (is (rec/proves? d ::perms/collection-exists))))
+    (is (contains? (rec/proven-concerns (rec/draft (card/map->Card row))) ::perms/permission)))
+  (is (not (rec/proves? row rec/every)) "a plain map proves nothing"))
 
-(deftest a-lone-check-is-a-certificate-containing-itself
-  (let [d (assoc (rec/draft Reporting) ::n -1)]
-    (is (= {::data {:too-small -1}} (returned (rec/check d ::data))))
-    (is (= {::data {:too-small -1} ::truthy :nope ::nil nil} (returned (rec/check d ::most)))
-        "the certificate's answer has the same shape, with an entry per failing check"))
-  (let [d (assoc (rec/draft Reporting) ::n 1)]
-    (is (true? (rec/check d ::data)))
-    (is (true? (rec/check d ::most)))))
-
-(deftest a-check-name-and-a-certificate-name-go-through-the-same-verb
-  (let [d (fresh)]
-    (is (true? (rec/check d ::a)))
-    (is (true? (rec/check d ::shape)))
-    (is (true? (rec/check! d ::a)))
-    (is (true? (rec/check! d ::shape)))
-    (is (true? (rec/check d rec/every-check)) "including the built-in")))
-
-(deftest check-bang-throws-one-check-failed-carrying-the-whole-report
-  (let [d (assoc (rec/draft Reporting) ::n -1)
-        e (err #(rec/check! d ::data))]
-    (is (= ::rec/check-failed (:error e)))
-    (is (= 'Reporting (:record e)))
-    (is (= [::data] (keys (:failures e))) "one check was asked, so one failure is reported")
-    (let [f (get (:failures e) ::data)]
-      (is (= "n is positive" (:doc f)))
-      (is (= {::n -1} (:values f)) "the fields it declared, and what they held")
-      (is (= {:too-small -1} (:returned f))))))
-
-(deftest check-bang-reports-the-declared-fields-in-arglist-order
-  (let [d (-> (rec/draft Ledger) (assoc ::a 99) (assoc ::b "xx"))
-        e (err #(rec/check! d ::a-fits))]
-    (is (= ::rec/check-failed (:error e)))
-    (let [f (get (:failures e) ::a-fits)]
-      (is (= "a fits inside b" (:doc f)))
-      (is (= [::a ::b] (keys (:values f))))
-      (is (= {::a 99 ::b "xx"} (:values f)))
-      (is (= false (:returned f))))))
-
-;;; ------------------------------ the result is recorded ------------------------------
-
-(deftest a-check-that-passes-is-recorded-as-passing
-  (let [d (fresh)]
-    (is (= #{} (rec/passed d)) "built from the type, so nothing has run")
+(deftest the-floor-under-a-drafts-proof-is-its-shape-checks-only
+  (let [d (into (rec/draft Counted) {::a 1 ::b 2})]
     (rec/check d ::a)
-    (is (= #{::a} (rec/passed d)))
-    (rec/check! d ::b)
-    (is (= #{::a ::b} (rec/passed d)))
-    (rec/check d ::a-fits)
-    (rec/check d ::always)
-    (is (= all-checks (rec/passed d)))))
-
-(deftest a-check-that-fails-is-not-recorded-as-passing
-  (let [d (-> (rec/draft Ledger) (assoc ::a "not an int") (assoc ::b "xx"))]
-    (is (= {::a false} (returned (rec/check d ::a))))
-    (is (= #{} (rec/passed d)))
-    (is (true? (rec/check d ::b)))
-    (is (= #{::b} (rec/passed d)) "and the one that passed alongside it is recorded")
-    (testing "which check! records the same way before it throws"
-      (is (= ::rec/check-failed (:error (err #(rec/check! d ::a-fits)))))
-      (is (= #{::b} (rec/passed d))))))
-
-(deftest checking-runs-what-it-waits-on-and-nothing-else
-  (let [d (fresh)]
-    (rec/check d ::a-fits)
-    (is (= #{::a ::b ::a-fits} (rec/passed d))
-        "a check spanning two fields runs their shape validations on the way")
-    (is (not (contains? (rec/passed d) ::always))
-        "and nothing it does not wait on")))
-
-(deftest a-result-recorded-on-one-version-says-nothing-about-another
-  (let [d  (fresh)
-        d' (assoc d ::a 2)]
-    (is (true? (rec/check d ::a)))
-    (is (= #{::a} (rec/passed d)))
-    (is (= #{} (rec/passed d')) "d' was seeded from d before the check ran")
-    (testing "and running it on d' leaves d where it was"
-      (is (true? (rec/check d' ::a)))
-      (is (= #{::a} (rec/passed d)))
-      (is (= #{::a} (rec/passed d'))))))
-
-;;; ---------------------- a check already passing is not run again ----------------------
-
-(deftest a-check-already-passing-is-not-run-again
-  (reset! runs {})
-  (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
-    (is (true? (rec/check d ::n)))
-    (is (= 1 (ran ::n)))
-    (is (true? (rec/check d ::n)))
-    (is (= 1 (ran ::n)) "it is recorded as passing, so there is nothing to run")
-    (is (true? (rec/check! d ::n)))
-    (is (= 1 (ran ::n)) "and check! runs nothing either")))
-
-(deftest a-draft-of-a-sealed-value-runs-nothing
-  (let [c (->Counted 1 "x")]
-    (reset! runs {})
-    (let [d (rec/draft c)]
-      (is (= #{::n ::s ::both} (rec/passed d)))
-      (doseq [k [::n ::s ::both]] (is (true? (rec/check d k)) (pr-str k)))
-      (is (= {} @runs)
-          "sealed means every check passed on this data; running them again would learn nothing"))))
-
-(deftest a-write-makes-the-checks-naming-that-field-run-again
-  (let [c (->Counted 1 "x")]
-    (reset! runs {})
-    (let [d (assoc (rec/draft c) ::n 2)]
-      (is (= #{::s} (rec/passed d)) "the write cleared ::n and ::both")
-      (is (true? (rec/check d ::n)))
-      (is (true? (rec/check d ::both)))
-      (is (true? (rec/check d ::s)))
-      (is (= {::n 1 ::both 1} @runs)
-          "::s does not name n, so it stayed recorded as passing and was not run"))))
-
-(deftest a-failed-check-is-run-again-next-time
-  (reset! runs {})
-  (let [d (assoc (rec/draft Counted) ::n "not an int")]
-    (is (= {::n false} (returned (rec/check d ::n))))
-    (is (= {::n false} (returned (rec/check d ::n))))
-    (is (= 2 (ran ::n)))
-    (is (= #{} (rec/passed d)))))
-
-(deftest a-pure-check-waits-on-the-shape-validations-of-the-fields-it-names
-  ;; `::both` is passed an n and an s that `::n` and `::s` have already passed, so it
-  ;; restates neither.
-  (reset! runs {})
-  (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
-    (is (true? (rec/check d ::both)))
-    (is (= {::n 1 ::s 1 ::both 1} @runs))
-    (is (= #{::n ::s ::both} (rec/passed d))))
-  (testing "and a shape validation already passing is not run again"
-    (reset! runs {})
-    (let [d (-> (rec/draft Counted) (assoc ::n 1) (assoc ::s "x"))]
-      (is (true? (rec/check d ::n)))
-      (is (true? (rec/check d ::s)))
-      (reset! runs {})
-      (is (true? (rec/check d ::both)))
-      (is (= {::both 1} @runs)))))
-
-;;; ---------------------------- a check needs something to read ----------------------------
-
-(deftest a-check-naming-a-field-never-written-judges-nil
-  (let [d (rec/draft Ledger)]
-    (is (= {::a false} (returned (rec/check d ::a))) "`(int? nil)`, which is the check's own answer")
-    (is (= ::rec/check-failed (:error (err #(rec/check! d ::a)))))
-    (testing "and nothing is recorded, because nothing passed"
-      (is (= #{} (rec/passed d))))))
-
-(deftest a-check-whose-shape-validation-fails-answers-with-that-failure-and-no-entry-of-its-own
-  (let [d (rec/draft Ledger)
-        r (rec/check d ::a-fits)]
-    (is (= [::a ::b] (vec (keys r))) "both shape validations it was waiting on")
-    (is (not (contains? r ::a-fits)) "the check asked about never ran, so it has no entry"))
-  (is (= [::b] (vec (keys (rec/check (assoc (rec/draft Ledger) ::a 1) ::a-fits))))
-      "and only the one still in the way")
-  (testing "which is what keeps the body from being handed a shape it cannot read"
-    (let [d (rec/draft Ledger)]
-      (is (map? (rec/check d ::a-fits))
-          "rather than a NullPointerException out of (count nil)")))
-  (testing "and check! throws the same failures it would for any other"
-    (let [e (err #(rec/check! (rec/draft Ledger) ::a-fits))]
-      (is (= ::rec/check-failed (:error e)))
-      (is (= [::a ::b] (vec (keys (:failures e))))))))
-
-(deftest an-unwritten-field-reaches-a-check-body-as-nil
-  (reset! runs {})
-  (is (= {::n false} (returned (rec/check (rec/draft Counted) ::n))))
-  (is (= {::n 1} @runs) "the body ran, and what it was given was nil"))
-
-(deftest writing-nil-is-the-same-as-never-writing
-  (is (true? (rec/check (assoc (rec/draft Maybe) ::n nil) ::m))
-      "nil is a legal value where a check admits it")
-  (is (true? (rec/check (rec/draft Maybe) ::m))
-      "and never writing it is the same thing, judged the same way"))
-
-(deftest a-check-naming-no-field-runs-against-an-empty-draft
-  (let [d (rec/draft Ledger)]
-    (is (true? (rec/check d ::always)))
-    (is (= #{::always} (rec/passed d)))))
-
-;;; ------------------------------ checking is not sealing ------------------------------
-
-(deftest an-incomplete-draft-can-still-run-the-checks-it-has-fields-for
-  (let [d (assoc (rec/draft Ledger) ::b "xxx")]
-    (is (true? (rec/check d ::b)))
-    (is (= #{::b} (rec/passed d)))
-    (let [e (err #(rec/seal d))]
-      (is (= ::rec/check-failed (:error e))
-          "sealing still runs everything -- running a check early is not a claim to be whole")
-      (is (= [::a] (keys (:failures e)))
-          "::a judges the nil nobody wrote; ::a-fits waits on ::a and does not run"))))
-
-(deftest an-undeclared-key-does-not-stop-a-check
-  (let [d (assoc (fresh) :getaway-car "mini")]
-    (is (true? (rec/check d ::a)))
-    (is (true? (rec/check! d ::a-fits)))
-    (is (= ::rec/extraneous-keys (:error (err #(rec/seal d))))
-        "which sealing refuses")))
-
-(deftest a-check-that-throws-propagates-and-records-nothing
-  (let [d (assoc (rec/draft Fragile) ::n "not a number")]
-    (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/check d ::boom)))
-    (is (thrown-with-msg? IllegalArgumentException #"boom" (rec/check! d ::boom)))
-    (is (= #{} (rec/passed d)))))
-
-;;; ----------------------------- what it refuses to answer -----------------------------
-
-(deftest a-check-name-the-type-does-not-declare-is-refused
-  (let [d (fresh)]
-    (doseq [[label f] [["check" #(rec/check d ::nonesuch)]
-                       ["check!" #(rec/check! d ::nonesuch)]]]
-      (let [e (err f)]
-        (is (= ::rec/unknown-check (:error e)) label)
-        (is (= 'Ledger (:record e)) label)
-        (is (= ::nonesuch (:check e)) label)
-        (is (= [::a ::b ::a-fits ::always] (:checks e)) label)
-        (is (= [::shape ::rec/every-check] (:certificates e))
-            (str label ": the refusal names both the checks and the certificates it could have been"))))
-    (testing "including a check declared on some other type"
-      (is (= ::rec/unknown-check (:error (err #(rec/check d ::data))))))
-    (testing "and the bare spelling of one this type does declare"
-      (is (= ::rec/unknown-check (:error (err #(rec/check d :a))))))
-    (testing "and a certificate declared on some other type"
-      (is (= ::rec/unknown-check (:error (err #(rec/check d ::most))))))
-    (testing "and nothing is recorded by asking"
-      (is (= #{} (rec/passed d))))))
-
-(deftest a-sealed-value-answers-true-and-runs-nothing
-  (let [c (->Counted 1 "x")]
-    (reset! runs {})
-    (is (true? (rec/check c ::n)))
-    (is (true? (rec/check c ::both)))
-    (is (true? (rec/check c rec/every-check)))
-    (is (true? (rec/check! c rec/every-check)))
-    (is (= {} @runs) "nothing ran"))
-  (testing "and an unknown name is refused there too"
-    (is (= ::rec/unknown-check (:error (err #(rec/check led ::nonesuch)))))))
-
-(deftest checking-is-a-question-about-a-recognitum-value
-  (doseq [x [Ledger {::a 1 ::b "xxx" ::c :x} nil 42]]
-    (is (= ::rec/not-a-value (:error (err #(rec/check x ::a)))) (pr-str x))
-    (is (= ::rec/not-a-value (:error (err #(rec/check! x ::a)))) (pr-str x))
-    (is (= ::rec/not-a-value (:error (err #(rec/passed x)))) (pr-str x))
-    (is (= ::rec/not-a-value (:error (err #(rec/certificates x)))) (pr-str x))))
-
-;;; -------------------------------- and the guarantee --------------------------------
-
-(deftest running-every-check-by-hand-still-seals
-  (let [d (fresh)]
-    (doseq [c [::a ::b ::a-fits ::always]] (is (true? (rec/check d c))))
-    (let [s (rec/seal d)]
-      (is (rec/sealed? s))
-      (is (= 1 (::a s))))))
-
-(deftest a-pass-recorded-before-a-write-does-not-cover-the-write
-  (let [d (fresh)]
-    (doseq [c [::a ::b ::a-fits ::always]] (rec/check d c))
-    (let [d' (assoc d ::a "not an int")]
-      (is (= #{::b ::always} (rec/passed d')) "the write cleared ::a and ::a-fits")
-      (let [e (err #(rec/seal d'))]
-        (is (= ::rec/check-failed (:error e)))
-        (is (= [::a] (keys (:failures e)))
-            "::a-fits waits on ::a, so the shape failure is the whole of the report")))))
-
-(deftest a-check-inside-a-drafting-form-answers-about-the-draft-in-hand
-  (let [a (atom nil)]
-    (is (rec/sealed?
-         (rec/drafting [x Ledger]
-           (let [x (-> x (assoc ::a 1) (assoc ::b "xxx") (assoc ::c :anything))]
-             (reset! a [(rec/check x ::a) (rec/check x ::a-fits) (rec/passed x)])
-             x))))
-    (is (= [true true #{::a ::b ::a-fits}] @a)
-        "::b came with ::a-fits, which waits on it")))
+    (is (not (rec/proves? d ::a)) "the shape check of the required field b is part of every proof")
+    (rec/check d ::b)
+    (is (rec/proves? d ::a))
+    (is (not (contains? (rec/proven-checks d) ::a-below-b)) "an invariant that was not asked for is not")))
